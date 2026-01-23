@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NIFTY OI Analyzer</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo">NIFTY OI Analyzer</h1>
+                <span class="subtitle">Tug-of-War Analysis</span>
+            </div>
+            <div class="header-right">
+                <div id="market-badge" class="badge badge-closed">
+                    <span class="badge-dot"></span>
+                    <span id="market-text">Market Closed</span>
+                </div>
+                <div class="last-update">
+                    <span class="label">Updated</span>
+                    <span id="last-update-time">--:--</span>
+                </div>
+                <button id="refresh-btn" class="btn-refresh" onclick="requestRefresh()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                    </svg>
+                    Refresh
+                </button>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- Left Column -->
+            <div class="column-left">
+                <!-- Verdict Card -->
+                <div class="card verdict-card" id="verdict-card">
+                    <div class="verdict-content">
+                        <span class="verdict-label">Market Sentiment</span>
+                        <h2 class="verdict-text" id="verdict-text">Loading...</h2>
+                        <div class="verdict-score">
+                            <span class="score-value" id="combined-score">--</span>
+                            <span class="score-label">Composite Score</span>
+                        </div>
+                    </div>
+                    <div class="verdict-breakdown">
+                        <div class="breakdown-item">
+                            <div class="breakdown-header">
+                                <span class="breakdown-label">Today's Activity</span>
+                                <span class="breakdown-weight">70%</span>
+                            </div>
+                            <span class="breakdown-value" id="change-score">--</span>
+                        </div>
+                        <div class="breakdown-item">
+                            <div class="breakdown-header">
+                                <span class="breakdown-label">Overall Position</span>
+                                <span class="breakdown-weight">30%</span>
+                            </div>
+                            <span class="breakdown-value" id="total-oi-score">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Key Metrics -->
+                <div class="card metrics-card">
+                    <h3 class="card-title">Key Metrics</h3>
+                    <div class="metrics-grid">
+                        <div class="metric">
+                            <span class="metric-label">Spot Price</span>
+                            <span class="metric-value" id="spot-price">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">ATM Strike</span>
+                            <span class="metric-value" id="atm-strike">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Expiry</span>
+                            <span class="metric-value" id="expiry-date">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">PCR</span>
+                            <span class="metric-value" id="pcr-value">--</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="column-right">
+                <!-- OI Comparison -->
+                <div class="card oi-card">
+                    <h3 class="card-title">OI Comparison <span class="card-subtitle">(3 OTM Strikes)</span></h3>
+
+                    <div class="oi-comparison">
+                        <!-- Calls Section -->
+                        <div class="oi-section oi-calls">
+                            <div class="oi-header">
+                                <span class="oi-label">Call OI</span>
+                                <span class="oi-tag tag-bearish">Bearish</span>
+                            </div>
+                            <div class="oi-value" id="call-oi-total">--</div>
+                            <div class="oi-bar">
+                                <div class="oi-bar-fill bar-bearish" id="call-oi-bar"></div>
+                            </div>
+                            <div class="oi-change negative" id="call-oi-change">--</div>
+                        </div>
+
+                        <!-- Puts Section -->
+                        <div class="oi-section oi-puts">
+                            <div class="oi-header">
+                                <span class="oi-label">Put OI</span>
+                                <span class="oi-tag tag-bullish">Bullish</span>
+                            </div>
+                            <div class="oi-value" id="put-oi-total">--</div>
+                            <div class="oi-bar">
+                                <div class="oi-bar-fill bar-bullish" id="put-oi-bar"></div>
+                            </div>
+                            <div class="oi-change positive" id="put-oi-change">--</div>
+                        </div>
+                    </div>
+
+                    <div class="net-change-box">
+                        <span class="net-label">Net OI Change</span>
+                        <span class="net-value" id="net-oi-change">--</span>
+                    </div>
+                </div>
+
+                <!-- Strike Tables -->
+                <div class="tables-row">
+                    <div class="card table-card">
+                        <h3 class="card-title table-title-bearish">OTM Calls</h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Strike</th>
+                                    <th>OI</th>
+                                    <th>Change</th>
+                                </tr>
+                            </thead>
+                            <tbody id="calls-tbody">
+                                <tr><td colspan="3" class="loading-cell">Loading...</td></tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td>Total</td>
+                                    <td id="calls-total-oi">--</td>
+                                    <td id="calls-total-change">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <div class="card table-card">
+                        <h3 class="card-title table-title-bullish">OTM Puts</h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Strike</th>
+                                    <th>OI</th>
+                                    <th>Change</th>
+                                </tr>
+                            </thead>
+                            <tbody id="puts-tbody">
+                                <tr><td colspan="3" class="loading-cell">Loading...</td></tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td>Total</td>
+                                    <td id="puts-total-oi">--</td>
+                                    <td id="puts-total-change">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Chart Section -->
+        <section class="chart-section">
+            <div class="card chart-card">
+                <h3 class="card-title">OI Trend</h3>
+                <div class="chart-container">
+                    <canvas id="oi-chart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>Auto-refreshes every 3 minutes during market hours</span>
+            <div id="connection-status" class="connection connected">Connected</div>
+        </footer>
+    </div>
+
+    <script src="/static/chart.js"></script>
+</body>
+</html>

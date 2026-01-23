@@ -1,0 +1,38 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Database files
+*.db
+
+# Claude Code settings
+.claude/
+CLAUDE.md
+
+# Environment files
+.env
+.env.*
+
+# IDE settings
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Testing/Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Misc
+nul

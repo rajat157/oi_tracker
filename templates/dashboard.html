@@ -34,6 +34,18 @@
                     </svg>
                     Refresh
                 </button>
+                <div class="toggle-container">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="atm-toggle">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">ATM</span>
+                    </label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="itm-toggle">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">ITM</span>
+                    </label>
+                </div>
             </div>
         </header>
 
@@ -54,17 +66,24 @@
                     <div class="verdict-breakdown">
                         <div class="breakdown-item">
                             <div class="breakdown-header">
-                                <span class="breakdown-label">Today's Activity</span>
-                                <span class="breakdown-weight">70%</span>
+                                <span class="breakdown-label">OTM Score</span>
+                                <span class="breakdown-weight" id="otm-weight">100%</span>
                             </div>
-                            <span class="breakdown-value" id="change-score">--</span>
+                            <span class="breakdown-value" id="otm-score-display">--</span>
                         </div>
-                        <div class="breakdown-item">
+                        <div class="breakdown-item" id="atm-breakdown" style="display: none;">
                             <div class="breakdown-header">
-                                <span class="breakdown-label">Overall Position</span>
-                                <span class="breakdown-weight">30%</span>
+                                <span class="breakdown-label">ATM Score</span>
+                                <span class="breakdown-weight" id="atm-weight">0%</span>
                             </div>
-                            <span class="breakdown-value" id="total-oi-score">--</span>
+                            <span class="breakdown-value" id="atm-score-display">--</span>
+                        </div>
+                        <div class="breakdown-item" id="itm-breakdown" style="display: none;">
+                            <div class="breakdown-header">
+                                <span class="breakdown-label">ITM Score</span>
+                                <span class="breakdown-weight" id="itm-weight">0%</span>
+                            </div>
+                            <span class="breakdown-value" id="itm-score-display">--</span>
                         </div>
                     </div>
                 </div>
@@ -176,6 +195,76 @@
                                     <td>Total</td>
                                     <td id="puts-total-oi">--</td>
                                     <td id="puts-total-change">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ATM Section (hidden by default) -->
+                <div id="atm-section" class="card atm-card" style="display: none;">
+                    <h3 class="card-title">ATM Strike Analysis</h3>
+                    <div class="atm-grid">
+                        <div class="atm-item">
+                            <span class="atm-label">Strike</span>
+                            <span class="atm-value" id="atm-strike-value">--</span>
+                        </div>
+                        <div class="atm-item atm-call">
+                            <span class="atm-label">Call OI</span>
+                            <span class="atm-value" id="atm-call-oi">--</span>
+                            <span class="atm-change" id="atm-call-change">--</span>
+                        </div>
+                        <div class="atm-item atm-put">
+                            <span class="atm-label">Put OI</span>
+                            <span class="atm-value" id="atm-put-oi">--</span>
+                            <span class="atm-change" id="atm-put-change">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ITM Tables (hidden by default) -->
+                <div id="itm-section" class="tables-row" style="display: none;">
+                    <div class="card table-card">
+                        <h3 class="card-title table-title-itm-call">ITM Calls <span class="card-subtitle">(Below Spot)</span></h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Strike</th>
+                                    <th>OI</th>
+                                    <th>Change</th>
+                                </tr>
+                            </thead>
+                            <tbody id="itm-calls-tbody">
+                                <tr><td colspan="3" class="loading-cell">--</td></tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td>Total</td>
+                                    <td id="itm-calls-total-oi">--</td>
+                                    <td id="itm-calls-total-change">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <div class="card table-card">
+                        <h3 class="card-title table-title-itm-put">ITM Puts <span class="card-subtitle">(Above Spot)</span></h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Strike</th>
+                                    <th>OI</th>
+                                    <th>Change</th>
+                                </tr>
+                            </thead>
+                            <tbody id="itm-puts-tbody">
+                                <tr><td colspan="3" class="loading-cell">--</td></tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td>Total</td>
+                                    <td id="itm-puts-total-oi">--</td>
+                                    <td id="itm-puts-total-change">--</td>
                                 </tr>
                             </tfoot>
                         </table>

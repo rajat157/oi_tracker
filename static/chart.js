@@ -4,9 +4,14 @@ const socket = io();
 let oiChart = null;
 let lastChartTimestamp = null;
 
+// Toggle state (persisted in localStorage)
+let includeATM = localStorage.getItem('includeATM') === 'true';
+let includeITM = localStorage.getItem('includeITM') === 'true';
+
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     initChart();
+    initToggles();
     setupSocketListeners();
 
     setTimeout(fetchMarketStatus, 500);
@@ -15,6 +20,51 @@ document.addEventListener('DOMContentLoaded', function() {
 
     setInterval(fetchMarketStatus, 60000);
 });
+
+// Initialize toggle switches
+function initToggles() {
+    const atmToggle = document.getElementById('atm-toggle');
+    const itmToggle = document.getElementById('itm-toggle');
+
+    // Set initial state from localStorage
+    if (atmToggle) atmToggle.checked = includeATM;
+    if (itmToggle) itmToggle.checked = includeITM;
+
+    // Update UI visibility
+    updateSectionVisibility();
+
+    // Add event listeners
+    if (atmToggle) {
+        atmToggle.addEventListener('change', (e) => {
+            includeATM = e.target.checked;
+            localStorage.setItem('includeATM', includeATM);
+            updateSectionVisibility();
+            socket.emit('update_toggles', { include_atm: includeATM, include_itm: includeITM });
+        });
+    }
+
+    if (itmToggle) {
+        itmToggle.addEventListener('change', (e) => {
+            includeITM = e.target.checked;
+            localStorage.setItem('includeITM', includeITM);
+            updateSectionVisibility();
+            socket.emit('update_toggles', { include_atm: includeATM, include_itm: includeITM });
+        });
+    }
+}
+
+// Show/hide sections based on toggle state
+function updateSectionVisibility() {
+    const atmSection = document.getElementById('atm-section');
+    const atmBreakdown = document.getElementById('atm-breakdown');
+    const itmSection = document.getElementById('itm-section');
+    const itmBreakdown = document.getElementById('itm-breakdown');
+
+    if (atmSection) atmSection.style.display = includeATM ? 'block' : 'none';
+    if (atmBreakdown) atmBreakdown.style.display = includeATM ? 'flex' : 'none';
+    if (itmSection) itmSection.style.display = includeITM ? 'grid' : 'none';
+    if (itmBreakdown) itmBreakdown.style.display = includeITM ? 'flex' : 'none';
+}
 
 // Initialize Chart.js
 function initChart() {
@@ -127,7 +177,11 @@ function fetchMarketStatus() {
 }
 
 function fetchLatestData() {
-    fetch('/api/latest')
+    const params = new URLSearchParams({
+        include_atm: includeATM,
+        include_itm: includeITM
+    });
+    fetch(`/api/latest?${params}`)
         .then(r => r.ok ? r.json() : Promise.reject('No data'))
         .then(data => {
             console.log('Latest data:', data);
@@ -185,8 +239,17 @@ function updateDashboard(data) {
 
     // Update scores
     updateScore('combined-score', data.combined_score);
-    updateScore('change-score', data.change_score, true);
-    updateScore('total-oi-score', data.total_oi_score, true);
+
+    // Update weight displays and individual scores
+    if (data.weights) {
+        setText('otm-weight', Math.round(data.weights.otm * 100) + '%');
+        setText('atm-weight', Math.round(data.weights.atm * 100) + '%');
+        setText('itm-weight', Math.round(data.weights.itm * 100) + '%');
+    }
+
+    updateScore('otm-score-display', data.otm_score, true);
+    updateScore('atm-score-display', data.atm_score, true);
+    updateScore('itm-score-display', data.itm_score, true);
 
     // Update metrics
     setText('spot-price', formatNumber(data.spot_price));
@@ -222,6 +285,28 @@ function updateDashboard(data) {
     setText('calls-total-change', formatSigned(data.call_oi_change));
     setText('puts-total-oi', formatNumber(data.total_put_oi));
     setText('puts-total-change', formatSigned(data.put_oi_change));
+
+    // Update ATM section
+    if (data.atm_data) {
+        setText('atm-strike-value', formatNumber(data.atm_data.strike));
+        setText('atm-call-oi', formatNumber(data.atm_data.call_oi));
+        setText('atm-put-oi', formatNumber(data.atm_data.put_oi));
+        updateATMChange('atm-call-change', data.atm_data.call_oi_change);
+        updateATMChange('atm-put-change', data.atm_data.put_oi_change);
+    }
+
+    // Update ITM tables
+    if (data.itm_calls) {
+        updateTable('itm-calls-tbody', data.itm_calls);
+        setText('itm-calls-total-oi', formatNumber(data.total_itm_call_oi));
+        setText('itm-calls-total-change', formatSigned(data.itm_call_oi_change));
+    }
+
+    if (data.itm_puts) {
+        updateTable('itm-puts-tbody', data.itm_puts);
+        setText('itm-puts-total-oi', formatNumber(data.total_itm_put_oi));
+        setText('itm-puts-total-change', formatSigned(data.itm_put_oi_change));
+    }
 }
 
 function updateScore(id, value, addColorClass = false) {
@@ -246,6 +331,15 @@ function updateChange(id, value, isNegativeGood) {
     elem.textContent = formatSigned(value);
     elem.classList.remove('positive', 'negative');
     elem.classList.add(value >= 0 ? (isNegativeGood ? 'negative' : 'positive') : (isNegativeGood ? 'positive' : 'negative'));
+}
+
+function updateATMChange(id, value) {
+    const elem = document.getElementById(id);
+    if (!elem) return;
+
+    elem.textContent = formatSigned(value);
+    elem.classList.remove('positive', 'negative');
+    elem.classList.add(value >= 0 ? 'positive' : 'negative');
 }
 
 function updateTable(tbodyId, strikes) {

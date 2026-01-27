@@ -3,7 +3,7 @@ Flask Web Server for OI Tracker Dashboard
 Main entry point for the application
 """
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 
 from scheduler import OIScheduler
@@ -30,6 +30,10 @@ def dashboard():
 @app.route("/api/latest")
 def api_latest():
     """Get the latest OI analysis."""
+    # Get toggle parameters from query string
+    include_atm = request.args.get("include_atm", "false").lower() == "true"
+    include_itm = request.args.get("include_itm", "false").lower() == "true"
+
     # Always get fresh analysis from snapshot to ensure scores are calculated
     snapshot = get_latest_snapshot()
 
@@ -37,16 +41,30 @@ def api_latest():
         # Re-run analysis to get full details with scores
         analysis = analyze_tug_of_war(
             snapshot["strikes"],
-            snapshot["spot_price"]
+            snapshot["spot_price"],
+            include_atm=include_atm,
+            include_itm=include_itm
         )
         analysis["timestamp"] = snapshot["timestamp"]
         analysis["expiry_date"] = snapshot["expiry_date"]
         return jsonify(analysis)
 
-    # Fall back to scheduler's cached analysis
-    analysis = oi_scheduler.get_last_analysis()
-    if analysis:
-        return jsonify(analysis)
+    # Fall back to scheduler's cached analysis (re-analyze with toggle settings)
+    cached = oi_scheduler.get_last_analysis()
+    if cached:
+        # If we have cached data but need different toggle settings, re-fetch snapshot
+        snapshot = get_latest_snapshot()
+        if snapshot and snapshot.get("strikes"):
+            analysis = analyze_tug_of_war(
+                snapshot["strikes"],
+                snapshot["spot_price"],
+                include_atm=include_atm,
+                include_itm=include_itm
+            )
+            analysis["timestamp"] = snapshot.get("timestamp", cached.get("timestamp"))
+            analysis["expiry_date"] = snapshot.get("expiry_date", cached.get("expiry_date"))
+            return jsonify(analysis)
+        return jsonify(cached)
 
     # Last resort: database summary (without scores)
     db_analysis = get_latest_analysis()
@@ -100,6 +118,28 @@ def handle_refresh_request():
     """Handle manual refresh request from client."""
     print("Client requested refresh")
     oi_scheduler.trigger_now()
+
+
+@socketio.on("update_toggles")
+def handle_toggle_update(data):
+    """Handle toggle state changes from client."""
+    from flask_socketio import emit
+
+    include_atm = data.get("include_atm", False)
+    include_itm = data.get("include_itm", False)
+
+    # Re-analyze with new settings and emit to this client only
+    snapshot = get_latest_snapshot()
+    if snapshot and snapshot.get("strikes"):
+        analysis = analyze_tug_of_war(
+            snapshot["strikes"],
+            snapshot["spot_price"],
+            include_atm=include_atm,
+            include_itm=include_itm
+        )
+        analysis["timestamp"] = snapshot.get("timestamp")
+        analysis["expiry_date"] = snapshot.get("expiry_date")
+        emit("oi_update", analysis)
 
 
 def start_app(debug: bool = False, port: int = 5000):

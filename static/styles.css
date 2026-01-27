@@ -642,6 +642,144 @@ body {
     background: var(--bearish);
 }
 
+/* ===== Toggle Switches ===== */
+.toggle-container {
+    display: flex;
+    gap: 16px;
+    margin-left: 8px;
+    padding-left: 16px;
+    border-left: 1px solid var(--border);
+}
+
+.toggle-switch {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-switch input {
+    display: none;
+}
+
+.toggle-slider {
+    width: 36px;
+    height: 20px;
+    background: var(--bg-hover);
+    border-radius: 10px;
+    position: relative;
+    transition: var(--transition);
+    border: 1px solid var(--border);
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    top: 2px;
+    left: 2px;
+    transition: var(--transition);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background: var(--accent);
+    border-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(16px);
+    background: white;
+}
+
+.toggle-label {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+
+.toggle-switch:hover .toggle-slider {
+    border-color: var(--text-muted);
+}
+
+/* ===== ATM Section ===== */
+.atm-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(99, 102, 241, 0.05) 100%);
+}
+
+.atm-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+}
+
+.atm-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    text-align: center;
+}
+
+.atm-label {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.atm-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.atm-change {
+    font-size: 0.85rem;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+.atm-call {
+    border-top: 3px solid var(--bearish);
+}
+
+.atm-call .atm-change.positive {
+    color: var(--bearish);
+}
+
+.atm-call .atm-change.negative {
+    color: var(--bullish);
+}
+
+.atm-put {
+    border-top: 3px solid var(--bullish);
+}
+
+.atm-put .atm-change.positive {
+    color: var(--bullish);
+}
+
+.atm-put .atm-change.negative {
+    color: var(--bearish);
+}
+
+/* ITM Table Titles */
+.table-title-itm-call {
+    color: var(--accent);
+}
+
+.table-title-itm-put {
+    color: var(--accent);
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 1100px) {
     .main {
@@ -685,8 +823,15 @@ body {
     .oi-comparison,
     .tables-row,
     .verdict-breakdown,
-    .metrics-grid {
+    .metrics-grid,
+    .atm-grid {
         grid-template-columns: 1fr;
+    }
+
+    .toggle-container {
+        border-left: none;
+        padding-left: 0;
+        margin-left: 0;
     }
 
     .verdict-text {

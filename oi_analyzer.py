@@ -237,30 +237,40 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     else:
         otm_weight, atm_weight, itm_weight = 1.0, 0.0, 0.0
 
-    # Calculate OTM score (based on OI change - most relevant for sentiment)
+    # Calculate OTM score (70% OI change + 30% Total OI)
     max_otm_change = max(abs(total_call_oi_change), abs(total_put_oi_change), 1)
-    otm_score = (net_oi_change / max_otm_change) * 100  # -100 to +100
+    max_otm_total = max(total_call_oi, total_put_oi, 1)
+    otm_change_score = (net_oi_change / max_otm_change) * 100
+    otm_total_score = (net_total_oi / max_otm_total) * 100
+    otm_score = (0.7 * otm_change_score) + (0.3 * otm_total_score)
 
-    # Calculate ATM score
+    # Calculate ATM score (70% OI change + 30% Total OI)
     atm_score = 0.0
     if include_atm:
-        atm_net = atm_put_oi_change - atm_call_oi_change
-        max_atm = max(abs(atm_call_oi_change), abs(atm_put_oi_change), 1)
-        atm_score = (atm_net / max_atm) * 100
+        atm_net_change = atm_put_oi_change - atm_call_oi_change
+        atm_net_total = atm_put_oi - atm_call_oi
+        max_atm_change = max(abs(atm_call_oi_change), abs(atm_put_oi_change), 1)
+        max_atm_total = max(atm_call_oi, atm_put_oi, 1)
+        atm_change_score = (atm_net_change / max_atm_change) * 100
+        atm_total_score = (atm_net_total / max_atm_total) * 100
+        atm_score = (0.7 * atm_change_score) + (0.3 * atm_total_score)
 
-    # Calculate ITM score
+    # Calculate ITM score (70% OI change + 30% Total OI)
     itm_score = 0.0
     if include_itm:
-        itm_net = total_itm_put_oi_change - total_itm_call_oi_change
-        max_itm = max(abs(total_itm_call_oi_change), abs(total_itm_put_oi_change), 1)
-        itm_score = (itm_net / max_itm) * 100
+        itm_net_change = total_itm_put_oi_change - total_itm_call_oi_change
+        itm_net_total = total_itm_put_oi - total_itm_call_oi
+        max_itm_change = max(abs(total_itm_call_oi_change), abs(total_itm_put_oi_change), 1)
+        max_itm_total = max(total_itm_call_oi, total_itm_put_oi, 1)
+        itm_change_score = (itm_net_change / max_itm_change) * 100
+        itm_total_score = (itm_net_total / max_itm_total) * 100
+        itm_score = (0.7 * itm_change_score) + (0.3 * itm_total_score)
 
-    # Combined weighted score
+    # Combined weighted score across zones
     combined_score = (otm_weight * otm_score) + (atm_weight * atm_score) + (itm_weight * itm_score)
 
-    # Also calculate the legacy scores for backward compatibility
-    max_total = max(total_call_oi, total_put_oi, 1)
-    total_oi_score = (net_total_oi / max_total) * 100
+    # Store component scores for display
+    total_oi_score = otm_total_score  # For backward compatibility display
 
     # Determine verdict based on combined score
     if combined_score > 40:

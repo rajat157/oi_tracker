@@ -61,9 +61,9 @@ function updateSectionVisibility() {
     const itmBreakdown = document.getElementById('itm-breakdown');
 
     if (atmSection) atmSection.style.display = includeATM ? 'block' : 'none';
-    if (atmBreakdown) atmBreakdown.style.display = includeATM ? 'flex' : 'none';
+    if (atmBreakdown) atmBreakdown.style.display = includeATM ? 'block' : 'none';
     if (itmSection) itmSection.style.display = includeITM ? 'grid' : 'none';
-    if (itmBreakdown) itmBreakdown.style.display = includeITM ? 'flex' : 'none';
+    if (itmBreakdown) itmBreakdown.style.display = includeITM ? 'block' : 'none';
 }
 
 // Initialize Chart.js
@@ -247,9 +247,18 @@ function updateDashboard(data) {
         setText('itm-weight', Math.round(data.weights.itm * 100) + '%');
     }
 
+    // Update zone scores and their 70/30 components
     updateScore('otm-score-display', data.otm_score, true);
+    updateScore('otm-change-score', data.otm_change_score, true);
+    updateScore('otm-total-score', data.otm_total_score, true);
+
     updateScore('atm-score-display', data.atm_score, true);
+    updateScore('atm-change-score', data.atm_change_score, true);
+    updateScore('atm-total-score', data.atm_total_score, true);
+
     updateScore('itm-score-display', data.itm_score, true);
+    updateScore('itm-change-score', data.itm_change_score, true);
+    updateScore('itm-total-score', data.itm_total_score, true);
 
     // Update metrics
     setText('spot-price', formatNumber(data.spot_price));
@@ -321,6 +330,7 @@ function updateScore(id, value, addColorClass = false) {
         }
     } else {
         elem.textContent = '--';
+        elem.classList.remove('positive', 'negative');
     }
 }
 

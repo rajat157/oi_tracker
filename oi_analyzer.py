@@ -246,6 +246,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
     # Calculate ATM score (70% OI change + 30% Total OI)
     atm_score = 0.0
+    atm_change_score = 0.0
+    atm_total_score = 0.0
     if include_atm:
         atm_net_change = atm_put_oi_change - atm_call_oi_change
         atm_net_total = atm_put_oi - atm_call_oi
@@ -257,6 +259,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
     # Calculate ITM score (70% OI change + 30% Total OI)
     itm_score = 0.0
+    itm_change_score = 0.0
+    itm_total_score = 0.0
     if include_itm:
         itm_net_change = total_itm_put_oi_change - total_itm_call_oi_change
         itm_net_total = total_itm_put_oi - total_itm_call_oi
@@ -326,8 +330,14 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         "itm_call_oi_change": total_itm_call_oi_change,
         "itm_put_oi_change": total_itm_put_oi_change,
         "otm_score": round(otm_score, 1),
+        "otm_change_score": round(otm_change_score, 1),
+        "otm_total_score": round(otm_total_score, 1),
         "atm_score": round(atm_score, 1) if include_atm else None,
+        "atm_change_score": round(atm_change_score, 1) if include_atm else None,
+        "atm_total_score": round(atm_total_score, 1) if include_atm else None,
         "itm_score": round(itm_score, 1) if include_itm else None,
+        "itm_change_score": round(itm_change_score, 1) if include_itm else None,
+        "itm_total_score": round(itm_total_score, 1) if include_itm else None,
         "weights": {
             "otm": otm_weight,
             "atm": atm_weight,

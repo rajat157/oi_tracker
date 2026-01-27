@@ -308,9 +308,21 @@ body {
 
 /* Breakdown */
 .verdict-breakdown {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
+}
+
+.breakdown-zone {
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+
+.breakdown-item.zone-header {
+    padding: 14px;
+    background: transparent;
+    border-radius: 0;
 }
 
 .breakdown-item {
@@ -349,6 +361,53 @@ body {
 }
 
 .breakdown-value.negative {
+    color: var(--bearish);
+}
+
+/* Sub-breakdown (70/30 split) */
+.breakdown-sub {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    border-top: 1px solid var(--border);
+}
+
+.sub-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 10px 8px;
+    background: var(--bg-card);
+}
+
+.sub-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.sub-weight {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    background: var(--bg-hover);
+    padding: 1px 4px;
+    border-radius: 3px;
+}
+
+.sub-value {
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.sub-value.positive {
+    color: var(--bullish);
+}
+
+.sub-value.negative {
     color: var(--bearish);
 }
 

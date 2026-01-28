@@ -65,6 +65,12 @@ def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) ->
     - ITM Calls: Strikes BELOW spot (calls with intrinsic value)
     - ITM Puts: Strikes ABOVE spot (puts with intrinsic value)
 
+    ITM Writer Dynamics (Tug-of-War "Pulling" Force):
+    - ITM Call writers (below spot) want price to fall back → Bearish pressure
+      (They sold calls that are now losing money; want to minimize loss)
+    - ITM Put writers (above spot) want price to rise back → Bullish pressure
+      (They sold puts that are now losing money; want to minimize loss)
+
     Args:
         atm_strike: The ATM strike price
         all_strikes: Sorted list of all available strikes
@@ -258,6 +264,12 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         atm_score = (0.7 * atm_change_score) + (0.3 * atm_total_score)
 
     # Calculate ITM score (70% OI change + 30% Total OI)
+    # ITM Zone Scoring Logic:
+    # - ITM Call writers (below spot) want price to fall → Bearish pressure
+    # - ITM Put writers (above spot) want price to rise → Bullish pressure
+    # - Formula: Put OI - Call OI (same directionality as OTM)
+    # - Positive score = Bulls pulling/holding price UP
+    # - Negative score = Bears pulling/holding price DOWN
     itm_score = 0.0
     itm_change_score = 0.0
     itm_total_score = 0.0

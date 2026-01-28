@@ -108,7 +108,7 @@ class OIScheduler:
             save_snapshot(timestamp, spot_price, strikes_data, current_expiry)
 
             # Perform analysis
-            analysis = analyze_tug_of_war(strikes_data, spot_price)
+            analysis = analyze_tug_of_war(strikes_data, spot_price, include_atm=True, include_itm=True)
             analysis["timestamp"] = timestamp.isoformat()
             analysis["expiry_date"] = current_expiry
 
@@ -122,7 +122,11 @@ class OIScheduler:
                 call_oi_change=analysis["call_oi_change"],
                 put_oi_change=analysis["put_oi_change"],
                 verdict=analysis["verdict"],
-                expiry_date=current_expiry
+                expiry_date=current_expiry,
+                atm_call_oi_change=analysis.get("atm_data", {}).get("call_oi_change", 0),
+                atm_put_oi_change=analysis.get("atm_data", {}).get("put_oi_change", 0),
+                itm_call_oi_change=analysis.get("itm_call_oi_change", 0),
+                itm_put_oi_change=analysis.get("itm_put_oi_change", 0)
             )
 
             self.last_analysis = analysis

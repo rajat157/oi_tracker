@@ -68,6 +68,18 @@ def init_db():
             ON analysis_history(timestamp)
         """)
 
+        # Add migration for ATM/ITM columns if they don't exist
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pragma_table_info('analysis_history')
+            WHERE name='atm_call_oi_change'
+        """)
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN atm_call_oi_change INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN atm_put_oi_change INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN itm_call_oi_change INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN itm_put_oi_change INTEGER DEFAULT 0")
+            print("Added ATM/ITM columns to analysis_history table")
+
         conn.commit()
 
 
@@ -108,15 +120,18 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
 def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
                   total_call_oi: int, total_put_oi: int,
                   call_oi_change: int, put_oi_change: int,
-                  verdict: str, expiry_date: str):
+                  verdict: str, expiry_date: str,
+                  atm_call_oi_change: int = 0, atm_put_oi_change: int = 0,
+                  itm_call_oi_change: int = 0, itm_put_oi_change: int = 0):
     """Save analysis result to history."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO analysis_history
             (timestamp, spot_price, atm_strike, total_call_oi, total_put_oi,
-             call_oi_change, put_oi_change, verdict, expiry_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             call_oi_change, put_oi_change, verdict, expiry_date,
+             atm_call_oi_change, atm_put_oi_change, itm_call_oi_change, itm_put_oi_change)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             timestamp.isoformat(),
             spot_price,
@@ -126,7 +141,11 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
             call_oi_change,
             put_oi_change,
             verdict,
-            expiry_date
+            expiry_date,
+            atm_call_oi_change,
+            atm_put_oi_change,
+            itm_call_oi_change,
+            itm_put_oi_change
         ))
         conn.commit()
 
@@ -197,7 +216,9 @@ def get_analysis_history(limit: int = 50) -> list:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT timestamp, spot_price, total_call_oi, total_put_oi,
-                   call_oi_change, put_oi_change, verdict
+                   call_oi_change, put_oi_change, verdict,
+                   atm_call_oi_change, atm_put_oi_change,
+                   itm_call_oi_change, itm_put_oi_change
             FROM analysis_history
             ORDER BY timestamp DESC
             LIMIT ?

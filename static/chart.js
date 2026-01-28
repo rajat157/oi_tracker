@@ -2,6 +2,8 @@
 
 const socket = io();
 let oiChart = null;
+let atmChart = null;
+let itmChart = null;
 let lastChartTimestamp = null;
 
 // Toggle state (persisted in localStorage)
@@ -11,6 +13,8 @@ let includeITM = localStorage.getItem('includeITM') === 'true';
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     initChart();
+    initATMChart();
+    initITMChart();
     initToggles();
     setupSocketListeners();
 
@@ -57,13 +61,17 @@ function initToggles() {
 function updateSectionVisibility() {
     const atmSection = document.getElementById('atm-section');
     const atmBreakdown = document.getElementById('atm-breakdown');
+    const atmChartSection = document.getElementById('atm-chart-section');
     const itmSection = document.getElementById('itm-section');
     const itmBreakdown = document.getElementById('itm-breakdown');
+    const itmChartSection = document.getElementById('itm-chart-section');
 
     if (atmSection) atmSection.style.display = includeATM ? 'block' : 'none';
     if (atmBreakdown) atmBreakdown.style.display = includeATM ? 'block' : 'none';
+    if (atmChartSection) atmChartSection.style.display = includeATM ? 'block' : 'none';
     if (itmSection) itmSection.style.display = includeITM ? 'grid' : 'none';
     if (itmBreakdown) itmBreakdown.style.display = includeITM ? 'block' : 'none';
+    if (itmChartSection) itmChartSection.style.display = includeITM ? 'block' : 'none';
 }
 
 // Initialize Chart.js
@@ -88,6 +96,172 @@ function initChart() {
                 },
                 {
                     label: 'Put OI Change',
+                    data: [],
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#10b981'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    align: 'end',
+                    labels: {
+                        color: '#8b8b9e',
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        padding: 20,
+                        font: { size: 12, family: 'Inter' }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: '#1a1a24',
+                    titleColor: '#ffffff',
+                    bodyColor: '#8b8b9e',
+                    borderColor: '#2a2a3a',
+                    borderWidth: 1,
+                    padding: 12,
+                    cornerRadius: 8,
+                    titleFont: { size: 13, family: 'Inter' },
+                    bodyFont: { size: 12, family: 'Inter' }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                    ticks: { color: '#5c5c6f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                    ticks: {
+                        color: '#5c5c6f',
+                        font: { size: 11, family: 'Inter' },
+                        callback: value => formatCompact(value)
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Initialize ATM Chart
+function initATMChart() {
+    const ctx = document.getElementById('atm-chart').getContext('2d');
+
+    atmChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'ATM Call OI Change',
+                    data: [],
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#ef4444'
+                },
+                {
+                    label: 'ATM Put OI Change',
+                    data: [],
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#10b981'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    align: 'end',
+                    labels: {
+                        color: '#8b8b9e',
+                        usePointStyle: true,
+                        pointStyle: 'circle',
+                        padding: 20,
+                        font: { size: 12, family: 'Inter' }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: '#1a1a24',
+                    titleColor: '#ffffff',
+                    bodyColor: '#8b8b9e',
+                    borderColor: '#2a2a3a',
+                    borderWidth: 1,
+                    padding: 12,
+                    cornerRadius: 8,
+                    titleFont: { size: 13, family: 'Inter' },
+                    bodyFont: { size: 12, family: 'Inter' }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                    ticks: { color: '#5c5c6f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                },
+                y: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                    ticks: {
+                        color: '#5c5c6f',
+                        font: { size: 11, family: 'Inter' },
+                        callback: value => formatCompact(value)
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Initialize ITM Chart
+function initITMChart() {
+    const ctx = document.getElementById('itm-chart').getContext('2d');
+
+    itmChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'ITM Call OI Change',
+                    data: [],
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#ef4444'
+                },
+                {
+                    label: 'ITM Put OI Change',
                     data: [],
                     borderColor: '#10b981',
                     backgroundColor: 'rgba(16, 185, 129, 0.1)',
@@ -376,11 +550,28 @@ function updateChartHistory(history) {
 
     const limited = history.slice(-30);
 
+    // Update OTM chart (existing)
     oiChart.data.labels = limited.map(item =>
         new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     );
     oiChart.data.datasets[0].data = limited.map(item => item.call_oi_change);
     oiChart.data.datasets[1].data = limited.map(item => item.put_oi_change);
+
+    // Update ATM chart
+    if (atmChart) {
+        atmChart.data.labels = oiChart.data.labels;
+        atmChart.data.datasets[0].data = limited.map(item => item.atm_call_oi_change || 0);
+        atmChart.data.datasets[1].data = limited.map(item => item.atm_put_oi_change || 0);
+        atmChart.update('none');
+    }
+
+    // Update ITM chart
+    if (itmChart) {
+        itmChart.data.labels = oiChart.data.labels;
+        itmChart.data.datasets[0].data = limited.map(item => item.itm_call_oi_change || 0);
+        itmChart.data.datasets[1].data = limited.map(item => item.itm_put_oi_change || 0);
+        itmChart.update('none');
+    }
 
     if (limited.length > 0) {
         lastChartTimestamp = limited[limited.length - 1].timestamp;
@@ -398,16 +589,48 @@ function addChartDataPoint(data) {
 
     lastChartTimestamp = data.timestamp;
 
+    // Handle rolling window for all charts
     if (oiChart.data.labels.length >= 30) {
         oiChart.data.labels.shift();
         oiChart.data.datasets[0].data.shift();
         oiChart.data.datasets[1].data.shift();
+
+        if (atmChart) {
+            atmChart.data.labels.shift();
+            atmChart.data.datasets[0].data.shift();
+            atmChart.data.datasets[1].data.shift();
+        }
+
+        if (itmChart) {
+            itmChart.data.labels.shift();
+            itmChart.data.datasets[0].data.shift();
+            itmChart.data.datasets[1].data.shift();
+        }
     }
 
+    // Add new data point to OTM chart
     oiChart.data.labels.push(label);
     oiChart.data.datasets[0].data.push(data.call_oi_change);
     oiChart.data.datasets[1].data.push(data.put_oi_change);
     oiChart.update('none');
+
+    // Add new data point to ATM chart
+    if (atmChart) {
+        atmChart.data.labels.push(label);
+        const atmCallChange = data.atm_data?.call_oi_change || 0;
+        const atmPutChange = data.atm_data?.put_oi_change || 0;
+        atmChart.data.datasets[0].data.push(atmCallChange);
+        atmChart.data.datasets[1].data.push(atmPutChange);
+        atmChart.update('none');
+    }
+
+    // Add new data point to ITM chart
+    if (itmChart) {
+        itmChart.data.labels.push(label);
+        itmChart.data.datasets[0].data.push(data.itm_call_oi_change || 0);
+        itmChart.data.datasets[1].data.push(data.itm_put_oi_change || 0);
+        itmChart.update('none');
+    }
 }
 
 // UI functions

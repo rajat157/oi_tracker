@@ -419,6 +419,13 @@ function updateDashboard(data) {
         setText('otm-weight', Math.round(data.weights.otm * 100) + '%');
         setText('atm-weight', Math.round(data.weights.atm * 100) + '%');
         setText('itm-weight', Math.round(data.weights.itm * 100) + '%');
+        setText('momentum-weight', Math.round(data.weights.momentum * 100) + '%');
+
+        // Show/hide momentum breakdown based on weight
+        const momentumBreakdown = document.getElementById('momentum-breakdown');
+        if (momentumBreakdown) {
+            momentumBreakdown.style.display = data.weights.momentum > 0 ? 'block' : 'none';
+        }
     }
 
     // Update zone scores and their 70/30 components
@@ -434,11 +441,34 @@ function updateDashboard(data) {
     updateScore('itm-change-score', data.itm_change_score, true);
     updateScore('itm-total-score', data.itm_total_score, true);
 
+    // Update momentum scores
+    updateScore('momentum-score-display', data.momentum_score, true);
+    const momentumPctElem = document.getElementById('momentum-change-pct');
+    if (momentumPctElem && data.price_change_pct !== undefined) {
+        const pct = data.price_change_pct;
+        momentumPctElem.textContent = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+        momentumPctElem.classList.remove('positive', 'negative', 'neutral');
+        momentumPctElem.classList.add(pct > 0 ? 'positive' : pct < 0 ? 'negative' : 'neutral');
+    }
+
     // Update metrics
     setText('spot-price', formatNumber(data.spot_price));
     setText('atm-strike', formatNumber(data.atm_strike));
     setText('expiry-date', data.expiry_date || '--');
     setText('pcr-value', data.pcr ?? '--');
+
+    // Update momentum
+    const momentumElem = document.getElementById('momentum-value');
+    if (momentumElem && data.price_change_pct !== undefined) {
+        const pct = data.price_change_pct;
+        const arrow = pct > 0 ? '↑' : pct < 0 ? '↓' : '→';
+        const color = pct > 0 ? '#10b981' : pct < 0 ? '#ef4444' : '#8b8b9e';
+        momentumElem.textContent = `${arrow} ${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+        momentumElem.style.color = color;
+    } else if (momentumElem) {
+        momentumElem.textContent = '--';
+        momentumElem.style.color = '#8b8b9e';
+    }
 
     // Update OI comparison
     const maxOI = Math.max(data.total_call_oi || 0, data.total_put_oi || 0);

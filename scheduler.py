@@ -10,7 +10,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from nse_fetcher import NSEFetcher
 from oi_analyzer import analyze_tug_of_war
-from database import save_snapshot, save_analysis, purge_old_data, get_last_data_date
+from database import save_snapshot, save_analysis, purge_old_data, get_last_data_date, get_recent_price_trend
 
 
 # Market timing constants (IST)
@@ -107,8 +107,17 @@ class OIScheduler:
             # Save snapshot to database
             save_snapshot(timestamp, spot_price, strikes_data, current_expiry)
 
-            # Perform analysis
-            analysis = analyze_tug_of_war(strikes_data, spot_price, include_atm=True, include_itm=True)
+            # Get price history for momentum calculation
+            price_history = get_recent_price_trend(lookback_minutes=9)
+
+            # Perform analysis with momentum
+            analysis = analyze_tug_of_war(
+                strikes_data,
+                spot_price,
+                include_atm=True,
+                include_itm=True,
+                price_history=price_history
+            )
             analysis["timestamp"] = timestamp.isoformat()
             analysis["expiry_date"] = current_expiry
 

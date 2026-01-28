@@ -228,6 +228,29 @@ def get_analysis_history(limit: int = 50) -> list:
         return [dict(row) for row in reversed(rows)]  # Chronological order
 
 
+def get_recent_price_trend(lookback_minutes: int = 9) -> list:
+    """
+    Get recent price history for momentum calculation.
+
+    Args:
+        lookback_minutes: Number of minutes to look back (default 9 = 3 data points at 3-min intervals)
+
+    Returns:
+        List of dicts with 'timestamp' and 'spot_price' from recent history
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT timestamp, spot_price
+            FROM analysis_history
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (lookback_minutes // 3 + 1,))  # Get enough points for the lookback period
+
+        rows = cursor.fetchall()
+        return [dict(row) for row in reversed(rows)]  # Chronological order
+
+
 def get_strikes_for_timestamp(timestamp: str) -> dict:
     """Get all strike data for a specific timestamp."""
     with get_connection() as conn:

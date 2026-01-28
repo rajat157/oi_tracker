@@ -7,7 +7,7 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 
 from scheduler import OIScheduler
-from database import get_latest_analysis, get_analysis_history, get_latest_snapshot
+from database import get_latest_analysis, get_analysis_history, get_latest_snapshot, get_recent_price_trend
 from oi_analyzer import analyze_tug_of_war
 
 
@@ -34,6 +34,9 @@ def api_latest():
     include_atm = request.args.get("include_atm", "false").lower() == "true"
     include_itm = request.args.get("include_itm", "false").lower() == "true"
 
+    # Get price history for momentum calculation
+    price_history = get_recent_price_trend(lookback_minutes=9)
+
     # Always get fresh analysis from snapshot to ensure scores are calculated
     snapshot = get_latest_snapshot()
 
@@ -43,7 +46,8 @@ def api_latest():
             snapshot["strikes"],
             snapshot["spot_price"],
             include_atm=include_atm,
-            include_itm=include_itm
+            include_itm=include_itm,
+            price_history=price_history
         )
         analysis["timestamp"] = snapshot["timestamp"]
         analysis["expiry_date"] = snapshot["expiry_date"]
@@ -59,7 +63,8 @@ def api_latest():
                 snapshot["strikes"],
                 snapshot["spot_price"],
                 include_atm=include_atm,
-                include_itm=include_itm
+                include_itm=include_itm,
+                price_history=price_history
             )
             analysis["timestamp"] = snapshot.get("timestamp", cached.get("timestamp"))
             analysis["expiry_date"] = snapshot.get("expiry_date", cached.get("expiry_date"))
@@ -128,6 +133,9 @@ def handle_toggle_update(data):
     include_atm = data.get("include_atm", False)
     include_itm = data.get("include_itm", False)
 
+    # Get price history for momentum calculation
+    price_history = get_recent_price_trend(lookback_minutes=9)
+
     # Re-analyze with new settings and emit to this client only
     snapshot = get_latest_snapshot()
     if snapshot and snapshot.get("strikes"):
@@ -135,7 +143,8 @@ def handle_toggle_update(data):
             snapshot["strikes"],
             snapshot["spot_price"],
             include_atm=include_atm,
-            include_itm=include_itm
+            include_itm=include_itm,
+            price_history=price_history
         )
         analysis["timestamp"] = snapshot.get("timestamp")
         analysis["expiry_date"] = snapshot.get("expiry_date")

@@ -3,7 +3,7 @@ OI Analyzer - Tug-of-War Analysis Logic
 Analyzes option chain OI to determine market sentiment
 """
 
-from typing import Tuple
+from typing import Tuple, Optional, List
 
 
 def find_atm_strike(spot_price: float, strikes: list) -> int:
@@ -57,6 +57,37 @@ def get_otm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) ->
     return otm_calls, otm_puts
 
 
+def calculate_price_momentum(price_history: List[dict]) -> float:
+    """
+    Calculate price momentum score based on recent price movement.
+
+    Args:
+        price_history: List of dicts with 'spot_price' (recent history, chronological order)
+
+    Returns:
+        Momentum score from -100 (strong bearish) to +100 (strong bullish)
+    """
+    if not price_history or len(price_history) < 2:
+        return 0.0
+
+    # Compare current price to oldest price in history
+    current_price = price_history[-1]['spot_price']
+    past_price = price_history[0]['spot_price']
+
+    if past_price == 0:
+        return 0.0
+
+    # Calculate percentage change
+    price_change_pct = ((current_price - past_price) / past_price) * 100
+
+    # Amplify the signal: +1% = +20, -1% = -20
+    # This makes momentum more visible in the combined score
+    momentum_score = price_change_pct * 20
+
+    # Cap at ±100
+    return max(-100, min(100, momentum_score))
+
+
 def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) -> Tuple[list, list]:
     """
     Get ITM strikes on both sides of ATM.
@@ -100,13 +131,16 @@ def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) ->
 def analyze_tug_of_war(strikes_data: dict, spot_price: float,
                         num_otm_strikes: int = 3,
                         include_atm: bool = False,
-                        include_itm: bool = False) -> dict:
+                        include_itm: bool = False,
+                        momentum_score: Optional[float] = None,
+                        price_history: Optional[List[dict]] = None) -> dict:
     """
     Perform tug-of-war analysis on option chain data.
 
     Analysis Logic:
     - High Call OI addition = Bears writing calls = Bearish pressure
     - High Put OI addition = Bulls writing puts = Bullish pressure
+    - Price momentum confirms/contradicts OI signals
 
     Args:
         strikes_data: Dict of strike -> {ce_oi, ce_oi_change, pe_oi, pe_oi_change}
@@ -114,6 +148,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         num_otm_strikes: Number of OTM strikes to analyze on each side
         include_atm: Include ATM strike in analysis
         include_itm: Include ITM strikes in analysis
+        momentum_score: Pre-calculated momentum score (-100 to +100)
+        price_history: List of recent price data for momentum calculation
 
     Returns:
         dict with analysis results including verdict
@@ -233,15 +269,36 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     net_oi_change = total_put_oi_change - total_call_oi_change
     net_total_oi = total_put_oi - total_call_oi
 
+    # Calculate momentum if price_history provided
+    if momentum_score is None and price_history:
+        momentum_score = calculate_price_momentum(price_history)
+    elif momentum_score is None:
+        momentum_score = 0.0
+
     # Determine weights based on enabled options
-    if include_atm and include_itm:
-        otm_weight, atm_weight, itm_weight = 0.60, 0.25, 0.15
-    elif include_atm:
-        otm_weight, atm_weight, itm_weight = 0.70, 0.30, 0.0
-    elif include_itm:
-        otm_weight, atm_weight, itm_weight = 0.85, 0.0, 0.15
+    # With momentum enabled, reduce other weights proportionally
+    if momentum_score != 0.0:
+        # Momentum gets 20% weight
+        momentum_weight = 0.20
+        if include_atm and include_itm:
+            otm_weight, atm_weight, itm_weight = 0.50, 0.20, 0.10
+        elif include_atm:
+            otm_weight, atm_weight, itm_weight = 0.60, 0.20, 0.0
+        elif include_itm:
+            otm_weight, atm_weight, itm_weight = 0.70, 0.0, 0.10
+        else:
+            otm_weight, atm_weight, itm_weight = 0.80, 0.0, 0.0
     else:
-        otm_weight, atm_weight, itm_weight = 1.0, 0.0, 0.0
+        # No momentum, use original weights
+        momentum_weight = 0.0
+        if include_atm and include_itm:
+            otm_weight, atm_weight, itm_weight = 0.60, 0.25, 0.15
+        elif include_atm:
+            otm_weight, atm_weight, itm_weight = 0.70, 0.30, 0.0
+        elif include_itm:
+            otm_weight, atm_weight, itm_weight = 0.85, 0.0, 0.15
+        else:
+            otm_weight, atm_weight, itm_weight = 1.0, 0.0, 0.0
 
     # Calculate OTM score (70% OI change + 30% Total OI)
     max_otm_change = max(abs(total_call_oi_change), abs(total_put_oi_change), 1)
@@ -282,8 +339,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         itm_total_score = (itm_net_total / max_itm_total) * 100
         itm_score = (0.7 * itm_change_score) + (0.3 * itm_total_score)
 
-    # Combined weighted score across zones
-    combined_score = (otm_weight * otm_score) + (atm_weight * atm_score) + (itm_weight * itm_score)
+    # Combined weighted score across zones (including momentum)
+    combined_score = (otm_weight * otm_score) + (atm_weight * atm_score) + (itm_weight * itm_score) + (momentum_weight * momentum_score)
 
     # Store component scores for display
     total_oi_score = otm_total_score  # For backward compatibility display
@@ -314,6 +371,14 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     # PCR (Put-Call Ratio) based on OI
     pcr = total_put_oi / total_call_oi if total_call_oi > 0 else 0
 
+    # Calculate price change percentage for display
+    price_change_pct = 0.0
+    if price_history and len(price_history) >= 2:
+        current = price_history[-1]['spot_price']
+        past = price_history[0]['spot_price']
+        if past > 0:
+            price_change_pct = ((current - past) / past) * 100
+
     return {
         "spot_price": spot_price,
         "atm_strike": atm_strike,
@@ -331,6 +396,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         "pcr": round(pcr, 2),
         "verdict": verdict,
         "strength": strength,
+        # Momentum data
+        "momentum_score": round(momentum_score, 1),
+        "price_change_pct": round(price_change_pct, 2),
         # ATM/ITM toggle data
         "include_atm": include_atm,
         "include_itm": include_itm,
@@ -353,7 +421,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         "weights": {
             "otm": otm_weight,
             "atm": atm_weight,
-            "itm": itm_weight
+            "itm": itm_weight,
+            "momentum": momentum_weight
         }
     }
 

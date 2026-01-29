@@ -80,6 +80,16 @@ def init_db():
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN itm_put_oi_change INTEGER DEFAULT 0")
             print("Added ATM/ITM columns to analysis_history table")
 
+        # Add migration for volume columns if they don't exist
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pragma_table_info('oi_snapshots')
+            WHERE name='ce_volume'
+        """)
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN ce_volume INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_volume INTEGER DEFAULT 0")
+            print("Added volume columns to oi_snapshots table")
+
         conn.commit()
 
 
@@ -101,8 +111,8 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
             cursor.execute("""
                 INSERT INTO oi_snapshots
                 (timestamp, spot_price, strike_price, ce_oi, ce_oi_change,
-                 pe_oi, pe_oi_change, expiry_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 pe_oi, pe_oi_change, ce_volume, pe_volume, expiry_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 timestamp.isoformat(),
                 spot_price,
@@ -111,6 +121,8 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
                 data.get("ce_oi_change", 0),
                 data.get("pe_oi", 0),
                 data.get("pe_oi_change", 0),
+                data.get("ce_volume", 0),
+                data.get("pe_volume", 0),
                 expiry_date
             ))
 
@@ -171,7 +183,8 @@ def get_latest_snapshot() -> Optional[dict]:
 
         # Get all strikes for that timestamp
         cursor.execute("""
-            SELECT strike_price, ce_oi, ce_oi_change, pe_oi, pe_oi_change
+            SELECT strike_price, ce_oi, ce_oi_change, pe_oi, pe_oi_change,
+                   ce_volume, pe_volume
             FROM oi_snapshots
             WHERE timestamp = ?
             ORDER BY strike_price
@@ -179,11 +192,24 @@ def get_latest_snapshot() -> Optional[dict]:
 
         strikes = {}
         for strike_row in cursor.fetchall():
+            # Handle volume columns that may not exist in old data
+            try:
+                ce_volume = strike_row["ce_volume"]
+            except (KeyError, IndexError):
+                ce_volume = 0
+
+            try:
+                pe_volume = strike_row["pe_volume"]
+            except (KeyError, IndexError):
+                pe_volume = 0
+
             strikes[strike_row["strike_price"]] = {
                 "ce_oi": strike_row["ce_oi"],
                 "ce_oi_change": strike_row["ce_oi_change"],
+                "ce_volume": ce_volume,
                 "pe_oi": strike_row["pe_oi"],
                 "pe_oi_change": strike_row["pe_oi_change"],
+                "pe_volume": pe_volume,
             }
 
         return {
@@ -256,7 +282,8 @@ def get_strikes_for_timestamp(timestamp: str) -> dict:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT strike_price, ce_oi, ce_oi_change, pe_oi, pe_oi_change
+            SELECT strike_price, ce_oi, ce_oi_change, pe_oi, pe_oi_change,
+                   ce_volume, pe_volume
             FROM oi_snapshots
             WHERE timestamp = ?
             ORDER BY strike_price
@@ -264,11 +291,24 @@ def get_strikes_for_timestamp(timestamp: str) -> dict:
 
         strikes = {}
         for row in cursor.fetchall():
+            # Handle volume columns that may not exist in old data
+            try:
+                ce_volume = row["ce_volume"]
+            except (KeyError, IndexError):
+                ce_volume = 0
+
+            try:
+                pe_volume = row["pe_volume"]
+            except (KeyError, IndexError):
+                pe_volume = 0
+
             strikes[row["strike_price"]] = {
                 "ce_oi": row["ce_oi"],
                 "ce_oi_change": row["ce_oi_change"],
+                "ce_volume": ce_volume,
                 "pe_oi": row["pe_oi"],
                 "pe_oi_change": row["pe_oi_change"],
+                "pe_volume": pe_volume,
             }
         return strikes
 

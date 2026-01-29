@@ -451,6 +451,32 @@ function updateDashboard(data) {
         momentumPctElem.classList.add(pct > 0 ? 'positive' : pct < 0 ? 'negative' : 'neutral');
     }
 
+    // Update confirmation indicator
+    const confirmIcon = document.getElementById('confirmation-icon');
+    const confirmText = document.getElementById('confirmation-text');
+    const confirmIndicator = document.getElementById('confirmation-indicator');
+
+    if (confirmIndicator && data.confirmation_status) {
+        // Reset classes
+        confirmIndicator.className = 'confirmation-indicator';
+
+        if (data.confirmation_status === 'CONFIRMED') {
+            confirmIcon.textContent = '[OK]';
+            confirmIndicator.classList.add('confirmed');
+        } else if (data.confirmation_status === 'CONFLICT') {
+            confirmIcon.textContent = '[!]';
+            confirmIndicator.classList.add('conflict');
+        } else if (data.confirmation_status === 'REVERSAL_ALERT') {
+            confirmIcon.textContent = '[!!]';
+            confirmIndicator.classList.add('reversal-alert');
+        } else {
+            confirmIcon.textContent = '[~]';
+            confirmIndicator.classList.add('neutral');
+        }
+
+        confirmText.textContent = data.confirmation_message || '--';
+    }
+
     // Update metrics
     setText('spot-price', formatNumber(data.spot_price));
     setText('atm-strike', formatNumber(data.atm_strike));
@@ -468,6 +494,18 @@ function updateDashboard(data) {
     } else if (momentumElem) {
         momentumElem.textContent = '--';
         momentumElem.style.color = '#8b8b9e';
+    }
+
+    // Update volume metrics
+    setText('volume-pcr', data.volume_pcr ?? '--');
+
+    // Display average conviction with color coding
+    const avgConviction = ((data.avg_call_conviction || 0) + (data.avg_put_conviction || 0)) / 2;
+    const convictionElem = document.getElementById('avg-conviction');
+    if (convictionElem) {
+        convictionElem.textContent = avgConviction > 0 ? avgConviction.toFixed(2) + 'x' : '--';
+        convictionElem.style.color = avgConviction > 1.2 ? '#10b981' :
+                                     avgConviction < 0.8 ? '#ef4444' : '#8b8b9e';
     }
 
     // Update OI comparison
@@ -496,8 +534,13 @@ function updateDashboard(data) {
 
     setText('calls-total-oi', formatNumber(data.total_call_oi));
     setText('calls-total-change', formatSigned(data.call_oi_change));
+    setText('calls-total-volume', formatNumber(data.total_call_volume || 0));
+    setText('calls-avg-conviction', data.avg_call_conviction ? data.avg_call_conviction.toFixed(2) + 'x' : '--');
+
     setText('puts-total-oi', formatNumber(data.total_put_oi));
     setText('puts-total-change', formatSigned(data.put_oi_change));
+    setText('puts-total-volume', formatNumber(data.total_put_volume || 0));
+    setText('puts-avg-conviction', data.avg_put_conviction ? data.avg_put_conviction.toFixed(2) + 'x' : '--');
 
     // Update ATM section
     if (data.atm_data) {
@@ -513,12 +556,24 @@ function updateDashboard(data) {
         updateTable('itm-calls-tbody', data.itm_calls);
         setText('itm-calls-total-oi', formatNumber(data.total_itm_call_oi));
         setText('itm-calls-total-change', formatSigned(data.itm_call_oi_change));
+        // Calculate ITM calls volume and conviction
+        const itmCallsVolume = data.itm_calls.reduce((sum, s) => sum + (s.volume || 0), 0);
+        const itmCallsAvgConviction = data.itm_calls.length > 0 ?
+            data.itm_calls.reduce((sum, s) => sum + (s.conviction || 0), 0) / data.itm_calls.length : 0;
+        setText('itm-calls-total-volume', formatNumber(itmCallsVolume));
+        setText('itm-calls-avg-conviction', itmCallsAvgConviction > 0 ? itmCallsAvgConviction.toFixed(2) + 'x' : '--');
     }
 
     if (data.itm_puts) {
         updateTable('itm-puts-tbody', data.itm_puts);
         setText('itm-puts-total-oi', formatNumber(data.total_itm_put_oi));
         setText('itm-puts-total-change', formatSigned(data.itm_put_oi_change));
+        // Calculate ITM puts volume and conviction
+        const itmPutsVolume = data.itm_puts.reduce((sum, s) => sum + (s.volume || 0), 0);
+        const itmPutsAvgConviction = data.itm_puts.length > 0 ?
+            data.itm_puts.reduce((sum, s) => sum + (s.conviction || 0), 0) / data.itm_puts.length : 0;
+        setText('itm-puts-total-volume', formatNumber(itmPutsVolume));
+        setText('itm-puts-avg-conviction', itmPutsAvgConviction > 0 ? itmPutsAvgConviction.toFixed(2) + 'x' : '--');
     }
 }
 
@@ -561,17 +616,26 @@ function updateTable(tbodyId, strikes) {
     if (!tbody) return;
 
     if (!strikes?.length) {
-        tbody.innerHTML = '<tr><td colspan="3" class="loading-cell">No data</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No data</td></tr>';
         return;
     }
 
-    tbody.innerHTML = strikes.map(s => `
-        <tr>
-            <td>${formatNumber(s.strike)}</td>
-            <td>${formatNumber(s.oi)}</td>
-            <td class="${s.oi_change >= 0 ? 'positive-change' : 'negative-change'}">${formatSigned(s.oi_change)}</td>
-        </tr>
-    `).join('');
+    tbody.innerHTML = strikes.map(s => {
+        const volume = s.volume !== undefined ? formatNumber(s.volume) : '--';
+        const conviction = s.conviction !== undefined ? s.conviction.toFixed(2) + 'x' : '--';
+        const convictionColor = s.conviction > 1.2 ? 'high-conviction' :
+                               s.conviction < 0.8 ? 'low-conviction' : '';
+
+        return `
+            <tr>
+                <td>${formatNumber(s.strike)}</td>
+                <td>${formatNumber(s.oi)}</td>
+                <td class="${s.oi_change >= 0 ? 'positive-change' : 'negative-change'}">${formatSigned(s.oi_change)}</td>
+                <td>${volume}</td>
+                <td class="${convictionColor}">${conviction}</td>
+            </tr>
+        `;
+    }).join('');
 }
 
 // Chart functions

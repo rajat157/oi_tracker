@@ -88,6 +88,39 @@ def calculate_price_momentum(price_history: List[dict]) -> float:
     return max(-100, min(100, momentum_score))
 
 
+def calculate_conviction_multiplier(volume: int, oi_change: int) -> float:
+    """
+    Calculate conviction multiplier based on volume-to-OI turnover ratio.
+
+    High volume relative to OI change = Fresh positions = High conviction
+    Low volume relative to OI change = Stale positions = Low conviction
+
+    Args:
+        volume: Total traded volume for this strike today
+        oi_change: Change in open interest (absolute value will be used)
+
+    Returns:
+        Multiplier: 1.5 (high conviction), 1.0 (normal), 0.5 (low conviction)
+    """
+    # Ignore negligible OI changes
+    if abs(oi_change) < 100:
+        return 0.5
+
+    # Calculate turnover ratio
+    turnover_ratio = volume / abs(oi_change)
+
+    # Conviction scoring
+    if turnover_ratio > 0.5:
+        # >50% turnover = Fresh, high conviction
+        return 1.5
+    elif turnover_ratio > 0.2:
+        # 20-50% turnover = Moderate conviction
+        return 1.0
+    else:
+        # <20% turnover = Stale, low conviction
+        return 0.5
+
+
 def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) -> Tuple[list, list]:
     """
     Get ITM strikes on both sides of ATM.
@@ -174,34 +207,56 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     otm_calls_data = []
     total_call_oi = 0
     total_call_oi_change = 0
+    total_call_volume = 0
 
     for strike in otm_call_strikes:
         data = strikes_data.get(strike, {})
         ce_oi = data.get("ce_oi", 0)
         ce_oi_change = data.get("ce_oi_change", 0)
+        ce_volume = data.get("ce_volume", 0)
+
+        # Calculate conviction multiplier
+        conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
+        weighted_change = ce_oi_change * conviction
+
         total_call_oi += ce_oi
-        total_call_oi_change += ce_oi_change
+        total_call_oi_change += weighted_change
+        total_call_volume += ce_volume
+
         otm_calls_data.append({
             "strike": strike,
             "oi": ce_oi,
-            "oi_change": ce_oi_change
+            "oi_change": ce_oi_change,
+            "volume": ce_volume,
+            "conviction": conviction
         })
 
     # Calculate totals for OTM Puts (bullish indicator)
     otm_puts_data = []
     total_put_oi = 0
     total_put_oi_change = 0
+    total_put_volume = 0
 
     for strike in otm_put_strikes:
         data = strikes_data.get(strike, {})
         pe_oi = data.get("pe_oi", 0)
         pe_oi_change = data.get("pe_oi_change", 0)
+        pe_volume = data.get("pe_volume", 0)
+
+        # Calculate conviction multiplier
+        conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
+        weighted_change = pe_oi_change * conviction
+
         total_put_oi += pe_oi
-        total_put_oi_change += pe_oi_change
+        total_put_oi_change += weighted_change
+        total_put_volume += pe_volume
+
         otm_puts_data.append({
             "strike": strike,
             "oi": pe_oi,
-            "oi_change": pe_oi_change
+            "oi_change": pe_oi_change,
+            "volume": pe_volume,
+            "conviction": conviction
         })
 
     # ATM Analysis (if enabled)
@@ -210,6 +265,10 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     atm_put_oi = 0
     atm_call_oi_change = 0
     atm_put_oi_change = 0
+    atm_call_volume = 0
+    atm_put_volume = 0
+    atm_call_conviction = 1.0
+    atm_put_conviction = 1.0
 
     if include_atm:
         atm_strike_data = strikes_data.get(atm_strike, {})
@@ -217,12 +276,23 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         atm_put_oi = atm_strike_data.get("pe_oi", 0)
         atm_call_oi_change = atm_strike_data.get("ce_oi_change", 0)
         atm_put_oi_change = atm_strike_data.get("pe_oi_change", 0)
+        atm_call_volume = atm_strike_data.get("ce_volume", 0)
+        atm_put_volume = atm_strike_data.get("pe_volume", 0)
+
+        # Calculate conviction for ATM strikes
+        atm_call_conviction = calculate_conviction_multiplier(atm_call_volume, atm_call_oi_change)
+        atm_put_conviction = calculate_conviction_multiplier(atm_put_volume, atm_put_oi_change)
+
         atm_data = {
             "strike": atm_strike,
             "call_oi": atm_call_oi,
             "put_oi": atm_put_oi,
             "call_oi_change": atm_call_oi_change,
-            "put_oi_change": atm_put_oi_change
+            "put_oi_change": atm_put_oi_change,
+            "call_volume": atm_call_volume,
+            "put_volume": atm_put_volume,
+            "call_conviction": atm_call_conviction,
+            "put_conviction": atm_put_conviction
         }
 
     # ITM Analysis (if enabled)
@@ -232,6 +302,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     total_itm_put_oi = 0
     total_itm_call_oi_change = 0
     total_itm_put_oi_change = 0
+    total_itm_call_volume = 0
+    total_itm_put_volume = 0
 
     if include_itm:
         itm_call_strikes, itm_put_strikes = get_itm_strikes(
@@ -242,24 +314,44 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             data = strikes_data.get(strike, {})
             ce_oi = data.get("ce_oi", 0)
             ce_oi_change = data.get("ce_oi_change", 0)
+            ce_volume = data.get("ce_volume", 0)
+
+            # Calculate conviction multiplier
+            conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
+            weighted_change = ce_oi_change * conviction
+
             total_itm_call_oi += ce_oi
-            total_itm_call_oi_change += ce_oi_change
+            total_itm_call_oi_change += weighted_change
+            total_itm_call_volume += ce_volume
+
             itm_calls_data.append({
                 "strike": strike,
                 "oi": ce_oi,
-                "oi_change": ce_oi_change
+                "oi_change": ce_oi_change,
+                "volume": ce_volume,
+                "conviction": conviction
             })
 
         for strike in itm_put_strikes:
             data = strikes_data.get(strike, {})
             pe_oi = data.get("pe_oi", 0)
             pe_oi_change = data.get("pe_oi_change", 0)
+            pe_volume = data.get("pe_volume", 0)
+
+            # Calculate conviction multiplier
+            conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
+            weighted_change = pe_oi_change * conviction
+
             total_itm_put_oi += pe_oi
-            total_itm_put_oi_change += pe_oi_change
+            total_itm_put_oi_change += weighted_change
+            total_itm_put_volume += pe_volume
+
             itm_puts_data.append({
                 "strike": strike,
                 "oi": pe_oi,
-                "oi_change": pe_oi_change
+                "oi_change": pe_oi_change,
+                "volume": pe_volume,
+                "conviction": conviction
             })
 
     # Determine verdict based on OI changes AND Total OI
@@ -312,9 +404,12 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     atm_change_score = 0.0
     atm_total_score = 0.0
     if include_atm:
-        atm_net_change = atm_put_oi_change - atm_call_oi_change
+        # Apply conviction weighting to ATM changes
+        weighted_atm_call_change = atm_call_oi_change * atm_call_conviction
+        weighted_atm_put_change = atm_put_oi_change * atm_put_conviction
+        atm_net_change = weighted_atm_put_change - weighted_atm_call_change
         atm_net_total = atm_put_oi - atm_call_oi
-        max_atm_change = max(abs(atm_call_oi_change), abs(atm_put_oi_change), 1)
+        max_atm_change = max(abs(weighted_atm_call_change), abs(weighted_atm_put_change), 1)
         max_atm_total = max(atm_call_oi, atm_put_oi, 1)
         atm_change_score = (atm_net_change / max_atm_change) * 100
         atm_total_score = (atm_net_total / max_atm_total) * 100
@@ -379,6 +474,37 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         if past > 0:
             price_change_pct = ((current - past) / past) * 100
 
+    # Calculate confirmation status
+    oi_direction = "bullish" if combined_score > 0 else "bearish" if combined_score < 0 else "neutral"
+    price_direction = "rising" if price_change_pct > 0.05 else "falling" if price_change_pct < -0.05 else "flat"
+
+    if oi_direction == "neutral" or price_direction == "flat":
+        confirmation_status = "NEUTRAL"
+        confirmation_message = "Waiting for clearer signals"
+    elif (oi_direction == "bullish" and price_direction == "rising") or \
+         (oi_direction == "bearish" and price_direction == "falling"):
+        confirmation_status = "CONFIRMED"
+        confirmation_message = f"OI {oi_direction} confirmed by {price_direction} price"
+    elif strength == "strong" and \
+         ((oi_direction == "bullish" and price_direction == "falling") or \
+          (oi_direction == "bearish" and price_direction == "rising")):
+        confirmation_status = "REVERSAL_ALERT"
+        confirmation_message = f"Strong {oi_direction} vs {price_direction} price - potential reversal!"
+    else:
+        confirmation_status = "CONFLICT"
+        confirmation_message = f"OI {oi_direction} but price {price_direction} - wait for alignment"
+
+    # Calculate average conviction scores
+    avg_call_conviction = 0.0
+    avg_put_conviction = 0.0
+    if otm_calls_data:
+        avg_call_conviction = sum(d['conviction'] for d in otm_calls_data) / len(otm_calls_data)
+    if otm_puts_data:
+        avg_put_conviction = sum(d['conviction'] for d in otm_puts_data) / len(otm_puts_data)
+
+    # Calculate volume PCR
+    volume_pcr = total_put_volume / max(total_call_volume, 1)
+
     return {
         "spot_price": spot_price,
         "atm_strike": atm_strike,
@@ -396,6 +522,12 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         "pcr": round(pcr, 2),
         "verdict": verdict,
         "strength": strength,
+        # Volume metrics
+        "total_call_volume": total_call_volume,
+        "total_put_volume": total_put_volume,
+        "volume_pcr": round(volume_pcr, 2),
+        "avg_call_conviction": round(avg_call_conviction, 2),
+        "avg_put_conviction": round(avg_put_conviction, 2),
         # Momentum data
         "momentum_score": round(momentum_score, 1),
         "price_change_pct": round(price_change_pct, 2),
@@ -423,7 +555,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             "atm": atm_weight,
             "itm": itm_weight,
             "momentum": momentum_weight
-        }
+        },
+        "confirmation_status": confirmation_status,
+        "confirmation_message": confirmation_message
     }
 
 

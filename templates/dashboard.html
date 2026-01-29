@@ -62,6 +62,10 @@
                             <span class="score-value" id="combined-score">--</span>
                             <span class="score-label">Composite Score</span>
                         </div>
+                        <div class="confirmation-indicator" id="confirmation-indicator">
+                            <span class="confirmation-icon" id="confirmation-icon">--</span>
+                            <span class="confirmation-text" id="confirmation-text">Loading...</span>
+                        </div>
                     </div>
                     <div class="verdict-breakdown">
                         <!-- OTM Zone -->
@@ -174,6 +178,14 @@
                             <span class="metric-label">Momentum (9m)</span>
                             <span class="metric-value" id="momentum-value">--</span>
                         </div>
+                        <div class="metric">
+                            <span class="metric-label">Volume PCR</span>
+                            <span class="metric-value" id="volume-pcr">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Avg Conviction</span>
+                            <span class="metric-value" id="avg-conviction">--</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -228,16 +240,20 @@
                                     <th>Strike</th>
                                     <th>OI</th>
                                     <th>Change</th>
+                                    <th>Volume</th>
+                                    <th>Conviction</th>
                                 </tr>
                             </thead>
                             <tbody id="calls-tbody">
-                                <tr><td colspan="3" class="loading-cell">Loading...</td></tr>
+                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
                                     <td id="calls-total-oi">--</td>
                                     <td id="calls-total-change">--</td>
+                                    <td id="calls-total-volume">--</td>
+                                    <td id="calls-avg-conviction">--</td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -251,16 +267,20 @@
                                     <th>Strike</th>
                                     <th>OI</th>
                                     <th>Change</th>
+                                    <th>Volume</th>
+                                    <th>Conviction</th>
                                 </tr>
                             </thead>
                             <tbody id="puts-tbody">
-                                <tr><td colspan="3" class="loading-cell">Loading...</td></tr>
+                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
                                     <td id="puts-total-oi">--</td>
                                     <td id="puts-total-change">--</td>
+                                    <td id="puts-total-volume">--</td>
+                                    <td id="puts-avg-conviction">--</td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -298,16 +318,20 @@
                                     <th>Strike</th>
                                     <th>OI</th>
                                     <th>Change</th>
+                                    <th>Volume</th>
+                                    <th>Conviction</th>
                                 </tr>
                             </thead>
                             <tbody id="itm-calls-tbody">
-                                <tr><td colspan="3" class="loading-cell">--</td></tr>
+                                <tr><td colspan="5" class="loading-cell">--</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
                                     <td id="itm-calls-total-oi">--</td>
                                     <td id="itm-calls-total-change">--</td>
+                                    <td id="itm-calls-total-volume">--</td>
+                                    <td id="itm-calls-avg-conviction">--</td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -321,16 +345,20 @@
                                     <th>Strike</th>
                                     <th>OI</th>
                                     <th>Change</th>
+                                    <th>Volume</th>
+                                    <th>Conviction</th>
                                 </tr>
                             </thead>
                             <tbody id="itm-puts-tbody">
-                                <tr><td colspan="3" class="loading-cell">--</td></tr>
+                                <tr><td colspan="5" class="loading-cell">--</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
                                     <td id="itm-puts-total-oi">--</td>
                                     <td id="itm-puts-total-change">--</td>
+                                    <td id="itm-puts-total-volume">--</td>
+                                    <td id="itm-puts-avg-conviction">--</td>
                                 </tr>
                             </tfoot>
                         </table>

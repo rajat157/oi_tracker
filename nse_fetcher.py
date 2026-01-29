@@ -207,11 +207,13 @@ class NSEFetcher:
 
                     strike_price = int(strike_text)
 
-                    # CE OI is column 1, CE OI Change is column 2
+                    # CE data: OI (column 1), OI Change (column 2), Volume (column 3)
                     ce_oi = self._parse_number(cells[1].text)
                     ce_oi_change = self._parse_number(cells[2].text)
+                    ce_volume = self._parse_number(cells[3].text)
 
-                    # PE OI Change is column 20, PE OI is column 21
+                    # PE data: Volume (column 19), OI Change (column 20), OI (column 21)
+                    pe_volume = self._parse_number(cells[19].text)
                     pe_oi_change = self._parse_number(cells[20].text)
                     pe_oi = self._parse_number(cells[21].text)
 
@@ -220,11 +222,13 @@ class NSEFetcher:
                         "expiryDate": expiry_date,
                         "CE": {
                             "openInterest": ce_oi,
-                            "changeinOpenInterest": ce_oi_change
+                            "changeinOpenInterest": ce_oi_change,
+                            "volume": ce_volume
                         },
                         "PE": {
                             "openInterest": pe_oi,
-                            "changeinOpenInterest": pe_oi_change
+                            "changeinOpenInterest": pe_oi_change,
+                            "volume": pe_volume
                         }
                     })
 
@@ -284,8 +288,10 @@ class NSEFetcher:
             strikes[strike_price] = {
                 "ce_oi": ce_data.get("openInterest", 0),
                 "ce_oi_change": ce_data.get("changeinOpenInterest", 0),
+                "ce_volume": ce_data.get("volume", 0),
                 "pe_oi": pe_data.get("openInterest", 0),
                 "pe_oi_change": pe_data.get("changeinOpenInterest", 0),
+                "pe_volume": pe_data.get("volume", 0),
             }
 
         return {

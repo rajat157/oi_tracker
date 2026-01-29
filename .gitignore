@@ -33,6 +33,5 @@ Thumbs.db
 .coverage
 htmlcov/
 .mypy_cache/
-
-# Misc
-nul
+tests/__pycache__/
+scripts/__pycache__/

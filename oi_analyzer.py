@@ -252,30 +252,32 @@ def find_oi_clusters(strikes_data: dict, spot_price: float,
 
 
 def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
-                          max_pain: int = None) -> Optional[dict]:
+                          max_pain: int = None,
+                          price_history: Optional[List[dict]] = None) -> Optional[dict]:
     """
     Calculate entry, stop-loss, and target prices for INTRADAY trading.
 
-    Entry is based on current spot price (immediate execution).
-    SL is based on nearest OI cluster (support for longs, resistance for shorts).
-    Targets are based on next OI clusters in the trade direction.
+    Uses PRICE ACTION (recent swing high/low) for realistic SL/targets:
+    - Entry: Current spot price (immediate execution)
+    - SL: Recent swing low/high with buffer (max 0.4% of spot)
+    - T1: 1:1 risk-reward
+    - T2: 1:2 risk-reward
+    - OI clusters shown as reference levels only
 
     Args:
         strikes_data: Dict of strike -> {ce_oi, pe_oi, ...}
         spot_price: Current spot price
         verdict: Current market verdict (bullish/bearish)
         max_pain: Pre-calculated max pain strike
+        price_history: List of recent price data [{spot_price: ...}, ...]
 
     Returns:
         Dict with entry, sl, target1, target2 prices or None if no setup
     """
     clusters = find_oi_clusters(strikes_data, spot_price)
 
-    if not clusters["strongest_support"] or not clusters["strongest_resistance"]:
-        return None
-
-    support = clusters["strongest_support"]
-    resistance = clusters["strongest_resistance"]
+    support = clusters.get("strongest_support")
+    resistance = clusters.get("strongest_resistance")
 
     if max_pain is None:
         max_pain = calculate_max_pain(strikes_data)
@@ -285,44 +287,60 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
     # Entry is at current spot price (intraday - immediate execution)
     entry = spot_price
 
-    # Buffer for SL (0.1% of spot price, ~25 points for Nifty at 25000)
+    # Calculate swing high/low from price history
+    swing_low = spot_price
+    swing_high = spot_price
+
+    if price_history and len(price_history) >= 2:
+        prices = [p.get('spot_price', spot_price) for p in price_history]
+        swing_low = min(prices)
+        swing_high = max(prices)
+
+    # Buffer: 0.1% of spot (~23 points for Nifty at 23000)
     sl_buffer = spot_price * 0.001
 
+    # Max SL cap: 0.4% of spot (~92 points for Nifty at 23000)
+    max_sl_distance = spot_price * 0.004
+
     if is_bullish:
-        # LONG setup - Entry at spot, SL below support, targets at resistance levels
-        sl = support - sl_buffer
+        # LONG setup
+        # SL below recent swing low with buffer
+        raw_sl = swing_low - sl_buffer
+        sl_distance = entry - raw_sl
 
-        # If spot is already below support, use a fixed % SL
-        if spot_price <= support:
-            sl = spot_price - (spot_price * 0.005)  # 0.5% SL
+        # Cap SL if swing is too wide
+        if sl_distance > max_sl_distance:
+            sl = entry - max_sl_distance
+            sl_distance = max_sl_distance
+        else:
+            sl = raw_sl
 
-        # Targets: 50% and 100% of distance to resistance
-        distance_to_resistance = resistance - spot_price
-        target1 = spot_price + (distance_to_resistance * 0.5)
-        target2 = resistance
+        # Targets based on risk-reward
+        # T1: 1:1 R:R, T2: 1:2 R:R
+        target1 = entry + sl_distance  # 1:1
+        target2 = entry + (sl_distance * 2)  # 1:2
 
-        # If max pain is between spot and resistance, use as intermediate target
-        if spot_price < max_pain < resistance:
-            target1 = max_pain
     else:
-        # SHORT setup - Entry at spot, SL above resistance, targets at support levels
-        sl = resistance + sl_buffer
+        # SHORT setup
+        # SL above recent swing high with buffer
+        raw_sl = swing_high + sl_buffer
+        sl_distance = raw_sl - entry
 
-        # If spot is already above resistance, use a fixed % SL
-        if spot_price >= resistance:
-            sl = spot_price + (spot_price * 0.005)  # 0.5% SL
+        # Cap SL if swing is too wide
+        if sl_distance > max_sl_distance:
+            sl = entry + max_sl_distance
+            sl_distance = max_sl_distance
+        else:
+            sl = raw_sl
 
-        # Targets: 50% and 100% of distance to support
-        distance_to_support = spot_price - support
-        target1 = spot_price - (distance_to_support * 0.5)
-        target2 = support
+        # Targets based on risk-reward
+        # T1: 1:1 R:R, T2: 1:2 R:R
+        target1 = entry - sl_distance  # 1:1
+        target2 = entry - (sl_distance * 2)  # 1:2
 
-        # If max pain is between support and spot, use as intermediate target
-        if support < max_pain < spot_price:
-            target1 = max_pain
-
-    risk_points = abs(entry - sl)
-    reward_points = abs(target2 - entry)
+    risk_points = sl_distance
+    reward_t1 = sl_distance  # 1:1
+    reward_t2 = sl_distance * 2  # 1:2
 
     return {
         "direction": "LONG" if is_bullish else "SHORT",
@@ -330,12 +348,20 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
         "sl": round(sl, 2),
         "target1": round(target1, 2),
         "target2": round(target2, 2),
-        "support": support,
-        "resistance": resistance,
+        # OI-based reference levels (not used for SL/targets)
+        "support_ref": support,
+        "resistance_ref": resistance,
         "max_pain": max_pain,
+        # Risk metrics
         "risk_points": round(risk_points, 2),
-        "reward_points": round(reward_points, 2),
-        "risk_reward": round(reward_points / risk_points, 2) if risk_points > 0 else 0
+        "reward_t1_points": round(reward_t1, 2),
+        "reward_t2_points": round(reward_t2, 2),
+        "risk_reward_t1": 1.0,  # Always 1:1
+        "risk_reward_t2": 2.0,  # Always 1:2
+        # Swing data for transparency
+        "swing_low": round(swing_low, 2),
+        "swing_high": round(swing_high, 2),
+        "sl_capped": sl_distance >= max_sl_distance
     }
 
 
@@ -861,8 +887,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     max_pain = calculate_max_pain(strikes_data)
     oi_clusters = find_oi_clusters(strikes_data, spot_price)
 
-    # Calculate trade setup
-    trade_setup = calculate_trade_setup(strikes_data, spot_price, verdict, max_pain)
+    # Calculate trade setup (pass price_history for swing-based SL/targets)
+    trade_setup = calculate_trade_setup(strikes_data, spot_price, verdict, max_pain, price_history)
 
     # Calculate signal confidence
     signal_confidence = calculate_signal_confidence(
@@ -1024,3 +1050,70 @@ if __name__ == "__main__":
     print(f"Combined Score: {analysis_all['combined_score']}")
     print(f"Weights: OTM={analysis_all['weights']['otm']}, ATM={analysis_all['weights']['atm']}, ITM={analysis_all['weights']['itm']}")
     print(f"Scores: OTM={analysis_all['otm_score']}, ATM={analysis_all['atm_score']}, ITM={analysis_all['itm_score']}")
+
+    # Test trade setup with price history (NEW)
+    print("\n" + "=" * 50)
+    print("TEST 5: Trade Setup with Price History")
+    print("=" * 50)
+
+    # Simulate price history over ~12 minutes (4 readings at 3-min intervals)
+    # Spot was at 24000, dropped to 23980, then recovered to 24025.50
+    price_history = [
+        {"spot_price": 24000.00},  # 12 mins ago
+        {"spot_price": 23980.25},  # 9 mins ago (swing low)
+        {"spot_price": 24010.75},  # 6 mins ago
+        {"spot_price": 24025.50},  # current
+    ]
+
+    analysis_with_history = analyze_tug_of_war(
+        sample_strikes, spot,
+        include_atm=True, include_itm=True,
+        price_history=price_history
+    )
+
+    trade = analysis_with_history['trade_setup']
+    if trade:
+        print(f"\nSpot: {spot}")
+        print(f"Swing Low: {trade['swing_low']} | Swing High: {trade['swing_high']}")
+        print(f"Verdict: {analysis_with_history['verdict']}")
+        print(f"\n{trade['direction']} Setup:")
+        print(f"  Entry: {trade['entry']}")
+        print(f"  SL: {trade['sl']} ({trade['risk_points']:.0f} pts risk){' [CAPPED]' if trade['sl_capped'] else ''}")
+        print(f"  T1: {trade['target1']} (1:1 R:R, +{trade['reward_t1_points']:.0f} pts)")
+        print(f"  T2: {trade['target2']} (1:2 R:R, +{trade['reward_t2_points']:.0f} pts)")
+        print(f"\nReference Levels (OI-based):")
+        print(f"  Support: {trade['support_ref']}")
+        print(f"  Resistance: {trade['resistance_ref']}")
+        print(f"  Max Pain: {trade['max_pain']}")
+    else:
+        print("No trade setup generated")
+
+    # Test with wider swing (should cap SL)
+    print("\n" + "=" * 50)
+    print("TEST 6: Trade Setup with Wide Swing (SL capped)")
+    print("=" * 50)
+
+    # Wide swing - swing high is 150+ points above spot (should trigger 0.4% = ~96 pts cap)
+    wide_price_history = [
+        {"spot_price": 23850.00},  # swing low
+        {"spot_price": 24200.00},  # swing high - 175 pts above spot
+        {"spot_price": 23900.00},
+        {"spot_price": 24025.50},  # current
+    ]
+
+    analysis_wide = analyze_tug_of_war(
+        sample_strikes, spot,
+        price_history=wide_price_history
+    )
+
+    trade_wide = analysis_wide['trade_setup']
+    if trade_wide:
+        print(f"\nSpot: {spot}")
+        print(f"Swing Low: {trade_wide['swing_low']} | Swing High: {trade_wide['swing_high']}")
+        print(f"Raw SL distance (high + buffer - spot): {trade_wide['swing_high'] + spot * 0.001 - spot:.0f} pts")
+        print(f"Max SL allowed (0.4%): {spot * 0.004:.0f} pts")
+        print(f"\n{trade_wide['direction']} Setup:")
+        print(f"  Entry: {trade_wide['entry']}")
+        print(f"  SL: {trade_wide['sl']} ({trade_wide['risk_points']:.0f} pts risk){' [CAPPED]' if trade_wide['sl_capped'] else ''}")
+        print(f"  T1: {trade_wide['target1']} (1:1 R:R)")
+        print(f"  T2: {trade_wide['target2']} (1:2 R:R)")

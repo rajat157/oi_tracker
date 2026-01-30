@@ -254,7 +254,11 @@ def find_oi_clusters(strikes_data: dict, spot_price: float,
 def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
                           max_pain: int = None) -> Optional[dict]:
     """
-    Calculate entry, stop-loss, and target prices based on OI analysis.
+    Calculate entry, stop-loss, and target prices for INTRADAY trading.
+
+    Entry is based on current spot price (immediate execution).
+    SL is based on nearest OI cluster (support for longs, resistance for shorts).
+    Targets are based on next OI clusters in the trade direction.
 
     Args:
         strikes_data: Dict of strike -> {ce_oi, pe_oi, ...}
@@ -272,33 +276,53 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
 
     support = clusters["strongest_support"]
     resistance = clusters["strongest_resistance"]
-    cluster_distance = resistance - support
 
     if max_pain is None:
         max_pain = calculate_max_pain(strikes_data)
 
     is_bullish = "bull" in verdict.lower()
 
-    if is_bullish:
-        # LONG setup
-        entry = support + (cluster_distance * 0.1)  # Near support
-        sl = support - (cluster_distance * 0.15)    # Below support
-        target1 = spot_price + (cluster_distance * 0.3)  # 30% of range
-        target2 = resistance - (cluster_distance * 0.1)  # Near resistance
-    else:
-        # SHORT setup
-        entry = resistance - (cluster_distance * 0.1)  # Near resistance
-        sl = resistance + (cluster_distance * 0.15)    # Above resistance
-        target1 = spot_price - (cluster_distance * 0.3)  # 30% of range
-        target2 = support + (cluster_distance * 0.1)    # Near support
+    # Entry is at current spot price (intraday - immediate execution)
+    entry = spot_price
 
-    # Use max pain as T3 if it's between entry and T2
-    if is_bullish and support < max_pain < resistance:
-        target3 = max_pain
-    elif not is_bullish and support < max_pain < resistance:
-        target3 = max_pain
+    # Buffer for SL (0.1% of spot price, ~25 points for Nifty at 25000)
+    sl_buffer = spot_price * 0.001
+
+    if is_bullish:
+        # LONG setup - Entry at spot, SL below support, targets at resistance levels
+        sl = support - sl_buffer
+
+        # If spot is already below support, use a fixed % SL
+        if spot_price <= support:
+            sl = spot_price - (spot_price * 0.005)  # 0.5% SL
+
+        # Targets: 50% and 100% of distance to resistance
+        distance_to_resistance = resistance - spot_price
+        target1 = spot_price + (distance_to_resistance * 0.5)
+        target2 = resistance
+
+        # If max pain is between spot and resistance, use as intermediate target
+        if spot_price < max_pain < resistance:
+            target1 = max_pain
     else:
-        target3 = target2
+        # SHORT setup - Entry at spot, SL above resistance, targets at support levels
+        sl = resistance + sl_buffer
+
+        # If spot is already above resistance, use a fixed % SL
+        if spot_price >= resistance:
+            sl = spot_price + (spot_price * 0.005)  # 0.5% SL
+
+        # Targets: 50% and 100% of distance to support
+        distance_to_support = spot_price - support
+        target1 = spot_price - (distance_to_support * 0.5)
+        target2 = support
+
+        # If max pain is between support and spot, use as intermediate target
+        if support < max_pain < spot_price:
+            target1 = max_pain
+
+    risk_points = abs(entry - sl)
+    reward_points = abs(target2 - entry)
 
     return {
         "direction": "LONG" if is_bullish else "SHORT",
@@ -306,13 +330,12 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
         "sl": round(sl, 2),
         "target1": round(target1, 2),
         "target2": round(target2, 2),
-        "target3": round(target3, 2),
         "support": support,
         "resistance": resistance,
         "max_pain": max_pain,
-        "risk_points": abs(entry - sl),
-        "reward_points": abs(target2 - entry),
-        "risk_reward": round(abs(target2 - entry) / abs(entry - sl), 2) if abs(entry - sl) > 0 else 0
+        "risk_points": round(risk_points, 2),
+        "reward_points": round(reward_points, 2),
+        "risk_reward": round(reward_points / risk_points, 2) if risk_points > 0 else 0
     }
 
 

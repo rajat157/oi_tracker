@@ -1,9 +1,9 @@
 """
 OI Analyzer - Tug-of-War Analysis Logic
-Analyzes option chain OI to determine market sentiment
+Analyzes option chain OI to determine market sentiment with self-learning capabilities
 """
 
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Dict
 
 
 def find_atm_strike(spot_price: float, strikes: list) -> int:
@@ -119,6 +119,334 @@ def calculate_conviction_multiplier(volume: int, oi_change: int) -> float:
     else:
         # <20% turnover = Stale, low conviction
         return 0.5
+
+
+def calculate_iv_skew(strikes_data: dict, spot_price: float, num_strikes: int = 3) -> float:
+    """
+    Calculate IV Skew = avg(Put IV) - avg(Call IV) for OTM strikes.
+
+    Positive skew = Market pricing more downside risk = Bearish bias
+    Negative skew = Market pricing more upside risk = Bullish bias
+
+    Args:
+        strikes_data: Dict of strike -> {..., ce_iv, pe_iv}
+        spot_price: Current spot price
+        num_strikes: Number of OTM strikes to consider
+
+    Returns:
+        IV skew value (positive = bearish, negative = bullish)
+    """
+    all_strikes = sorted(strikes_data.keys())
+    if not all_strikes:
+        return 0.0
+
+    atm_strike = find_atm_strike(spot_price, all_strikes)
+    atm_idx = all_strikes.index(atm_strike) if atm_strike in all_strikes else 0
+
+    # OTM Calls: strikes ABOVE ATM
+    otm_call_strikes = all_strikes[atm_idx + 1:atm_idx + 1 + num_strikes]
+    # OTM Puts: strikes BELOW ATM
+    start_idx = max(0, atm_idx - num_strikes)
+    otm_put_strikes = all_strikes[start_idx:atm_idx]
+
+    # Calculate average IVs
+    call_ivs = [strikes_data[s].get("ce_iv", 0) for s in otm_call_strikes if strikes_data[s].get("ce_iv", 0) > 0]
+    put_ivs = [strikes_data[s].get("pe_iv", 0) for s in otm_put_strikes if strikes_data[s].get("pe_iv", 0) > 0]
+
+    avg_call_iv = sum(call_ivs) / len(call_ivs) if call_ivs else 0
+    avg_put_iv = sum(put_ivs) / len(put_ivs) if put_ivs else 0
+
+    return avg_put_iv - avg_call_iv
+
+
+def calculate_max_pain(strikes_data: dict) -> int:
+    """
+    Calculate Max Pain strike - where total option intrinsic value is minimized.
+
+    This is the strike where option writers (sellers) profit the most,
+    and price tends to gravitate toward this level near expiry.
+
+    Args:
+        strikes_data: Dict of strike -> {ce_oi, pe_oi, ...}
+
+    Returns:
+        Max Pain strike price
+    """
+    all_strikes = sorted(strikes_data.keys())
+    if not all_strikes:
+        return 0
+
+    min_pain = float('inf')
+    max_pain_strike = all_strikes[len(all_strikes) // 2]
+
+    for test_strike in all_strikes:
+        total_pain = 0
+
+        for strike in all_strikes:
+            data = strikes_data[strike]
+            ce_oi = data.get("ce_oi", 0)
+            pe_oi = data.get("pe_oi", 0)
+
+            # Call intrinsic value (if price above strike)
+            if test_strike > strike:
+                call_intrinsic = (test_strike - strike) * ce_oi
+                total_pain += call_intrinsic
+
+            # Put intrinsic value (if price below strike)
+            if test_strike < strike:
+                put_intrinsic = (strike - test_strike) * pe_oi
+                total_pain += put_intrinsic
+
+        if total_pain < min_pain:
+            min_pain = total_pain
+            max_pain_strike = test_strike
+
+    return max_pain_strike
+
+
+def find_oi_clusters(strikes_data: dict, spot_price: float,
+                     percentile_threshold: float = 75) -> Dict[str, dict]:
+    """
+    Find OI clusters (support/resistance levels) based on high OI concentration.
+
+    Returns strikes where OI is significantly higher than average,
+    which act as natural support (put OI) and resistance (call OI) levels.
+
+    Args:
+        strikes_data: Dict of strike -> {ce_oi, pe_oi, ...}
+        spot_price: Current spot price
+        percentile_threshold: OI must be above this percentile to be a cluster
+
+    Returns:
+        Dict with 'resistance' (call clusters) and 'support' (put clusters)
+    """
+    all_strikes = sorted(strikes_data.keys())
+    if not all_strikes:
+        return {"resistance": [], "support": [], "strongest_resistance": None, "strongest_support": None}
+
+    # Collect all OI values
+    call_ois = [(s, strikes_data[s].get("ce_oi", 0)) for s in all_strikes if s > spot_price]
+    put_ois = [(s, strikes_data[s].get("pe_oi", 0)) for s in all_strikes if s < spot_price]
+
+    # Calculate thresholds
+    call_values = [oi for _, oi in call_ois]
+    put_values = [oi for _, oi in put_ois]
+
+    call_threshold = sorted(call_values)[int(len(call_values) * percentile_threshold / 100)] if call_values else 0
+    put_threshold = sorted(put_values)[int(len(put_values) * percentile_threshold / 100)] if put_values else 0
+
+    # Find clusters
+    resistance_clusters = [(s, oi) for s, oi in call_ois if oi >= call_threshold]
+    support_clusters = [(s, oi) for s, oi in put_ois if oi >= put_threshold]
+
+    # Sort by OI (strongest first)
+    resistance_clusters.sort(key=lambda x: x[1], reverse=True)
+    support_clusters.sort(key=lambda x: x[1], reverse=True)
+
+    return {
+        "resistance": [{"strike": s, "oi": oi} for s, oi in resistance_clusters[:5]],
+        "support": [{"strike": s, "oi": oi} for s, oi in support_clusters[:5]],
+        "strongest_resistance": resistance_clusters[0][0] if resistance_clusters else None,
+        "strongest_support": support_clusters[0][0] if support_clusters else None
+    }
+
+
+def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
+                          max_pain: int = None) -> Optional[dict]:
+    """
+    Calculate entry, stop-loss, and target prices based on OI analysis.
+
+    Args:
+        strikes_data: Dict of strike -> {ce_oi, pe_oi, ...}
+        spot_price: Current spot price
+        verdict: Current market verdict (bullish/bearish)
+        max_pain: Pre-calculated max pain strike
+
+    Returns:
+        Dict with entry, sl, target1, target2 prices or None if no setup
+    """
+    clusters = find_oi_clusters(strikes_data, spot_price)
+
+    if not clusters["strongest_support"] or not clusters["strongest_resistance"]:
+        return None
+
+    support = clusters["strongest_support"]
+    resistance = clusters["strongest_resistance"]
+    cluster_distance = resistance - support
+
+    if max_pain is None:
+        max_pain = calculate_max_pain(strikes_data)
+
+    is_bullish = "bull" in verdict.lower()
+
+    if is_bullish:
+        # LONG setup
+        entry = support + (cluster_distance * 0.1)  # Near support
+        sl = support - (cluster_distance * 0.15)    # Below support
+        target1 = spot_price + (cluster_distance * 0.3)  # 30% of range
+        target2 = resistance - (cluster_distance * 0.1)  # Near resistance
+    else:
+        # SHORT setup
+        entry = resistance - (cluster_distance * 0.1)  # Near resistance
+        sl = resistance + (cluster_distance * 0.15)    # Above resistance
+        target1 = spot_price - (cluster_distance * 0.3)  # 30% of range
+        target2 = support + (cluster_distance * 0.1)    # Near support
+
+    # Use max pain as T3 if it's between entry and T2
+    if is_bullish and support < max_pain < resistance:
+        target3 = max_pain
+    elif not is_bullish and support < max_pain < resistance:
+        target3 = max_pain
+    else:
+        target3 = target2
+
+    return {
+        "direction": "LONG" if is_bullish else "SHORT",
+        "entry": round(entry, 2),
+        "sl": round(sl, 2),
+        "target1": round(target1, 2),
+        "target2": round(target2, 2),
+        "target3": round(target3, 2),
+        "support": support,
+        "resistance": resistance,
+        "max_pain": max_pain,
+        "risk_points": abs(entry - sl),
+        "reward_points": abs(target2 - entry),
+        "risk_reward": round(abs(target2 - entry) / abs(entry - sl), 2) if abs(entry - sl) > 0 else 0
+    }
+
+
+def calculate_signal_confidence(combined_score: float, iv_skew: float,
+                                volume_pcr: float, oi_pcr: float,
+                                max_pain: int, spot_price: float,
+                                confirmation_status: str) -> float:
+    """
+    Calculate overall signal confidence based on multiple factors.
+
+    Confidence score from 0 to 100:
+    - 0-40: Low confidence (skip trading)
+    - 40-60: Moderate confidence
+    - 60-80: Good confidence
+    - 80-100: High confidence
+
+    Args:
+        combined_score: Main OI analysis score
+        iv_skew: IV skew value
+        volume_pcr: Volume PCR
+        oi_pcr: OI PCR
+        max_pain: Max pain strike
+        spot_price: Current spot
+        confirmation_status: Price-OI confirmation status
+
+    Returns:
+        Confidence score 0-100
+    """
+    confidence = 50.0  # Start neutral
+
+    # 1. Signal strength (25 points max)
+    abs_score = abs(combined_score)
+    if abs_score >= 40:
+        confidence += 25
+    elif abs_score >= 25:
+        confidence += 15
+    elif abs_score >= 10:
+        confidence += 5
+    else:
+        confidence -= 10  # Weak signal penalty
+
+    # 2. IV Skew alignment (15 points max)
+    is_bullish_signal = combined_score > 0
+    iv_bearish = iv_skew > 2  # Put IV significantly higher
+    iv_bullish = iv_skew < -2  # Call IV significantly higher
+
+    if (is_bullish_signal and iv_bullish) or (not is_bullish_signal and iv_bearish):
+        confidence += 15  # IV confirms OI signal
+    elif (is_bullish_signal and iv_bearish) or (not is_bullish_signal and iv_bullish):
+        confidence -= 10  # IV contradicts OI signal
+
+    # 3. Volume PCR alignment (10 points max)
+    # High volume PCR (>1.2) = More put trading = Bullish (puts being sold)
+    vol_bullish = volume_pcr > 1.2
+    vol_bearish = volume_pcr < 0.8
+
+    if (is_bullish_signal and vol_bullish) or (not is_bullish_signal and vol_bearish):
+        confidence += 10
+    elif (is_bullish_signal and vol_bearish) or (not is_bullish_signal and vol_bullish):
+        confidence -= 5
+
+    # 4. Max Pain proximity (10 points max)
+    # Price gravitates toward max pain near expiry
+    distance_to_max_pain = abs(spot_price - max_pain)
+    distance_pct = (distance_to_max_pain / spot_price) * 100
+
+    if distance_pct < 0.5:
+        confidence += 10  # Very close to max pain
+    elif distance_pct < 1.0:
+        confidence += 5
+    elif distance_pct > 2.0:
+        confidence -= 5  # Far from max pain
+
+    # 5. Confirmation status (15 points max)
+    if confirmation_status == "CONFIRMED":
+        confidence += 15
+    elif confirmation_status == "REVERSAL_ALERT":
+        confidence += 10  # Strong divergence is actionable
+    elif confirmation_status == "CONFLICT":
+        confidence -= 15
+    # NEUTRAL: no change
+
+    # Clamp to 0-100
+    return max(0, min(100, confidence))
+
+
+def detect_trap(strikes_data: dict, spot_price: float, price_direction: str,
+                oi_direction: str, strength: str) -> Optional[dict]:
+    """
+    Detect potential bull trap or bear trap conditions.
+
+    Bull Trap: Price breaks up but smart money is selling (adding calls above)
+    Bear Trap: Price breaks down but smart money is buying (adding puts below)
+
+    Args:
+        strikes_data: OI data
+        spot_price: Current spot
+        price_direction: "rising" or "falling"
+        oi_direction: "bullish" or "bearish" from OI analysis
+        strength: Signal strength
+
+    Returns:
+        Dict with trap type and confidence or None
+    """
+    clusters = find_oi_clusters(strikes_data, spot_price)
+
+    # Bull trap: Price rising but OI is bearish (call OI building above)
+    if price_direction == "rising" and oi_direction == "bearish" and strength == "strong":
+        # Check if call OI is building aggressively above current price
+        call_clusters = clusters.get("resistance", [])
+        if call_clusters:
+            highest_call_cluster = call_clusters[0]
+            if highest_call_cluster["strike"] < spot_price * 1.01:  # Close to spot
+                return {
+                    "type": "BULL_TRAP",
+                    "confidence": 70,
+                    "message": "Price rising but heavy call writing above - potential bull trap",
+                    "key_strike": highest_call_cluster["strike"]
+                }
+
+    # Bear trap: Price falling but OI is bullish (put OI building below)
+    if price_direction == "falling" and oi_direction == "bullish" and strength == "strong":
+        put_clusters = clusters.get("support", [])
+        if put_clusters:
+            highest_put_cluster = put_clusters[0]
+            if highest_put_cluster["strike"] > spot_price * 0.99:  # Close to spot
+                return {
+                    "type": "BEAR_TRAP",
+                    "confidence": 70,
+                    "message": "Price falling but heavy put writing below - potential bear trap",
+                    "key_strike": highest_put_cluster["strike"]
+                }
+
+    return None
 
 
 def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) -> Tuple[list, list]:
@@ -505,6 +833,23 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     # Calculate volume PCR
     volume_pcr = total_put_volume / max(total_call_volume, 1)
 
+    # Calculate new metrics: IV Skew, Max Pain, OI Clusters
+    iv_skew = calculate_iv_skew(strikes_data, spot_price, num_otm_strikes)
+    max_pain = calculate_max_pain(strikes_data)
+    oi_clusters = find_oi_clusters(strikes_data, spot_price)
+
+    # Calculate trade setup
+    trade_setup = calculate_trade_setup(strikes_data, spot_price, verdict, max_pain)
+
+    # Calculate signal confidence
+    signal_confidence = calculate_signal_confidence(
+        combined_score, iv_skew, volume_pcr, pcr,
+        max_pain, spot_price, confirmation_status
+    )
+
+    # Detect potential traps
+    trap_warning = detect_trap(strikes_data, spot_price, price_direction, oi_direction, strength)
+
     return {
         "spot_price": spot_price,
         "atm_strike": atm_strike,
@@ -557,7 +902,14 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             "momentum": momentum_weight
         },
         "confirmation_status": confirmation_status,
-        "confirmation_message": confirmation_message
+        "confirmation_message": confirmation_message,
+        # New metrics for improved accuracy
+        "iv_skew": round(iv_skew, 2),
+        "max_pain": max_pain,
+        "oi_clusters": oi_clusters,
+        "signal_confidence": round(signal_confidence, 1),
+        "trade_setup": trade_setup,
+        "trap_warning": trap_warning
     }
 
 

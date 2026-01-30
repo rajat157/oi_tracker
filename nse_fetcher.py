@@ -207,12 +207,14 @@ class NSEFetcher:
 
                     strike_price = int(strike_text)
 
-                    # CE data: OI (column 1), OI Change (column 2), Volume (column 3)
+                    # CE data: OI (column 1), OI Change (column 2), Volume (column 3), IV (column 4)
                     ce_oi = self._parse_number(cells[1].text)
                     ce_oi_change = self._parse_number(cells[2].text)
                     ce_volume = self._parse_number(cells[3].text)
+                    ce_iv = self._parse_float(cells[4].text)
 
-                    # PE data: Volume (column 19), OI Change (column 20), OI (column 21)
+                    # PE data: IV (column 18), Volume (column 19), OI Change (column 20), OI (column 21)
+                    pe_iv = self._parse_float(cells[18].text)
                     pe_volume = self._parse_number(cells[19].text)
                     pe_oi_change = self._parse_number(cells[20].text)
                     pe_oi = self._parse_number(cells[21].text)
@@ -223,12 +225,14 @@ class NSEFetcher:
                         "CE": {
                             "openInterest": ce_oi,
                             "changeinOpenInterest": ce_oi_change,
-                            "volume": ce_volume
+                            "volume": ce_volume,
+                            "iv": ce_iv
                         },
                         "PE": {
                             "openInterest": pe_oi,
                             "changeinOpenInterest": pe_oi_change,
-                            "volume": pe_volume
+                            "volume": pe_volume,
+                            "iv": pe_iv
                         }
                     })
 
@@ -253,6 +257,78 @@ class NSEFetcher:
             return int(float(text))
         except ValueError:
             return 0
+
+    def _parse_float(self, text: str) -> float:
+        """Parse a float from text, handling commas and dashes."""
+        if not text:
+            return 0.0
+        text = text.strip().replace(",", "").replace("-", "0")
+        try:
+            return float(text)
+        except ValueError:
+            return 0.0
+
+    def fetch_india_vix(self) -> Optional[float]:
+        """
+        Fetch India VIX from NSE homepage.
+
+        Returns:
+            India VIX value or None if fetch fails
+        """
+        try:
+            self._init_driver()
+
+            print("Loading NSE homepage for VIX...")
+            self.driver.get("https://www.nseindia.com")
+
+            # Wait for page to load
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            wait = WebDriverWait(self.driver, 15)
+
+            time.sleep(2)
+
+            # Try to find VIX value - NSE shows it in the indices section
+            # Look for element containing "INDIA VIX"
+            try:
+                vix_elem = self.driver.find_element(
+                    By.XPATH,
+                    "//a[contains(text(), 'INDIA VIX')]/following-sibling::*[1] | "
+                    "//span[contains(text(), 'INDIA VIX')]/following-sibling::*[1]"
+                )
+                vix_text = vix_elem.text.strip()
+                # Extract number
+                import re
+                numbers = re.findall(r'[\d,]+\.?\d*', vix_text)
+                if numbers:
+                    vix_value = float(numbers[0].replace(",", ""))
+                    print(f"India VIX: {vix_value}")
+                    return vix_value
+            except Exception:
+                pass
+
+            # Alternative: try the indices API endpoint
+            try:
+                self.driver.get("https://www.nseindia.com/api/allIndices")
+                time.sleep(2)
+                # Parse JSON from page body
+                import json
+                body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                data = json.loads(body_text)
+
+                for index in data.get("data", []):
+                    if "INDIA VIX" in index.get("index", "").upper():
+                        vix_value = float(index.get("last", 0))
+                        print(f"India VIX (from API): {vix_value}")
+                        return vix_value
+            except Exception as e:
+                print(f"Error fetching VIX from API: {e}")
+
+            return None
+
+        except Exception as e:
+            print(f"Error fetching India VIX: {e}")
+            return None
 
     def parse_option_data(self, data: dict) -> Optional[dict]:
         """
@@ -289,9 +365,11 @@ class NSEFetcher:
                 "ce_oi": ce_data.get("openInterest", 0),
                 "ce_oi_change": ce_data.get("changeinOpenInterest", 0),
                 "ce_volume": ce_data.get("volume", 0),
+                "ce_iv": ce_data.get("iv", 0.0),
                 "pe_oi": pe_data.get("openInterest", 0),
                 "pe_oi_change": pe_data.get("changeinOpenInterest", 0),
                 "pe_volume": pe_data.get("volume", 0),
+                "pe_iv": pe_data.get("iv", 0.0),
             }
 
         return {

@@ -186,6 +186,75 @@
                             <span class="metric-label">Avg Conviction</span>
                             <span class="metric-value" id="avg-conviction">--</span>
                         </div>
+                        <div class="metric">
+                            <span class="metric-label">Max Pain</span>
+                            <span class="metric-value" id="max-pain">--</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">IV Skew</span>
+                            <span class="metric-value" id="iv-skew">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trade Setup Card (shown only when confidence > 60%) -->
+                <div class="card trade-setup-card" id="trade-setup-card" style="display: none;">
+                    <h3 class="card-title">Trade Setup</h3>
+                    <div class="trade-setup-header">
+                        <span class="trade-direction" id="trade-direction">--</span>
+                        <span class="trade-confidence" id="trade-confidence">Confidence: --</span>
+                    </div>
+                    <div class="trade-levels">
+                        <div class="trade-level entry">
+                            <span class="level-label">Entry</span>
+                            <span class="level-value" id="trade-entry">--</span>
+                        </div>
+                        <div class="trade-level sl">
+                            <span class="level-label">Stop Loss</span>
+                            <span class="level-value" id="trade-sl">--</span>
+                        </div>
+                        <div class="trade-level target">
+                            <span class="level-label">Target 1</span>
+                            <span class="level-value" id="trade-target1">--</span>
+                        </div>
+                        <div class="trade-level target">
+                            <span class="level-label">Target 2</span>
+                            <span class="level-value" id="trade-target2">--</span>
+                        </div>
+                    </div>
+                    <div class="trade-meta">
+                        <span>Risk: <strong id="trade-risk">--</strong> pts</span>
+                        <span>R:R = <strong id="trade-rr">--</strong></span>
+                        <span>Support: <strong id="trade-support">--</strong></span>
+                        <span>Resistance: <strong id="trade-resistance">--</strong></span>
+                    </div>
+                </div>
+
+                <!-- Trap Warning Card -->
+                <div class="card trap-warning-card" id="trap-warning-card" style="display: none;">
+                    <div class="trap-icon" id="trap-icon">!!!</div>
+                    <div class="trap-content">
+                        <span class="trap-type" id="trap-type">TRAP WARNING</span>
+                        <span class="trap-message" id="trap-message">--</span>
+                    </div>
+                </div>
+
+                <!-- Self-Learning Status -->
+                <div class="card learning-card">
+                    <h3 class="card-title">Self-Learning Status</h3>
+                    <div class="learning-grid">
+                        <div class="learning-item">
+                            <span class="learning-label">Signal Accuracy</span>
+                            <span class="learning-value" id="learning-accuracy">--</span>
+                        </div>
+                        <div class="learning-item">
+                            <span class="learning-label">Status</span>
+                            <span class="learning-status" id="learning-status">--</span>
+                        </div>
+                        <div class="learning-item">
+                            <span class="learning-label">Errors</span>
+                            <span class="learning-value" id="learning-errors">--</span>
+                        </div>
                     </div>
                 </div>
             </div>

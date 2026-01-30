@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from nse_fetcher import NSEFetcher
 from oi_analyzer import analyze_tug_of_war
 from database import save_snapshot, save_analysis, purge_old_data, get_last_data_date, get_recent_price_trend
+from self_learner import get_self_learner
 
 
 # Market timing constants (IST)
@@ -35,6 +36,8 @@ class OIScheduler:
         self.last_analysis = None
         self.is_running = False
         self.last_purge_date = None
+        self.last_learning_date = None
+        self.self_learner = get_self_learner()
 
     def is_market_open(self) -> bool:
         """Check if the market is currently open."""
@@ -49,19 +52,23 @@ class OIScheduler:
         return MARKET_OPEN <= current_time <= MARKET_CLOSE
 
     def check_and_purge_old_data(self):
-        """Purge previous day's data at the start of a new market day."""
+        """Purge data older than 90 days to enable historical analysis and self-learning."""
+        from datetime import timedelta
         today = datetime.now().date()
 
-        # Only purge once per day
+        # Only check once per day
         if self.last_purge_date == today:
             return
 
+        # Keep 90 days of data for historical analysis and self-learning
+        cutoff_date = today - timedelta(days=90)
+
         # Check if there's old data to purge
         last_data_date = get_last_data_date()
-        if last_data_date and last_data_date < today:
-            print(f"[{datetime.now()}] Purging data from {last_data_date}...")
-            purge_old_data(today)
-            print(f"[{datetime.now()}] Old data purged. Starting fresh for {today}")
+        if last_data_date and last_data_date < cutoff_date:
+            print(f"[{datetime.now()}] Purging data older than {cutoff_date} (90-day retention)...")
+            purge_old_data(cutoff_date)
+            print(f"[{datetime.now()}] Old data purged. Keeping data from {cutoff_date} onwards.")
 
         self.last_purge_date = today
 
@@ -132,15 +139,41 @@ class OIScheduler:
                 put_oi_change=analysis["put_oi_change"],
                 verdict=analysis["verdict"],
                 expiry_date=current_expiry,
-                atm_call_oi_change=analysis.get("atm_data", {}).get("call_oi_change", 0),
-                atm_put_oi_change=analysis.get("atm_data", {}).get("put_oi_change", 0),
+                atm_call_oi_change=analysis.get("atm_data", {}).get("call_oi_change", 0) if analysis.get("atm_data") else 0,
+                atm_put_oi_change=analysis.get("atm_data", {}).get("put_oi_change", 0) if analysis.get("atm_data") else 0,
                 itm_call_oi_change=analysis.get("itm_call_oi_change", 0),
-                itm_put_oi_change=analysis.get("itm_put_oi_change", 0)
+                itm_put_oi_change=analysis.get("itm_put_oi_change", 0),
+                vix=0.0,  # Will be fetched separately
+                iv_skew=analysis.get("iv_skew", 0.0),
+                max_pain=analysis.get("max_pain", 0),
+                signal_confidence=analysis.get("signal_confidence", 0.0)
             )
 
             self.last_analysis = analysis
 
             print(f"[{datetime.now()}] Analysis complete: {analysis['verdict']}")
+
+            # Self-learning: check pending signal outcomes
+            resolved = self.self_learner.check_outcomes(spot_price, timestamp)
+            for r in resolved:
+                status = "CORRECT" if r["was_correct"] else "WRONG"
+                print(f"[SelfLearner] Signal resolved: {r['verdict']} -> {status} ({r['profit_loss_pct']:+.2f}%)")
+
+            # Self-learning: record new signal
+            learning_result = self.self_learner.process_new_signal(timestamp, analysis)
+            if learning_result["signal_id"]:
+                print(f"[SelfLearner] Recorded signal #{learning_result['signal_id']} (confidence: {learning_result['confidence']:.0f}%)")
+
+            # Add learning status to analysis for dashboard
+            analysis["self_learning"] = {
+                "should_trade": learning_result["should_trade"],
+                "is_paused": learning_result["is_paused"],
+                "ema_accuracy": round(learning_result["ema_accuracy"] * 100, 1),
+                "consecutive_errors": learning_result["consecutive_errors"]
+            }
+
+            # Run daily learning update at market close
+            self._check_daily_learning_update()
 
             # Broadcast to connected clients
             if self.socketio:
@@ -204,10 +237,32 @@ class OIScheduler:
         """
         self.fetch_and_analyze(force=force)
 
+    def _check_daily_learning_update(self):
+        """Run daily learning update at end of market day."""
+        now = datetime.now()
+        today = now.date()
+
+        # Only run once per day, after market close
+        if self.last_learning_date == today:
+            return
+
+        # Run after market close (3:30 PM)
+        if now.time() >= time(15, 30):
+            print(f"[{now}] Running daily learning update...")
+            self.self_learner.update_learning()
+            self.last_learning_date = today
+
+            # Reset pause state for next day
+            if now.time() >= time(15, 45):
+                self.self_learner.reset_for_new_day()
+
     def get_market_status(self) -> dict:
         """Get current market status information."""
         now = datetime.now()
         is_open = self.is_market_open()
+
+        # Add self-learning status
+        learning_status = self.self_learner.get_status()
 
         return {
             "is_open": is_open,
@@ -215,7 +270,12 @@ class OIScheduler:
             "market_open": MARKET_OPEN.strftime("%H:%M"),
             "market_close": MARKET_CLOSE.strftime("%H:%M"),
             "day": now.strftime("%A"),
-            "message": "Market is OPEN" if is_open else "Market is CLOSED"
+            "message": "Market is OPEN" if is_open else "Market is CLOSED",
+            "self_learning": {
+                "should_trade": learning_status["signal_tracker"]["should_trade"],
+                "ema_accuracy": round(learning_status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
+                "is_paused": learning_status["signal_tracker"]["ema_tracker"]["is_paused"]
+            }
         }
 
 

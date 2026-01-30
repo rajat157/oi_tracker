@@ -925,6 +925,195 @@ body {
     50% { opacity: 0.7; }
 }
 
+/* ===== Trade Setup Card ===== */
+.trade-setup-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(16, 185, 129, 0.05) 100%);
+    border: 1px solid var(--bullish-dark);
+}
+
+.trade-setup-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+
+.trade-direction {
+    font-size: 1.25rem;
+    font-weight: 700;
+    padding: 6px 14px;
+    border-radius: var(--radius-md);
+}
+
+.trade-direction.long {
+    background: var(--bullish-light);
+    color: var(--bullish);
+}
+
+.trade-direction.short {
+    background: var(--bearish-light);
+    color: var(--bearish);
+}
+
+.trade-confidence {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.trade-levels {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.trade-level {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    text-align: center;
+}
+
+.trade-level.entry {
+    border-top: 3px solid var(--accent);
+}
+
+.trade-level.sl {
+    border-top: 3px solid var(--bearish);
+}
+
+.trade-level.target {
+    border-top: 3px solid var(--bullish);
+}
+
+.trade-level .level-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.trade-level .level-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.trade-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.trade-meta strong {
+    color: var(--text-primary);
+}
+
+/* ===== Trap Warning Card ===== */
+.trap-warning-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: var(--warning-light);
+    border: 2px solid var(--warning);
+    animation: pulse-warning 2s infinite;
+}
+
+@keyframes pulse-warning {
+    0%, 100% { opacity: 1; border-color: var(--warning); }
+    50% { opacity: 0.9; border-color: rgba(245, 158, 11, 0.5); }
+}
+
+.trap-icon {
+    font-size: 2rem;
+    font-weight: 900;
+    color: var(--warning);
+    min-width: 50px;
+    text-align: center;
+}
+
+.trap-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.trap-type {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--warning);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.trap-message {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+/* ===== Self-Learning Card ===== */
+.learning-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(99, 102, 241, 0.05) 100%);
+}
+
+.learning-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+.learning-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 14px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    text-align: center;
+}
+
+.learning-label {
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.learning-value {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.learning-status {
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+}
+
+.learning-status.active {
+    background: var(--bullish-light);
+    color: var(--bullish);
+}
+
+.learning-status.paused {
+    background: var(--warning-light);
+    color: var(--warning);
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 1100px) {
     .main {

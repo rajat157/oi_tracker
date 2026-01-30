@@ -575,6 +575,107 @@ function updateDashboard(data) {
         setText('itm-puts-total-volume', formatNumber(itmPutsVolume));
         setText('itm-puts-avg-conviction', itmPutsAvgConviction > 0 ? itmPutsAvgConviction.toFixed(2) + 'x' : '--');
     }
+
+    // Update new metrics: Max Pain, IV Skew
+    setText('max-pain', data.max_pain ? formatNumber(data.max_pain) : '--');
+
+    const ivSkewElem = document.getElementById('iv-skew');
+    if (ivSkewElem && data.iv_skew !== undefined) {
+        const skew = data.iv_skew;
+        ivSkewElem.textContent = (skew > 0 ? '+' : '') + skew.toFixed(2) + '%';
+        ivSkewElem.style.color = skew > 2 ? '#ef4444' : skew < -2 ? '#10b981' : '#8b8b9e';
+    }
+
+    // Update Trade Setup Card (only show if confidence > 60%)
+    updateTradeSetup(data);
+
+    // Update Trap Warning Card
+    updateTrapWarning(data.trap_warning);
+
+    // Update Self-Learning Status
+    updateLearningStatus(data.self_learning);
+}
+
+function updateTradeSetup(data) {
+    const card = document.getElementById('trade-setup-card');
+    if (!card) return;
+
+    const confidence = data.signal_confidence || 0;
+    const setup = data.trade_setup;
+
+    // Only show if confidence > 60% and we have a setup
+    if (confidence < 60 || !setup) {
+        card.style.display = 'none';
+        return;
+    }
+
+    card.style.display = 'block';
+
+    // Update direction
+    const dirElem = document.getElementById('trade-direction');
+    if (dirElem) {
+        dirElem.textContent = setup.direction;
+        dirElem.classList.remove('long', 'short');
+        dirElem.classList.add(setup.direction === 'LONG' ? 'long' : 'short');
+    }
+
+    // Update confidence
+    setText('trade-confidence', `Confidence: ${confidence}%`);
+
+    // Update levels
+    setText('trade-entry', formatNumber(setup.entry));
+    setText('trade-sl', formatNumber(setup.sl));
+    setText('trade-target1', formatNumber(setup.target1));
+    setText('trade-target2', formatNumber(setup.target2));
+
+    // Update meta
+    setText('trade-risk', Math.round(setup.risk_points));
+    setText('trade-rr', setup.risk_reward);
+    setText('trade-support', formatNumber(setup.support));
+    setText('trade-resistance', formatNumber(setup.resistance));
+}
+
+function updateTrapWarning(trapWarning) {
+    const card = document.getElementById('trap-warning-card');
+    if (!card) return;
+
+    if (!trapWarning) {
+        card.style.display = 'none';
+        return;
+    }
+
+    card.style.display = 'flex';
+
+    const iconElem = document.getElementById('trap-icon');
+    if (iconElem) {
+        iconElem.textContent = trapWarning.type === 'BULL_TRAP' ? '!!!' : '!!!';
+    }
+
+    setText('trap-type', trapWarning.type.replace('_', ' '));
+    setText('trap-message', trapWarning.message);
+}
+
+function updateLearningStatus(learning) {
+    if (!learning) return;
+
+    // Update accuracy
+    const accElem = document.getElementById('learning-accuracy');
+    if (accElem) {
+        accElem.textContent = learning.ema_accuracy + '%';
+        accElem.style.color = learning.ema_accuracy >= 55 ? '#10b981' :
+                             learning.ema_accuracy < 50 ? '#ef4444' : '#8b8b9e';
+    }
+
+    // Update status
+    const statusElem = document.getElementById('learning-status');
+    if (statusElem) {
+        statusElem.textContent = learning.is_paused ? 'PAUSED' : 'ACTIVE';
+        statusElem.classList.remove('active', 'paused');
+        statusElem.classList.add(learning.is_paused ? 'paused' : 'active');
+    }
+
+    // Update errors
+    setText('learning-errors', learning.consecutive_errors);
 }
 
 function updateScore(id, value, addColorClass = false) {

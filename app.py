@@ -7,12 +7,45 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 
 from scheduler import OIScheduler
-from database import get_latest_analysis, get_analysis_history, get_latest_snapshot, get_recent_price_trend
+from database import get_latest_analysis, get_analysis_history, get_latest_snapshot, get_recent_price_trend, get_active_trade_setup, get_trade_setup_stats
 from oi_analyzer import analyze_tug_of_war
 
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "oi_tracker_secret_key"
+
+
+def _get_setup_with_pnl(setup: dict, strikes_data: dict) -> dict:
+    """Calculate live P/L for a trade setup."""
+    if not setup or not strikes_data:
+        return setup
+
+    strike = setup["strike"]
+    option_type = setup.get("option_type", "CE" if setup["direction"] == "BUY_CALL" else "PE")
+    strike_data = strikes_data.get(strike, {})
+    current_premium = strike_data.get(
+        "ce_ltp" if option_type == "CE" else "pe_ltp", 0
+    )
+
+    # Calculate live P/L
+    if setup["status"] == "ACTIVE" and setup.get("activation_premium"):
+        activation_premium = setup["activation_premium"]
+        live_pnl_pct = ((current_premium - activation_premium) / activation_premium) * 100 if activation_premium else 0
+        live_pnl_points = current_premium - activation_premium
+    elif setup["status"] == "PENDING":
+        entry_premium = setup["entry_premium"]
+        live_pnl_pct = ((current_premium - entry_premium) / entry_premium) * 100 if entry_premium else 0
+        live_pnl_points = current_premium - entry_premium
+    else:
+        live_pnl_pct = 0
+        live_pnl_points = 0
+
+    return {
+        **setup,
+        "current_premium": round(current_premium, 2),
+        "live_pnl_pct": round(live_pnl_pct, 2),
+        "live_pnl_points": round(live_pnl_points, 2)
+    }
 
 # Initialize SocketIO with threading (more reliable on Windows)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -51,6 +84,15 @@ def api_latest():
         )
         analysis["timestamp"] = snapshot["timestamp"]
         analysis["expiry_date"] = snapshot["expiry_date"]
+
+        # Add trade tracker data (active_trade and trade_stats)
+        active_setup = get_active_trade_setup()
+        if active_setup:
+            analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+        else:
+            analysis["active_trade"] = None
+        analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+
         return jsonify(analysis)
 
     # Fall back to scheduler's cached analysis (re-analyze with toggle settings)
@@ -68,6 +110,15 @@ def api_latest():
             )
             analysis["timestamp"] = snapshot.get("timestamp", cached.get("timestamp"))
             analysis["expiry_date"] = snapshot.get("expiry_date", cached.get("expiry_date"))
+
+            # Add trade tracker data
+            active_setup = get_active_trade_setup()
+            if active_setup:
+                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+            else:
+                analysis["active_trade"] = None
+            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+
             return jsonify(analysis)
         return jsonify(cached)
 
@@ -148,6 +199,15 @@ def handle_toggle_update(data):
         )
         analysis["timestamp"] = snapshot.get("timestamp")
         analysis["expiry_date"] = snapshot.get("expiry_date")
+
+        # Add trade tracker data
+        active_setup = get_active_trade_setup()
+        if active_setup:
+            analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+        else:
+            analysis["active_trade"] = None
+        analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+
         emit("oi_update", analysis)
 
 

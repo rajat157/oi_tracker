@@ -1,0 +1,646 @@
+"""
+Trade Tracker - Manages trade setup lifecycle and win rate tracking
+
+Trade Lifecycle:
+    PENDING -> ACTIVE -> WON/LOST
+    PENDING -> CANCELLED (if direction flips)
+    PENDING -> EXPIRED (if market closes)
+"""
+
+from datetime import datetime, time, timedelta
+from typing import Optional, List
+
+from database import (
+    save_trade_setup,
+    get_active_trade_setup,
+    update_trade_setup_status,
+    get_trade_setup_stats,
+    get_last_resolved_trade,
+)
+from self_learner import get_self_learner
+
+
+# Market timing constants
+MARKET_CLOSE = time(15, 25)  # Expire PENDING setups 5 mins before market close
+TRADE_SETUP_START = time(9, 30)   # Only create setups after 9:30 AM
+TRADE_SETUP_END = time(15, 15)    # Stop creating setups at 3:15 PM
+FORCE_CLOSE_TIME = time(15, 20)   # Force close ACTIVE trades at 3:20 PM
+
+
+class TradeTracker:
+    """Manages persistent trade setups with lifecycle tracking."""
+
+    def __init__(self):
+        """Initialize the trade tracker."""
+        self.confidence_threshold = 60.0  # Minimum confidence to create setup
+        self.confidence_max = 85.0  # Maximum confidence (contrarian filter)
+        self.entry_tolerance = 0.02  # 2% tolerance for entry activation
+        self.cooldown_minutes = 6  # Cooldown after trade resolution (2 fetch cycles)
+        self.move_threshold_pct = 0.5  # Skip if spot moved 0.5%+ in direction
+        self.bounce_threshold_pct = 0.3  # Skip PUT if bounced 0.3%+ from low
+        self.self_learner = get_self_learner()
+
+    def should_create_new_setup(self, analysis: dict, price_history: List[dict] = None) -> bool:
+        """
+        Check if conditions are met to create a new trade setup.
+
+        Rules:
+        - Within allowed trading hours (9:30 AM - 3:15 PM)
+        - No existing PENDING or ACTIVE setup
+        - Self-learner says trading is allowed
+        - Signal confidence in optimal range (60-85%)
+        - Not in cooldown period after last trade
+        - Move hasn't already happened in signal direction
+        - No bounce in progress (for PUT trades)
+        - Trade setup exists in analysis
+
+        Args:
+            analysis: Current analysis dict from OI analyzer
+            price_history: Recent price history for timing checks
+
+        Returns:
+            True if new setup should be created
+        """
+        # 0. Check trading hours window (9:30 AM - 3:15 PM)
+        current_time = datetime.now().time()
+        if current_time < TRADE_SETUP_START or current_time > TRADE_SETUP_END:
+            return False
+
+        # 1. Check if there's already an active setup
+        existing = get_active_trade_setup()
+        if existing:
+            return False
+
+        # 2. Check if self-learner says to pause trading
+        if not self.self_learner.signal_tracker.ema_tracker.should_trade():
+            print("[TradeTracker] Skipping: Self-learner paused trading")
+            return False
+
+        # 3. Check confidence - reject too low OR too high (contrarian)
+        confidence = analysis.get("signal_confidence", 0)
+        if confidence < self.confidence_threshold:
+            return False
+        if confidence > self.confidence_max:
+            print(f"[TradeTracker] Skipping: High confidence ({confidence:.0f}%) is contrarian indicator")
+            return False
+
+        # 4. Check cooldown period after last resolved trade
+        if self._is_in_cooldown():
+            print("[TradeTracker] Skipping: In cooldown period after recent trade")
+            return False
+
+        # 5. Check if move already happened in signal direction
+        if price_history and self._is_move_already_happened(analysis, price_history):
+            print("[TradeTracker] Skipping: Move already happened in signal direction")
+            return False
+
+        # 6. Check for bounce in progress (bad for PUT trades)
+        if price_history and self._is_bounce_in_progress(analysis, price_history):
+            print("[TradeTracker] Skipping: Bounce in progress - bad for PUT entry")
+            return False
+
+        # 7. Check if trade setup was generated
+        trade_setup = analysis.get("trade_setup")
+        if not trade_setup:
+            return False
+
+        return True
+
+    def _is_in_cooldown(self) -> bool:
+        """
+        Check if we're in cooldown period after last resolved trade.
+
+        Returns:
+            True if still in cooldown (should skip trade creation)
+        """
+        last_trade = get_last_resolved_trade()
+        if not last_trade:
+            return False
+
+        resolved_at_str = last_trade.get("resolved_at")
+        if not resolved_at_str:
+            return False
+
+        try:
+            resolved_at = datetime.fromisoformat(resolved_at_str)
+        except (ValueError, TypeError):
+            return False
+
+        time_since_resolution = datetime.now() - resolved_at
+
+        if time_since_resolution < timedelta(minutes=self.cooldown_minutes):
+            return True
+
+        return False
+
+    def _is_move_already_happened(self, analysis: dict, price_history: List[dict]) -> bool:
+        """
+        Check if spot already moved significantly in signal direction.
+
+        If bullish signal but price already up 0.5%+, or bearish signal
+        but price already down 0.5%+, the move may be exhausted.
+
+        Args:
+            analysis: Current analysis dict
+            price_history: Recent price history (oldest first)
+
+        Returns:
+            True if move already happened (should skip trade)
+        """
+        if not price_history or len(price_history) < 2:
+            return False
+
+        current_spot = analysis.get("spot_price", 0)
+        past_spot = price_history[0].get("spot_price", 0)
+
+        if past_spot <= 0 or current_spot <= 0:
+            return False
+
+        move_pct = ((current_spot - past_spot) / past_spot) * 100
+
+        verdict = analysis.get("verdict", "").lower()
+        is_bullish = "bull" in verdict
+
+        # If bullish signal but price already moved up significantly
+        if is_bullish and move_pct > self.move_threshold_pct:
+            return True
+
+        # If bearish signal but price already moved down significantly
+        if not is_bullish and move_pct < -self.move_threshold_pct:
+            return True
+
+        return False
+
+    def _is_bounce_in_progress(self, analysis: dict, price_history: List[dict]) -> bool:
+        """
+        Check if price bounced from recent low (bad for PUT trades).
+
+        For bearish/PUT trades, if price has bounced 0.3%+ from the recent
+        low within our lookback window, the bounce momentum may hit our SL.
+
+        Args:
+            analysis: Current analysis dict
+            price_history: Recent price history (oldest first)
+
+        Returns:
+            True if bounce in progress (should skip PUT trade)
+        """
+        if not price_history or len(price_history) < 2:
+            return False
+
+        verdict = analysis.get("verdict", "").lower()
+        is_bearish = "bear" in verdict
+
+        # Only check for PUT/bearish trades
+        if not is_bearish:
+            return False
+
+        current_spot = analysis.get("spot_price", 0)
+        if current_spot <= 0:
+            return False
+
+        # Find recent low from price history
+        prices = [p.get("spot_price", 0) for p in price_history if p.get("spot_price", 0) > 0]
+        if not prices:
+            return False
+
+        recent_low = min(prices)
+
+        if recent_low <= 0:
+            return False
+
+        bounce_pct = ((current_spot - recent_low) / recent_low) * 100
+
+        # If bounced significantly from low, skip PUT entry
+        if bounce_pct > self.bounce_threshold_pct:
+            return True
+
+        return False
+
+    def create_setup(self, analysis: dict, timestamp: datetime) -> Optional[int]:
+        """
+        Create a new PENDING trade setup from analysis.
+
+        Args:
+            analysis: Current analysis dict
+            timestamp: Current timestamp
+
+        Returns:
+            Setup ID if created, None otherwise
+        """
+        trade_setup = analysis.get("trade_setup")
+        if not trade_setup:
+            return None
+
+        setup_id = save_trade_setup(
+            created_at=timestamp,
+            direction=trade_setup["direction"],
+            strike=trade_setup["strike"],
+            option_type=trade_setup["option_type"],
+            moneyness=trade_setup["moneyness"],
+            entry_premium=trade_setup["entry_premium"],
+            sl_premium=trade_setup["sl_premium"],
+            target1_premium=trade_setup["target1_premium"],
+            target2_premium=trade_setup.get("target2_premium"),
+            risk_pct=trade_setup["risk_pct"],
+            spot_at_creation=analysis["spot_price"],
+            verdict_at_creation=analysis["verdict"],
+            signal_confidence=analysis["signal_confidence"],
+            iv_at_creation=trade_setup.get("iv_at_strike", 0),
+            expiry_date=analysis.get("expiry_date", "")
+        )
+
+        print(f"[TradeTracker] Created PENDING setup #{setup_id}: "
+              f"{trade_setup['direction']} {trade_setup['strike']} {trade_setup['option_type']} "
+              f"@ {trade_setup['entry_premium']}")
+
+        return setup_id
+
+    def check_and_update_setup(self, strikes_data: dict, timestamp: datetime) -> Optional[dict]:
+        """
+        Check and update the status of an active trade setup.
+
+        Handles:
+        - PENDING: Check if entry hit -> activate
+        - ACTIVE: Check if SL/T1 hit -> resolve
+
+        Args:
+            strikes_data: Current option chain data
+            timestamp: Current timestamp
+
+        Returns:
+            Dict with update info if status changed, None otherwise
+        """
+        setup = get_active_trade_setup()
+        if not setup:
+            return None
+
+        strike = setup["strike"]
+        option_type = setup["option_type"]
+
+        # Get current premium for this strike
+        strike_data = strikes_data.get(strike, {})
+        current_premium = strike_data.get(
+            "ce_ltp" if option_type == "CE" else "pe_ltp", 0
+        )
+
+        if current_premium <= 0:
+            return None
+
+        status = setup["status"]
+
+        if status == "PENDING":
+            return self._check_pending_activation(setup, current_premium, timestamp)
+        elif status == "ACTIVE":
+            return self._check_active_resolution(setup, current_premium, timestamp)
+
+        return None
+
+    def _check_pending_activation(self, setup: dict, current_premium: float,
+                                   timestamp: datetime) -> Optional[dict]:
+        """
+        Check if a PENDING setup should be activated.
+
+        Entry is considered hit when current premium <= entry_premium * (1 + tolerance)
+        This accounts for 3-minute gaps between checks.
+        """
+        entry_premium = setup["entry_premium"]
+        entry_threshold = entry_premium * (1 + self.entry_tolerance)
+
+        # For buying, we want price to be at or below our entry
+        if current_premium <= entry_threshold:
+            # Activate the trade
+            update_trade_setup_status(
+                setup["id"],
+                status="ACTIVE",
+                activated_at=timestamp,
+                activation_premium=current_premium,
+                max_premium_reached=current_premium,
+                min_premium_reached=current_premium,
+                last_checked_at=timestamp,
+                last_premium=current_premium
+            )
+
+            print(f"[TradeTracker] Setup #{setup['id']} ACTIVATED at {current_premium:.2f} "
+                  f"(entry was {entry_premium:.2f})")
+
+            return {
+                "setup_id": setup["id"],
+                "previous_status": "PENDING",
+                "new_status": "ACTIVE",
+                "activation_premium": current_premium
+            }
+
+        # Update tracking even if not activated
+        update_trade_setup_status(
+            setup["id"],
+            status="PENDING",
+            last_checked_at=timestamp,
+            last_premium=current_premium
+        )
+
+        return None
+
+    def _check_active_resolution(self, setup: dict, current_premium: float,
+                                  timestamp: datetime) -> Optional[dict]:
+        """
+        Check if an ACTIVE setup should be resolved (WON or LOST).
+
+        WON: current_premium >= target1_premium
+        LOST: current_premium <= sl_premium
+        """
+        sl_premium = setup["sl_premium"]
+        target1_premium = setup["target1_premium"]
+        activation_premium = setup["activation_premium"] or setup["entry_premium"]
+
+        # Track max/min premiums
+        max_reached = max(setup.get("max_premium_reached") or current_premium, current_premium)
+        min_reached = min(setup.get("min_premium_reached") or current_premium, current_premium)
+
+        # Check for stop loss hit
+        if current_premium <= sl_premium:
+            profit_loss_pct = ((current_premium - activation_premium) / activation_premium) * 100
+            profit_loss_points = current_premium - activation_premium
+
+            update_trade_setup_status(
+                setup["id"],
+                status="LOST",
+                resolved_at=timestamp,
+                exit_premium=current_premium,
+                hit_sl=True,
+                hit_target=False,
+                profit_loss_pct=profit_loss_pct,
+                profit_loss_points=profit_loss_points,
+                max_premium_reached=max_reached,
+                min_premium_reached=min_reached,
+                last_checked_at=timestamp,
+                last_premium=current_premium
+            )
+
+            print(f"[TradeTracker] Setup #{setup['id']} LOST - SL hit at {current_premium:.2f} "
+                  f"({profit_loss_pct:.1f}%)")
+
+            return {
+                "setup_id": setup["id"],
+                "previous_status": "ACTIVE",
+                "new_status": "LOST",
+                "exit_premium": current_premium,
+                "profit_loss_pct": profit_loss_pct
+            }
+
+        # Check for target hit
+        if current_premium >= target1_premium:
+            profit_loss_pct = ((current_premium - activation_premium) / activation_premium) * 100
+            profit_loss_points = current_premium - activation_premium
+
+            update_trade_setup_status(
+                setup["id"],
+                status="WON",
+                resolved_at=timestamp,
+                exit_premium=current_premium,
+                hit_sl=False,
+                hit_target=True,
+                profit_loss_pct=profit_loss_pct,
+                profit_loss_points=profit_loss_points,
+                max_premium_reached=max_reached,
+                min_premium_reached=min_reached,
+                last_checked_at=timestamp,
+                last_premium=current_premium
+            )
+
+            print(f"[TradeTracker] Setup #{setup['id']} WON - Target hit at {current_premium:.2f} "
+                  f"({profit_loss_pct:.1f}%)")
+
+            return {
+                "setup_id": setup["id"],
+                "previous_status": "ACTIVE",
+                "new_status": "WON",
+                "exit_premium": current_premium,
+                "profit_loss_pct": profit_loss_pct
+            }
+
+        # Update tracking stats
+        update_trade_setup_status(
+            setup["id"],
+            status="ACTIVE",
+            max_premium_reached=max_reached,
+            min_premium_reached=min_reached,
+            last_checked_at=timestamp,
+            last_premium=current_premium
+        )
+
+        return None
+
+    def cancel_on_direction_change(self, current_verdict: str, timestamp: datetime) -> bool:
+        """
+        Cancel a PENDING setup if the OI direction has flipped.
+
+        Only cancels PENDING setups, not ACTIVE ones.
+
+        Args:
+            current_verdict: Current OI verdict
+            timestamp: Current timestamp
+
+        Returns:
+            True if a setup was cancelled
+        """
+        setup = get_active_trade_setup()
+        if not setup or setup["status"] != "PENDING":
+            return False
+
+        # Determine if direction has changed
+        setup_direction = setup["direction"]  # BUY_CALL or BUY_PUT
+        setup_is_bullish = setup_direction == "BUY_CALL"
+
+        current_is_bullish = "bull" in current_verdict.lower()
+        current_is_bearish = "bear" in current_verdict.lower()
+
+        # Check for direction flip
+        direction_flipped = (
+            (setup_is_bullish and current_is_bearish) or
+            (not setup_is_bullish and current_is_bullish)
+        )
+
+        if direction_flipped:
+            update_trade_setup_status(
+                setup["id"],
+                status="CANCELLED",
+                resolved_at=timestamp
+            )
+
+            print(f"[TradeTracker] Setup #{setup['id']} CANCELLED - Direction flipped from "
+                  f"{'BULLISH' if setup_is_bullish else 'BEARISH'} to "
+                  f"{'BULLISH' if current_is_bullish else 'BEARISH'}")
+
+            return True
+
+        return False
+
+    def expire_pending_setups(self, timestamp: datetime) -> bool:
+        """
+        Expire PENDING setups at market close.
+
+        Args:
+            timestamp: Current timestamp
+
+        Returns:
+            True if a setup was expired
+        """
+        # Check if it's near market close
+        current_time = timestamp.time()
+        if current_time < MARKET_CLOSE:
+            return False
+
+        setup = get_active_trade_setup()
+        if not setup or setup["status"] != "PENDING":
+            return False
+
+        update_trade_setup_status(
+            setup["id"],
+            status="EXPIRED",
+            resolved_at=timestamp
+        )
+
+        print(f"[TradeTracker] Setup #{setup['id']} EXPIRED at market close")
+
+        return True
+
+    def force_close_active_trades(self, timestamp: datetime, strikes_data: dict) -> bool:
+        """
+        Force close ACTIVE trades at market close (3:20 PM).
+
+        Args:
+            timestamp: Current timestamp
+            strikes_data: Current strikes data for premium lookup
+
+        Returns:
+            True if a trade was force-closed
+        """
+        current_time = timestamp.time()
+        if current_time < FORCE_CLOSE_TIME:
+            return False
+
+        setup = get_active_trade_setup()
+        if not setup or setup["status"] != "ACTIVE":
+            return False
+
+        # Get current premium for P/L calculation
+        current_premium = self._get_current_premium(setup, strikes_data)
+        activation_premium = setup.get("activation_premium", setup["entry_premium"])
+
+        if activation_premium and activation_premium > 0:
+            profit_loss_pct = ((current_premium - activation_premium) / activation_premium) * 100
+            profit_loss_points = current_premium - activation_premium
+        else:
+            profit_loss_pct = 0
+            profit_loss_points = 0
+
+        # Determine if it's a win or loss
+        status = "WON" if profit_loss_pct > 0 else "LOST"
+
+        update_trade_setup_status(
+            setup["id"],
+            status=status,
+            resolved_at=timestamp,
+            exit_premium=current_premium,
+            profit_loss_pct=profit_loss_pct,
+            profit_loss_points=profit_loss_points
+        )
+
+        print(f"[TradeTracker] Setup #{setup['id']} FORCE CLOSED at market end: "
+              f"{status} ({profit_loss_pct:+.2f}%)")
+
+        return True
+
+    def _get_current_premium(self, setup: dict, strikes_data: dict) -> float:
+        """Get current premium for a setup from strikes data."""
+        strike = setup["strike"]
+        option_type = setup.get("option_type", "CE" if setup["direction"] == "BUY_CALL" else "PE")
+        strike_data = strikes_data.get(strike, {})
+        return strike_data.get("ce_ltp" if option_type == "CE" else "pe_ltp", 0)
+
+    def get_stats(self) -> dict:
+        """
+        Get trade setup statistics for dashboard display.
+
+        Returns:
+            Dict with win rate stats and current setup info
+        """
+        stats = get_trade_setup_stats(lookback_days=30)
+        active_setup = get_active_trade_setup()
+
+        return {
+            "stats": stats,
+            "has_active_setup": active_setup is not None,
+            "active_setup": active_setup
+        }
+
+    def get_active_setup_with_pnl(self, strikes_data: dict) -> Optional[dict]:
+        """
+        Get active setup with current P/L calculated.
+
+        Args:
+            strikes_data: Current option chain data
+
+        Returns:
+            Setup dict with live P/L fields, or None
+        """
+        setup = get_active_trade_setup()
+        if not setup:
+            return None
+
+        # Get current premium
+        strike = setup["strike"]
+        option_type = setup["option_type"]
+        strike_data = strikes_data.get(strike, {})
+        current_premium = strike_data.get(
+            "ce_ltp" if option_type == "CE" else "pe_ltp", 0
+        )
+
+        # Calculate live P/L
+        if setup["status"] == "ACTIVE" and setup.get("activation_premium"):
+            activation_premium = setup["activation_premium"]
+            live_pnl_pct = ((current_premium - activation_premium) / activation_premium) * 100
+            live_pnl_points = current_premium - activation_premium
+        elif setup["status"] == "PENDING":
+            # For pending, show distance from entry
+            entry_premium = setup["entry_premium"]
+            live_pnl_pct = ((current_premium - entry_premium) / entry_premium) * 100
+            live_pnl_points = current_premium - entry_premium
+        else:
+            live_pnl_pct = 0
+            live_pnl_points = 0
+
+        return {
+            **setup,
+            "current_premium": round(current_premium, 2),
+            "live_pnl_pct": round(live_pnl_pct, 2),
+            "live_pnl_points": round(live_pnl_points, 2)
+        }
+
+
+# Singleton instance
+_trade_tracker = None
+
+
+def get_trade_tracker() -> TradeTracker:
+    """Get or create the singleton TradeTracker instance."""
+    global _trade_tracker
+    if _trade_tracker is None:
+        _trade_tracker = TradeTracker()
+    return _trade_tracker
+
+
+if __name__ == "__main__":
+    # Test the trade tracker
+    print("Testing Trade Tracker...")
+
+    tracker = get_trade_tracker()
+
+    # Check stats
+    stats = tracker.get_stats()
+    print(f"Current stats: {stats}")
+
+    # Check for active setup
+    active = get_active_trade_setup()
+    print(f"Active setup: {active}")

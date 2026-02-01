@@ -12,6 +12,7 @@ from nse_fetcher import NSEFetcher
 from oi_analyzer import analyze_tug_of_war
 from database import save_snapshot, save_analysis, purge_old_data, get_last_data_date, get_recent_price_trend
 from self_learner import get_self_learner
+from trade_tracker import get_trade_tracker
 
 
 # Market timing constants (IST)
@@ -38,6 +39,7 @@ class OIScheduler:
         self.last_purge_date = None
         self.last_learning_date = None
         self.self_learner = get_self_learner()
+        self.trade_tracker = get_trade_tracker()
         self.force_enabled = False
 
     def set_force_enabled(self, enabled: bool):
@@ -157,6 +159,32 @@ class OIScheduler:
             self.last_analysis = analysis
 
             print(f"[{datetime.now()}] Analysis complete: {analysis['verdict']}")
+
+            # Trade Tracker: manage persistent trade setups
+            # 1. Check and update existing setup status (activation/resolution)
+            trade_update = self.trade_tracker.check_and_update_setup(strikes_data, timestamp)
+            if trade_update:
+                print(f"[TradeTracker] Setup #{trade_update['setup_id']}: "
+                      f"{trade_update['previous_status']} -> {trade_update['new_status']}")
+
+            # 2. Cancel PENDING setup if OI direction flipped
+            self.trade_tracker.cancel_on_direction_change(analysis["verdict"], timestamp)
+
+            # 3. Expire PENDING setups at market close
+            self.trade_tracker.expire_pending_setups(timestamp)
+
+            # 4. Force close ACTIVE trades at market close (3:20 PM)
+            self.trade_tracker.force_close_active_trades(timestamp, strikes_data)
+
+            # 5. Create new setup if conditions met (pass price_history for timing checks)
+            if self.trade_tracker.should_create_new_setup(analysis, price_history):
+                self.trade_tracker.create_setup(analysis, timestamp)
+
+            # 6. Add trade tracker data to analysis for dashboard
+            tracker_data = self.trade_tracker.get_stats()
+            active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
+            analysis["active_trade"] = active_setup_with_pnl
+            analysis["trade_stats"] = tracker_data["stats"]
 
             # Self-learning: check pending signal outcomes
             resolved = self.self_learner.check_outcomes(spot_price, timestamp)

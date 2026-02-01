@@ -85,6 +85,59 @@ function updateSectionVisibility() {
     if (itmChartSection) itmChartSection.style.display = includeITM ? 'block' : 'none';
 }
 
+// Filter incoming WebSocket data based on toggle state
+function filterDataByToggles(data) {
+    // Create a shallow copy to avoid mutating original
+    const filtered = { ...data };
+
+    // If ATM toggle is OFF, subtract ATM data from totals
+    if (!includeATM && data.atm_data) {
+        filtered.call_oi_change = (data.call_oi_change || 0) - (data.atm_data.call_oi_change || 0);
+        filtered.put_oi_change = (data.put_oi_change || 0) - (data.atm_data.put_oi_change || 0);
+        filtered.atm_data = null;
+    }
+
+    // If ITM toggle is OFF, subtract ITM data from totals
+    if (!includeITM) {
+        filtered.call_oi_change = (filtered.call_oi_change || 0) - (data.itm_call_oi_change || 0);
+        filtered.put_oi_change = (filtered.put_oi_change || 0) - (data.itm_put_oi_change || 0);
+        filtered.itm_call_oi_change = 0;
+        filtered.itm_put_oi_change = 0;
+        filtered.itm_calls = null;
+        filtered.itm_puts = null;
+    }
+
+    // Recalculate net OI change
+    filtered.net_oi_change = (filtered.put_oi_change || 0) - (filtered.call_oi_change || 0);
+
+    // Recalculate verdict based on filtered OI changes
+    filtered.verdict = calculateFilteredVerdict(filtered.call_oi_change, filtered.put_oi_change);
+
+    return filtered;
+}
+
+// Calculate verdict for filtered data (matches oi_analyzer.py logic)
+function calculateFilteredVerdict(callChange, putChange) {
+    const diff = (putChange || 0) - (callChange || 0);
+    const total = Math.abs(callChange || 0) + Math.abs(putChange || 0);
+
+    if (total === 0) return "Neutral";
+
+    const ratio = Math.abs(diff) / total * 100;
+
+    if (diff > 0) {
+        // Bullish (Put OI > Call OI means writers selling puts = bullish)
+        if (ratio > 40) return "Bulls Strongly Winning";
+        if (ratio > 15) return "Bulls Winning";
+        return "Slightly Bullish";
+    } else {
+        // Bearish (Call OI > Put OI means writers selling calls = bearish)
+        if (ratio > 40) return "Bears Strongly Winning";
+        if (ratio > 15) return "Bears Winning";
+        return "Slightly Bearish";
+    }
+}
+
 // Update score gauge visualization
 function updateScoreGauge(score) {
     const marker = document.getElementById('score-gauge-marker');
@@ -360,8 +413,12 @@ function setupSocketListeners() {
 
     socket.on('oi_update', data => {
         console.log('OI update received');
-        updateDashboard(data);
-        addChartDataPoint(data);
+
+        // Filter data based on current toggle state before displaying
+        const filteredData = filterDataByToggles(data);
+
+        updateDashboard(filteredData);
+        addChartDataPoint(filteredData);
     });
 }
 
@@ -593,8 +650,11 @@ function updateDashboard(data) {
         ivSkewElem.style.color = skew > 2 ? '#f87171' : skew < -2 ? '#22c55e' : '#a1a1b5';
     }
 
-    // Update Trade Setup Card (only show if confidence > 60%)
+    // Update Trade Setup Card (persistent with lifecycle)
     updateTradeSetup(data);
+
+    // Update Win Rate Card
+    updateWinRate(data.trade_stats);
 
     // Update Trap Warning Card
     updateTrapWarning(data.trap_warning);
@@ -607,16 +667,29 @@ function updateTradeSetup(data) {
     const card = document.getElementById('trade-setup-card');
     if (!card) return;
 
-    const confidence = data.signal_confidence || 0;
-    const setup = data.trade_setup;
+    // Use active_trade (persistent setup) if available, else fall back to trade_setup
+    const activeTrade = data.active_trade;
+    const setup = activeTrade || data.trade_setup;
+    const confidence = activeTrade ? activeTrade.signal_confidence : (data.signal_confidence || 0);
 
-    // Show if we have a setup (regardless of confidence)
+    // Show if we have an active/pending trade OR a new setup
     if (!setup) {
         card.style.display = 'none';
         return;
     }
 
     card.style.display = 'block';
+
+    // Update status badge
+    const statusBadge = document.getElementById('trade-status-badge');
+    if (statusBadge && activeTrade) {
+        const status = activeTrade.status || 'PENDING';
+        statusBadge.textContent = status;
+        statusBadge.className = 'trade-status-badge status-' + status.toLowerCase();
+    } else if (statusBadge) {
+        statusBadge.textContent = 'NEW';
+        statusBadge.className = 'trade-status-badge status-new';
+    }
 
     // Update direction (BUY_CALL or BUY_PUT)
     const dirElem = document.getElementById('trade-direction');
@@ -630,11 +703,30 @@ function updateTradeSetup(data) {
     // Update strike info
     const strikeElem = document.getElementById('trade-strike');
     if (strikeElem) {
-        strikeElem.textContent = `${setup.strike} ${setup.option_type} (${setup.moneyness})`;
+        const optionType = setup.option_type || (setup.direction === 'BUY_CALL' ? 'CE' : 'PE');
+        const moneyness = setup.moneyness || 'ATM';
+        strikeElem.textContent = `${setup.strike} ${optionType} (${moneyness})`;
     }
 
     // Update confidence
-    setText('trade-confidence', `Confidence: ${confidence}%`);
+    setText('trade-confidence', `Confidence: ${Math.round(confidence)}%`);
+
+    // Update Live P/L display (only for ACTIVE trades)
+    const pnlDiv = document.getElementById('trade-live-pnl');
+    if (pnlDiv && activeTrade && activeTrade.status === 'ACTIVE') {
+        pnlDiv.style.display = 'flex';
+        const pnlValue = document.getElementById('trade-pnl-value');
+        if (pnlValue) {
+            const pnl = activeTrade.live_pnl_pct || 0;
+            const pnlPoints = activeTrade.live_pnl_points || 0;
+            pnlValue.textContent = `${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}% (${pnlPoints >= 0 ? '+' : ''}${pnlPoints.toFixed(2)} pts)`;
+            pnlValue.classList.remove('positive', 'negative');
+            pnlValue.classList.add(pnl >= 0 ? 'positive' : 'negative');
+        }
+        setText('trade-current-premium', activeTrade.current_premium?.toFixed(2) || '--');
+    } else if (pnlDiv) {
+        pnlDiv.style.display = 'none';
+    }
 
     // Update premium-based levels
     setText('trade-entry', setup.entry_premium?.toFixed(2) || '--');
@@ -644,11 +736,30 @@ function updateTradeSetup(data) {
     setText('trade-target2', setup.target2_premium?.toFixed(2) || '--');
 
     // Update meta
-    setText('trade-risk', setup.risk_points?.toFixed(2) || '--');
+    setText('trade-risk', setup.risk_points?.toFixed(2) || (setup.entry_premium && setup.sl_premium ? (setup.entry_premium - setup.sl_premium).toFixed(2) : '--'));
     setText('trade-risk-pct', setup.risk_pct || '--');
     setText('trade-support', setup.support_ref ? formatNumber(setup.support_ref) : '--');
     setText('trade-resistance', setup.resistance_ref ? formatNumber(setup.resistance_ref) : '--');
     setText('trade-max-pain', setup.max_pain ? formatNumber(setup.max_pain) : '--');
+}
+
+function updateWinRate(tradeStats) {
+    if (!tradeStats) return;
+
+    // Update win rate display
+    const winRateElem = document.getElementById('win-rate');
+    if (winRateElem) {
+        const rate = tradeStats.win_rate || 0;
+        winRateElem.textContent = rate.toFixed(1) + '%';
+        winRateElem.classList.remove('good', 'bad');
+        winRateElem.classList.add(rate >= 50 ? 'good' : 'bad');
+    }
+
+    setText('total-trades', tradeStats.total || 0);
+    setText('trade-wins', tradeStats.wins || 0);
+    setText('trade-losses', tradeStats.losses || 0);
+    setText('avg-win', tradeStats.avg_win ? `+${tradeStats.avg_win.toFixed(1)}` : '--');
+    setText('avg-loss', tradeStats.avg_loss ? tradeStats.avg_loss.toFixed(1) : '--');
 }
 
 function updateTrapWarning(trapWarning) {

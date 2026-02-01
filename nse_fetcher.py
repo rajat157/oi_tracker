@@ -207,13 +207,15 @@ class NSEFetcher:
 
                     strike_price = int(strike_text)
 
-                    # CE data: OI (column 1), OI Change (column 2), Volume (column 3), IV (column 4)
+                    # CE data: OI (column 1), OI Change (column 2), Volume (column 3), IV (column 4), LTP (column 5)
                     ce_oi = self._parse_number(cells[1].text)
                     ce_oi_change = self._parse_number(cells[2].text)
                     ce_volume = self._parse_number(cells[3].text)
                     ce_iv = self._parse_float(cells[4].text)
+                    ce_ltp = self._parse_float(cells[5].text)
 
-                    # PE data: IV (column 18), Volume (column 19), OI Change (column 20), OI (column 21)
+                    # PE data: LTP (column 17), IV (column 18), Volume (column 19), OI Change (column 20), OI (column 21)
+                    pe_ltp = self._parse_float(cells[17].text)
                     pe_iv = self._parse_float(cells[18].text)
                     pe_volume = self._parse_number(cells[19].text)
                     pe_oi_change = self._parse_number(cells[20].text)
@@ -226,13 +228,15 @@ class NSEFetcher:
                             "openInterest": ce_oi,
                             "changeinOpenInterest": ce_oi_change,
                             "volume": ce_volume,
-                            "iv": ce_iv
+                            "iv": ce_iv,
+                            "ltp": ce_ltp
                         },
                         "PE": {
                             "openInterest": pe_oi,
                             "changeinOpenInterest": pe_oi_change,
                             "volume": pe_volume,
-                            "iv": pe_iv
+                            "iv": pe_iv,
+                            "ltp": pe_ltp
                         }
                     })
 
@@ -366,10 +370,12 @@ class NSEFetcher:
                 "ce_oi_change": ce_data.get("changeinOpenInterest", 0),
                 "ce_volume": ce_data.get("volume", 0),
                 "ce_iv": ce_data.get("iv", 0.0),
+                "ce_ltp": ce_data.get("ltp", 0.0),
                 "pe_oi": pe_data.get("openInterest", 0),
                 "pe_oi_change": pe_data.get("changeinOpenInterest", 0),
                 "pe_volume": pe_data.get("volume", 0),
                 "pe_iv": pe_data.get("iv", 0.0),
+                "pe_ltp": pe_data.get("ltp", 0.0),
             }
 
         return {
@@ -406,8 +412,8 @@ if __name__ == "__main__":
                     for i in range(max(0, atm_idx-3), min(len(sorted_strikes), atm_idx+4)):
                         strike = sorted_strikes[i]
                         data = parsed['strikes'][strike]
-                        print(f"  {strike}: CE OI={data['ce_oi']:,} ({data['ce_oi_change']:+,}) | "
-                              f"PE OI={data['pe_oi']:,} ({data['pe_oi_change']:+,})")
+                        print(f"  {strike}: CE OI={data['ce_oi']:,} ({data['ce_oi_change']:+,}) LTP={data['ce_ltp']:.2f} | "
+                              f"PE OI={data['pe_oi']:,} ({data['pe_oi_change']:+,}) LTP={data['pe_ltp']:.2f}")
             else:
                 print("Failed to parse data")
         else:

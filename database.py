@@ -174,6 +174,16 @@ def init_db():
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN signal_confidence REAL DEFAULT 0.0")
             print("Added VIX, IV skew, max pain, and confidence columns to analysis_history table")
 
+        # Add migration for LTP columns if they don't exist
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pragma_table_info('oi_snapshots')
+            WHERE name='ce_ltp'
+        """)
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN ce_ltp REAL DEFAULT 0.0")
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_ltp REAL DEFAULT 0.0")
+            print("Added LTP columns to oi_snapshots table")
+
         conn.commit()
 
 
@@ -185,7 +195,7 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
     Args:
         timestamp: When the data was fetched
         spot_price: Current spot price
-        strikes_data: Dict of strike -> {ce_oi, ce_oi_change, pe_oi, pe_oi_change, ce_iv, pe_iv}
+        strikes_data: Dict of strike -> {ce_oi, ce_oi_change, pe_oi, pe_oi_change, ce_iv, pe_iv, ce_ltp, pe_ltp}
         expiry_date: The expiry date for these options
     """
     with get_connection() as conn:
@@ -195,8 +205,9 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
             cursor.execute("""
                 INSERT INTO oi_snapshots
                 (timestamp, spot_price, strike_price, ce_oi, ce_oi_change,
-                 pe_oi, pe_oi_change, ce_volume, pe_volume, ce_iv, pe_iv, expiry_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 pe_oi, pe_oi_change, ce_volume, pe_volume, ce_iv, pe_iv,
+                 ce_ltp, pe_ltp, expiry_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 timestamp.isoformat(),
                 spot_price,
@@ -209,6 +220,8 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
                 data.get("pe_volume", 0),
                 data.get("ce_iv", 0.0),
                 data.get("pe_iv", 0.0),
+                data.get("ce_ltp", 0.0),
+                data.get("pe_ltp", 0.0),
                 expiry_date
             ))
 
@@ -277,7 +290,7 @@ def get_latest_snapshot() -> Optional[dict]:
         # Get all strikes for that timestamp
         cursor.execute("""
             SELECT strike_price, ce_oi, ce_oi_change, pe_oi, pe_oi_change,
-                   ce_volume, pe_volume, ce_iv, pe_iv
+                   ce_volume, pe_volume, ce_iv, pe_iv, ce_ltp, pe_ltp
             FROM oi_snapshots
             WHERE timestamp = ?
             ORDER BY strike_price
@@ -306,15 +319,27 @@ def get_latest_snapshot() -> Optional[dict]:
             except (KeyError, IndexError):
                 pe_iv = 0.0
 
+            try:
+                ce_ltp = strike_row["ce_ltp"]
+            except (KeyError, IndexError):
+                ce_ltp = 0.0
+
+            try:
+                pe_ltp = strike_row["pe_ltp"]
+            except (KeyError, IndexError):
+                pe_ltp = 0.0
+
             strikes[strike_row["strike_price"]] = {
                 "ce_oi": strike_row["ce_oi"],
                 "ce_oi_change": strike_row["ce_oi_change"],
                 "ce_volume": ce_volume,
                 "ce_iv": ce_iv,
+                "ce_ltp": ce_ltp,
                 "pe_oi": strike_row["pe_oi"],
                 "pe_oi_change": strike_row["pe_oi_change"],
                 "pe_volume": pe_volume,
                 "pe_iv": pe_iv,
+                "pe_ltp": pe_ltp,
             }
 
         return {
@@ -388,7 +413,7 @@ def get_strikes_for_timestamp(timestamp: str) -> dict:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT strike_price, ce_oi, ce_oi_change, pe_oi, pe_oi_change,
-                   ce_volume, pe_volume, ce_iv, pe_iv
+                   ce_volume, pe_volume, ce_iv, pe_iv, ce_ltp, pe_ltp
             FROM oi_snapshots
             WHERE timestamp = ?
             ORDER BY strike_price
@@ -417,15 +442,27 @@ def get_strikes_for_timestamp(timestamp: str) -> dict:
             except (KeyError, IndexError):
                 pe_iv = 0.0
 
+            try:
+                ce_ltp = row["ce_ltp"]
+            except (KeyError, IndexError):
+                ce_ltp = 0.0
+
+            try:
+                pe_ltp = row["pe_ltp"]
+            except (KeyError, IndexError):
+                pe_ltp = 0.0
+
             strikes[row["strike_price"]] = {
                 "ce_oi": row["ce_oi"],
                 "ce_oi_change": row["ce_oi_change"],
                 "ce_volume": ce_volume,
                 "ce_iv": ce_iv,
+                "ce_ltp": ce_ltp,
                 "pe_oi": row["pe_oi"],
                 "pe_oi_change": row["pe_oi_change"],
                 "pe_volume": pe_volume,
                 "pe_iv": pe_iv,
+                "pe_ltp": pe_ltp,
             }
         return strikes
 

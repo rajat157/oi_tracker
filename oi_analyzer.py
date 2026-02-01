@@ -255,24 +255,24 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
                           max_pain: int = None,
                           price_history: Optional[List[dict]] = None) -> Optional[dict]:
     """
-    Calculate entry, stop-loss, and target prices for INTRADAY trading.
+    Calculate option buyer trade setup with premium-based entry/SL/targets.
 
-    Uses PRICE ACTION (recent swing high/low) for realistic SL/targets:
-    - Entry: Current spot price (immediate execution)
-    - SL: Recent swing low/high with buffer (max 0.4% of spot)
-    - T1: 1:1 risk-reward
-    - T2: 1:2 risk-reward
-    - OI clusters shown as reference levels only
+    For OPTIONS BUYERS:
+    - Strike selection priority: ITM > ATM > OTM (for better delta/intrinsic value)
+    - Entry: Current premium (LTP)
+    - SL: 20% below entry premium
+    - T1: Entry + risk (1:1 R:R)
+    - T2: Entry + 2*risk (1:2 R:R)
 
     Args:
-        strikes_data: Dict of strike -> {ce_oi, pe_oi, ...}
+        strikes_data: Dict of strike -> {ce_oi, pe_oi, ce_ltp, pe_ltp, ...}
         spot_price: Current spot price
         verdict: Current market verdict (bullish/bearish)
         max_pain: Pre-calculated max pain strike
         price_history: List of recent price data [{spot_price: ...}, ...]
 
     Returns:
-        Dict with entry, sl, target1, target2 prices or None if no setup
+        Dict with option buyer setup or None if no valid strike found
     """
     clusters = find_oi_clusters(strikes_data, spot_price)
 
@@ -284,10 +284,7 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
 
     is_bullish = "bull" in verdict.lower()
 
-    # Entry is at current spot price (intraday - immediate execution)
-    entry = spot_price
-
-    # Calculate swing high/low from price history
+    # Calculate swing high/low from price history (for spot reference)
     swing_low = spot_price
     swing_high = spot_price
 
@@ -296,72 +293,84 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
         swing_low = min(prices)
         swing_high = max(prices)
 
-    # Buffer: 0.1% of spot (~23 points for Nifty at 23000)
-    sl_buffer = spot_price * 0.001
+    # Find ATM strike and nearby strikes for option selection
+    all_strikes = sorted(strikes_data.keys())
+    if not all_strikes:
+        return None
 
-    # Max SL cap: 0.4% of spot (~92 points for Nifty at 23000)
-    max_sl_distance = spot_price * 0.004
+    atm_strike = find_atm_strike(spot_price, all_strikes)
+    try:
+        atm_idx = all_strikes.index(atm_strike)
+    except ValueError:
+        atm_idx = len(all_strikes) // 2
+
+    # Select option to buy with priority: ITM > ATM > OTM
+    strike_to_buy = None
+    premium = 0.0
+    strike_moneyness = None
+    option_type = None
 
     if is_bullish:
-        # LONG setup
-        # SL below recent swing low with buffer
-        raw_sl = swing_low - sl_buffer
-        sl_distance = entry - raw_sl
+        option_type = "CE"
+        # For calls: ITM = below spot, OTM = above spot
+        itm_strike = all_strikes[atm_idx - 1] if atm_idx > 0 else None
+        otm_strike = all_strikes[atm_idx + 1] if atm_idx < len(all_strikes) - 1 else None
 
-        # Cap SL if swing is too wide
-        if sl_distance > max_sl_distance:
-            sl = entry - max_sl_distance
-            sl_distance = max_sl_distance
-        else:
-            sl = raw_sl
-
-        # Targets based on risk-reward
-        # T1: 1:1 R:R, T2: 1:2 R:R
-        target1 = entry + sl_distance  # 1:1
-        target2 = entry + (sl_distance * 2)  # 1:2
-
+        # Try ITM first, then ATM, then OTM
+        candidates = [(itm_strike, "ITM"), (atm_strike, "ATM"), (otm_strike, "OTM")]
+        for strike, moneyness in candidates:
+            if strike and strikes_data.get(strike, {}).get("ce_ltp", 0) > 0:
+                strike_to_buy = strike
+                premium = strikes_data[strike]["ce_ltp"]
+                strike_moneyness = moneyness
+                break
     else:
-        # SHORT setup
-        # SL above recent swing high with buffer
-        raw_sl = swing_high + sl_buffer
-        sl_distance = raw_sl - entry
+        option_type = "PE"
+        # For puts: ITM = above spot, OTM = below spot
+        itm_strike = all_strikes[atm_idx + 1] if atm_idx < len(all_strikes) - 1 else None
+        otm_strike = all_strikes[atm_idx - 1] if atm_idx > 0 else None
 
-        # Cap SL if swing is too wide
-        if sl_distance > max_sl_distance:
-            sl = entry + max_sl_distance
-            sl_distance = max_sl_distance
-        else:
-            sl = raw_sl
+        # Try ITM first, then ATM, then OTM
+        candidates = [(itm_strike, "ITM"), (atm_strike, "ATM"), (otm_strike, "OTM")]
+        for strike, moneyness in candidates:
+            if strike and strikes_data.get(strike, {}).get("pe_ltp", 0) > 0:
+                strike_to_buy = strike
+                premium = strikes_data[strike]["pe_ltp"]
+                strike_moneyness = moneyness
+                break
 
-        # Targets based on risk-reward
-        # T1: 1:1 R:R, T2: 1:2 R:R
-        target1 = entry - sl_distance  # 1:1
-        target2 = entry - (sl_distance * 2)  # 1:2
+    # If no valid strike found, return None
+    if strike_to_buy is None or premium <= 0:
+        return None
 
-    risk_points = sl_distance
-    reward_t1 = sl_distance  # 1:1
-    reward_t2 = sl_distance * 2  # 1:2
+    # Calculate SL/targets based on premium (20% risk)
+    sl_pct = 0.20
+    risk = premium * sl_pct
+    sl_premium = premium - risk
+    t1_premium = premium + risk        # 1:1 R:R
+    t2_premium = premium + (risk * 2)  # 1:2 R:R
 
     return {
-        "direction": "LONG" if is_bullish else "SHORT",
-        "entry": round(entry, 2),
-        "sl": round(sl, 2),
-        "target1": round(target1, 2),
-        "target2": round(target2, 2),
-        # OI-based reference levels (not used for SL/targets)
+        # Option buyer setup
+        "direction": "BUY_CALL" if is_bullish else "BUY_PUT",
+        "strike": strike_to_buy,
+        "option_type": option_type,
+        "moneyness": strike_moneyness,
+        "entry_premium": round(premium, 2),
+        "sl_premium": round(sl_premium, 2),
+        "target1_premium": round(t1_premium, 2),
+        "target2_premium": round(t2_premium, 2),
+        "risk_points": round(risk, 2),
+        "risk_pct": round(sl_pct * 100, 1),
+        "risk_reward_t1": 1.0,
+        "risk_reward_t2": 2.0,
+        # Spot reference (for context)
+        "spot_price": round(spot_price, 2),
         "support_ref": support,
         "resistance_ref": resistance,
         "max_pain": max_pain,
-        # Risk metrics
-        "risk_points": round(risk_points, 2),
-        "reward_t1_points": round(reward_t1, 2),
-        "reward_t2_points": round(reward_t2, 2),
-        "risk_reward_t1": 1.0,  # Always 1:1
-        "risk_reward_t2": 2.0,  # Always 1:2
-        # Swing data for transparency
         "swing_low": round(swing_low, 2),
-        "swing_high": round(swing_high, 2),
-        "sl_capped": sl_distance >= max_sl_distance
+        "swing_high": round(swing_high, 2)
     }
 
 
@@ -996,15 +1005,22 @@ def format_analysis_summary(analysis: dict) -> str:
 
 
 if __name__ == "__main__":
-    # Test with sample data
+    # Test with sample data including LTP
     sample_strikes = {
-        23900: {"ce_oi": 150000, "ce_oi_change": 8000, "pe_oi": 200000, "pe_oi_change": 25000},
-        23950: {"ce_oi": 180000, "ce_oi_change": 12000, "pe_oi": 170000, "pe_oi_change": 18000},
-        24000: {"ce_oi": 250000, "ce_oi_change": 15000, "pe_oi": 220000, "pe_oi_change": 20000},
-        24050: {"ce_oi": 280000, "ce_oi_change": 30000, "pe_oi": 180000, "pe_oi_change": 10000},
-        24100: {"ce_oi": 320000, "ce_oi_change": 35000, "pe_oi": 150000, "pe_oi_change": 8000},
-        24150: {"ce_oi": 290000, "ce_oi_change": 25000, "pe_oi": 120000, "pe_oi_change": 5000},
-        24200: {"ce_oi": 250000, "ce_oi_change": 20000, "pe_oi": 100000, "pe_oi_change": 3000},
+        23900: {"ce_oi": 150000, "ce_oi_change": 8000, "pe_oi": 200000, "pe_oi_change": 25000,
+                "ce_ltp": 210.50, "pe_ltp": 85.25, "ce_iv": 12.5, "pe_iv": 11.8},
+        23950: {"ce_oi": 180000, "ce_oi_change": 12000, "pe_oi": 170000, "pe_oi_change": 18000,
+                "ce_ltp": 175.00, "pe_ltp": 98.75, "ce_iv": 12.0, "pe_iv": 12.2},
+        24000: {"ce_oi": 250000, "ce_oi_change": 15000, "pe_oi": 220000, "pe_oi_change": 20000,
+                "ce_ltp": 142.25, "pe_ltp": 118.50, "ce_iv": 11.5, "pe_iv": 11.9},
+        24050: {"ce_oi": 280000, "ce_oi_change": 30000, "pe_oi": 180000, "pe_oi_change": 10000,
+                "ce_ltp": 112.00, "pe_ltp": 145.25, "ce_iv": 11.2, "pe_iv": 12.5},
+        24100: {"ce_oi": 320000, "ce_oi_change": 35000, "pe_oi": 150000, "pe_oi_change": 8000,
+                "ce_ltp": 85.50, "pe_ltp": 178.00, "ce_iv": 11.0, "pe_iv": 13.0},
+        24150: {"ce_oi": 290000, "ce_oi_change": 25000, "pe_oi": 120000, "pe_oi_change": 5000,
+                "ce_ltp": 62.75, "pe_ltp": 215.50, "ce_iv": 10.8, "pe_iv": 13.5},
+        24200: {"ce_oi": 250000, "ce_oi_change": 20000, "pe_oi": 100000, "pe_oi_change": 3000,
+                "ce_ltp": 45.00, "pe_ltp": 258.00, "ce_iv": 10.5, "pe_iv": 14.0},
     }
 
     spot = 24025.50
@@ -1051,18 +1067,16 @@ if __name__ == "__main__":
     print(f"Weights: OTM={analysis_all['weights']['otm']}, ATM={analysis_all['weights']['atm']}, ITM={analysis_all['weights']['itm']}")
     print(f"Scores: OTM={analysis_all['otm_score']}, ATM={analysis_all['atm_score']}, ITM={analysis_all['itm_score']}")
 
-    # Test trade setup with price history (NEW)
+    # Test premium-based trade setup (OPTION BUYER)
     print("\n" + "=" * 50)
-    print("TEST 5: Trade Setup with Price History")
+    print("TEST 5: Premium-Based Trade Setup (Option Buyer)")
     print("=" * 50)
 
-    # Simulate price history over ~12 minutes (4 readings at 3-min intervals)
-    # Spot was at 24000, dropped to 23980, then recovered to 24025.50
     price_history = [
-        {"spot_price": 24000.00},  # 12 mins ago
-        {"spot_price": 23980.25},  # 9 mins ago (swing low)
-        {"spot_price": 24010.75},  # 6 mins ago
-        {"spot_price": 24025.50},  # current
+        {"spot_price": 24000.00},
+        {"spot_price": 23980.25},
+        {"spot_price": 24010.75},
+        {"spot_price": 24025.50},
     ]
 
     analysis_with_history = analyze_tug_of_war(
@@ -1074,46 +1088,59 @@ if __name__ == "__main__":
     trade = analysis_with_history['trade_setup']
     if trade:
         print(f"\nSpot: {spot}")
-        print(f"Swing Low: {trade['swing_low']} | Swing High: {trade['swing_high']}")
-        print(f"Verdict: {analysis_with_history['verdict']}")
+        print(f"Verdict: {analysis_with_history['verdict']} (Score: {analysis_with_history['combined_score']})")
         print(f"\n{trade['direction']} Setup:")
-        print(f"  Entry: {trade['entry']}")
-        print(f"  SL: {trade['sl']} ({trade['risk_points']:.0f} pts risk){' [CAPPED]' if trade['sl_capped'] else ''}")
-        print(f"  T1: {trade['target1']} (1:1 R:R, +{trade['reward_t1_points']:.0f} pts)")
-        print(f"  T2: {trade['target2']} (1:2 R:R, +{trade['reward_t2_points']:.0f} pts)")
-        print(f"\nReference Levels (OI-based):")
+        print(f"  Strike: {trade['strike']} {trade['option_type']} ({trade['moneyness']})")
+        print(f"  Entry: {trade['entry_premium']} (current premium)")
+        print(f"  SL: {trade['sl_premium']} (-{trade['risk_pct']}%, {trade['risk_points']:.2f} pts risk)")
+        print(f"  T1: {trade['target1_premium']} (1:{trade['risk_reward_t1']:.0f} R:R)")
+        print(f"  T2: {trade['target2_premium']} (1:{trade['risk_reward_t2']:.0f} R:R)")
+        print(f"\nSpot Reference:")
+        print(f"  Current: {trade['spot_price']}")
         print(f"  Support: {trade['support_ref']}")
         print(f"  Resistance: {trade['resistance_ref']}")
         print(f"  Max Pain: {trade['max_pain']}")
     else:
-        print("No trade setup generated")
+        print("No trade setup generated (missing LTP data)")
 
-    # Test with wider swing (should cap SL)
+    # Test bearish trade setup
     print("\n" + "=" * 50)
-    print("TEST 6: Trade Setup with Wide Swing (SL capped)")
+    print("TEST 6: Bearish Trade Setup (Put Buyer)")
     print("=" * 50)
 
-    # Wide swing - swing high is 150+ points above spot (should trigger 0.4% = ~96 pts cap)
-    wide_price_history = [
-        {"spot_price": 23850.00},  # swing low
-        {"spot_price": 24200.00},  # swing high - 175 pts above spot
-        {"spot_price": 23900.00},
-        {"spot_price": 24025.50},  # current
-    ]
+    # Modify data to make it bearish (more call OI change)
+    bearish_strikes = {
+        23900: {"ce_oi": 150000, "ce_oi_change": 25000, "pe_oi": 200000, "pe_oi_change": 8000,
+                "ce_ltp": 210.50, "pe_ltp": 85.25},
+        23950: {"ce_oi": 180000, "ce_oi_change": 30000, "pe_oi": 170000, "pe_oi_change": 10000,
+                "ce_ltp": 175.00, "pe_ltp": 98.75},
+        24000: {"ce_oi": 250000, "ce_oi_change": 35000, "pe_oi": 220000, "pe_oi_change": 12000,
+                "ce_ltp": 142.25, "pe_ltp": 118.50},
+        24050: {"ce_oi": 280000, "ce_oi_change": 40000, "pe_oi": 180000, "pe_oi_change": 8000,
+                "ce_ltp": 112.00, "pe_ltp": 145.25},
+        24100: {"ce_oi": 320000, "ce_oi_change": 45000, "pe_oi": 150000, "pe_oi_change": 5000,
+                "ce_ltp": 85.50, "pe_ltp": 178.00},
+        24150: {"ce_oi": 290000, "ce_oi_change": 35000, "pe_oi": 120000, "pe_oi_change": 3000,
+                "ce_ltp": 62.75, "pe_ltp": 215.50},
+        24200: {"ce_oi": 250000, "ce_oi_change": 30000, "pe_oi": 100000, "pe_oi_change": 2000,
+                "ce_ltp": 45.00, "pe_ltp": 258.00},
+    }
 
-    analysis_wide = analyze_tug_of_war(
-        sample_strikes, spot,
-        price_history=wide_price_history
+    analysis_bearish = analyze_tug_of_war(
+        bearish_strikes, spot,
+        include_atm=True, include_itm=True,
+        price_history=price_history
     )
 
-    trade_wide = analysis_wide['trade_setup']
-    if trade_wide:
+    trade_bearish = analysis_bearish['trade_setup']
+    if trade_bearish:
         print(f"\nSpot: {spot}")
-        print(f"Swing Low: {trade_wide['swing_low']} | Swing High: {trade_wide['swing_high']}")
-        print(f"Raw SL distance (high + buffer - spot): {trade_wide['swing_high'] + spot * 0.001 - spot:.0f} pts")
-        print(f"Max SL allowed (0.4%): {spot * 0.004:.0f} pts")
-        print(f"\n{trade_wide['direction']} Setup:")
-        print(f"  Entry: {trade_wide['entry']}")
-        print(f"  SL: {trade_wide['sl']} ({trade_wide['risk_points']:.0f} pts risk){' [CAPPED]' if trade_wide['sl_capped'] else ''}")
-        print(f"  T1: {trade_wide['target1']} (1:1 R:R)")
-        print(f"  T2: {trade_wide['target2']} (1:2 R:R)")
+        print(f"Verdict: {analysis_bearish['verdict']} (Score: {analysis_bearish['combined_score']})")
+        print(f"\n{trade_bearish['direction']} Setup:")
+        print(f"  Strike: {trade_bearish['strike']} {trade_bearish['option_type']} ({trade_bearish['moneyness']})")
+        print(f"  Entry: {trade_bearish['entry_premium']} (current premium)")
+        print(f"  SL: {trade_bearish['sl_premium']} (-{trade_bearish['risk_pct']}%, {trade_bearish['risk_points']:.2f} pts risk)")
+        print(f"  T1: {trade_bearish['target1_premium']} (1:{trade_bearish['risk_reward_t1']:.0f} R:R)")
+        print(f"  T2: {trade_bearish['target2_premium']} (1:{trade_bearish['risk_reward_t2']:.0f} R:R)")
+    else:
+        print("No trade setup generated")

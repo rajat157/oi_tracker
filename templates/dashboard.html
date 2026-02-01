@@ -119,13 +119,22 @@
                     </details>
                 </div>
 
-                <!-- Trade Setup Card -->
+                <!-- Trade Setup Card (Persistent with Lifecycle) -->
                 <div class="card trade-setup-card" id="trade-setup-card" style="display: none;">
-                    <h3 class="card-title">Option Buyer Setup</h3>
+                    <div class="trade-setup-title-row">
+                        <h3 class="card-title">Active Trade Setup</h3>
+                        <span class="trade-status-badge" id="trade-status-badge">PENDING</span>
+                    </div>
                     <div class="trade-setup-header">
                         <span class="trade-direction" id="trade-direction">--</span>
                         <span class="trade-strike" id="trade-strike">--</span>
                         <span class="trade-confidence" id="trade-confidence">Confidence: --</span>
+                    </div>
+                    <!-- Live P/L display (shown when ACTIVE) -->
+                    <div class="trade-live-pnl" id="trade-live-pnl" style="display: none;">
+                        <span class="pnl-label">Live P/L</span>
+                        <span class="pnl-value" id="trade-pnl-value">--</span>
+                        <span class="pnl-current">Current: <strong id="trade-current-premium">--</strong></span>
                     </div>
                     <div class="trade-levels">
                         <div class="trade-level entry">
@@ -152,6 +161,34 @@
                         <span>Resistance: <strong id="trade-resistance">--</strong></span>
                         <span>Max Pain: <strong id="trade-max-pain">--</strong></span>
                     </div>
+                </div>
+
+                <!-- Win Rate Card -->
+                <div class="card win-rate-card" id="win-rate-card">
+                    <h3 class="card-title">Trade Performance (30 Days)</h3>
+                    <div class="win-rate-grid">
+                        <div class="win-rate-item primary">
+                            <span class="wr-label">Win Rate</span>
+                            <span class="wr-value" id="win-rate">--</span>
+                        </div>
+                        <div class="win-rate-item">
+                            <span class="wr-label">Total Trades</span>
+                            <span class="wr-value" id="total-trades">--</span>
+                        </div>
+                        <div class="win-rate-item wins">
+                            <span class="wr-label">Wins</span>
+                            <span class="wr-value" id="trade-wins">--</span>
+                        </div>
+                        <div class="win-rate-item losses">
+                            <span class="wr-label">Losses</span>
+                            <span class="wr-value" id="trade-losses">--</span>
+                        </div>
+                    </div>
+                    <div class="win-rate-extra">
+                        <span>Avg Win: <strong id="avg-win">--</strong>%</span>
+                        <span>Avg Loss: <strong id="avg-loss">--</strong>%</span>
+                    </div>
+                    <a href="/trades" class="view-trades-btn">View All Trades</a>
                 </div>
 
                 <!-- Trap Warning Card -->

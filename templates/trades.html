@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trade History - NIFTY OI Analyzer</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-left">
+                <a href="/" class="back-link">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5M12 19l-7-7 7-7"/>
+                    </svg>
+                </a>
+                <h1 class="logo">Trade History</h1>
+            </div>
+            <div class="header-right">
+                <div class="trades-summary" id="trades-summary">
+                    <span class="summary-item">Total: <strong id="summary-total">--</strong></span>
+                    <span class="summary-item wins">Won: <strong id="summary-wins">--</strong></span>
+                    <span class="summary-item losses">Lost: <strong id="summary-losses">--</strong></span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Filters Section -->
+        <div class="filters-section">
+            <div class="filter-group">
+                <label class="filter-label">Date Range</label>
+                <select id="filter-days" class="filter-select">
+                    <option value="7">Last 7 Days</option>
+                    <option value="30" selected>Last 30 Days</option>
+                    <option value="90">Last 90 Days</option>
+                    <option value="365">Last Year</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Outcome</label>
+                <select id="filter-status" class="filter-select">
+                    <option value="">All Outcomes</option>
+                    <option value="WON">Won</option>
+                    <option value="LOST">Lost</option>
+                    <option value="EXPIRED">Expired</option>
+                    <option value="CANCELLED">Cancelled</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label class="filter-label">Direction</label>
+                <select id="filter-direction" class="filter-select">
+                    <option value="">All Directions</option>
+                    <option value="BUY_CALL">Call (Bullish)</option>
+                    <option value="BUY_PUT">Put (Bearish)</option>
+                </select>
+            </div>
+            <button id="apply-filters" class="btn-apply">Apply Filters</button>
+        </div>
+
+        <!-- Trades List -->
+        <main class="trades-main">
+            <div id="trades-list" class="trades-list">
+                <div class="loading-trades">Loading trades...</div>
+            </div>
+
+            <!-- Load More Button -->
+            <div id="load-more-container" class="load-more-container" style="display: none;">
+                <button id="load-more-btn" class="btn-load-more">Load More Trades</button>
+            </div>
+
+            <!-- Empty State -->
+            <div id="empty-state" class="empty-state" style="display: none;">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                </svg>
+                <p>No trades found for the selected filters.</p>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>Trade history from the last <span id="footer-days">30</span> days</span>
+            <a href="/" class="footer-link">Back to Dashboard</a>
+        </footer>
+    </div>
+
+    <!-- Trade Card Template -->
+    <template id="trade-card-template">
+        <div class="trade-card">
+            <!-- Header -->
+            <div class="trade-card-header">
+                <div class="trade-card-badges">
+                    <span class="trade-direction-badge"></span>
+                    <span class="trade-strike-badge"></span>
+                    <span class="trade-status-badge"></span>
+                </div>
+                <div class="trade-card-date"></div>
+            </div>
+
+            <!-- Timeline -->
+            <div class="trade-timeline">
+                <div class="timeline-item created">
+                    <span class="timeline-label">Created</span>
+                    <span class="timeline-value"></span>
+                </div>
+                <div class="timeline-arrow">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                <div class="timeline-item activated">
+                    <span class="timeline-label">Activated</span>
+                    <span class="timeline-value"></span>
+                </div>
+                <div class="timeline-arrow">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14M12 5l7 7-7 7"/>
+                    </svg>
+                </div>
+                <div class="timeline-item resolved">
+                    <span class="timeline-label">Resolved</span>
+                    <span class="timeline-value"></span>
+                </div>
+            </div>
+
+            <!-- Premium Levels -->
+            <div class="trade-premiums">
+                <div class="premium-item entry">
+                    <span class="premium-label">Entry</span>
+                    <span class="premium-value"></span>
+                </div>
+                <div class="premium-item activation">
+                    <span class="premium-label">Activation</span>
+                    <span class="premium-value"></span>
+                </div>
+                <div class="premium-item exit">
+                    <span class="premium-label">Exit</span>
+                    <span class="premium-value"></span>
+                </div>
+                <div class="premium-item sl">
+                    <span class="premium-label">SL</span>
+                    <span class="premium-value"></span>
+                </div>
+                <div class="premium-item target">
+                    <span class="premium-label">Target</span>
+                    <span class="premium-value"></span>
+                </div>
+            </div>
+
+            <!-- Max/Min Reached -->
+            <div class="trade-extremes">
+                <span class="extreme-item max">Max: <strong></strong></span>
+                <span class="extreme-item min">Min: <strong></strong></span>
+            </div>
+
+            <!-- P/L Result -->
+            <div class="trade-result">
+                <span class="result-label">Result</span>
+                <span class="result-value"></span>
+                <span class="result-points"></span>
+            </div>
+
+            <!-- Technical Analysis (Collapsible) -->
+            <details class="trade-analysis">
+                <summary>Technical Analysis Context</summary>
+                <div class="analysis-grid">
+                    <div class="analysis-item">
+                        <span class="analysis-label">Verdict</span>
+                        <span class="analysis-value verdict-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">Confidence</span>
+                        <span class="analysis-value confidence-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">Call OI Change</span>
+                        <span class="analysis-value call-oi-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">Put OI Change</span>
+                        <span class="analysis-value put-oi-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">PCR</span>
+                        <span class="analysis-value pcr-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">Max Pain</span>
+                        <span class="analysis-value max-pain-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">Support</span>
+                        <span class="analysis-value support-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">Resistance</span>
+                        <span class="analysis-value resistance-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">Spot at Entry</span>
+                        <span class="analysis-value spot-value"></span>
+                    </div>
+                    <div class="analysis-item">
+                        <span class="analysis-label">IV</span>
+                        <span class="analysis-value iv-value"></span>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Trade Reasoning -->
+            <div class="trade-reasoning">
+                <span class="reasoning-label">Why this trade?</span>
+                <p class="reasoning-text"></p>
+            </div>
+        </div>
+    </template>
+
+    <script src="/static/trades.js"></script>
+</body>
+</html>

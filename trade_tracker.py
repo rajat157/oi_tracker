@@ -217,6 +217,48 @@ class TradeTracker:
 
         return False
 
+    def _generate_trade_reasoning(self, analysis: dict, trade_setup: dict) -> str:
+        """
+        Generate human-readable summary of why the trade was taken.
+
+        Args:
+            analysis: Analysis dict with market context
+            trade_setup: Trade setup dict
+
+        Returns:
+            Human-readable trade reasoning string
+        """
+        direction = "BUY PUT" if trade_setup["direction"] == "BUY_PUT" else "BUY CALL"
+        verdict = analysis.get("verdict", "Unknown")
+        confidence = analysis.get("signal_confidence", 0)
+        call_change = analysis.get("call_oi_change", 0)
+        put_change = analysis.get("put_oi_change", 0)
+        spot = analysis.get("spot_price", 0)
+        max_pain = analysis.get("max_pain", 0)
+        strike = trade_setup["strike"]
+        moneyness = trade_setup["moneyness"]
+        risk = trade_setup["risk_pct"]
+        iv = trade_setup.get("iv_at_strike", 0)
+
+        # Format OI changes (in lakhs for readability)
+        call_change_lakh = call_change / 100000
+        put_change_lakh = put_change / 100000
+
+        # Determine spot vs max pain relationship
+        spot_vs_mp = "below" if spot < max_pain else "above"
+
+        reasoning = (
+            f"{direction}: {verdict} ({confidence:.0f}% confidence). "
+            f"Call OI {call_change_lakh:+.1f}L vs Put OI {put_change_lakh:+.1f}L. "
+            f"Spot {spot:.0f} {spot_vs_mp} max pain {max_pain}. "
+            f"Selected {strike} {trade_setup['option_type']} ({moneyness}) with {risk:.0f}% risk."
+        )
+
+        if iv > 0:
+            reasoning += f" IV: {iv:.1f}%"
+
+        return reasoning
+
     def create_setup(self, analysis: dict, timestamp: datetime) -> Optional[int]:
         """
         Create a new PENDING trade setup from analysis.
@@ -231,6 +273,14 @@ class TradeTracker:
         trade_setup = analysis.get("trade_setup")
         if not trade_setup:
             return None
+
+        # Generate trade reasoning
+        trade_reasoning = self._generate_trade_reasoning(analysis, trade_setup)
+
+        # Extract OI clusters for support/resistance
+        oi_clusters = analysis.get("oi_clusters", {})
+        support = oi_clusters.get("strongest_support") or trade_setup.get("support_ref") or 0
+        resistance = oi_clusters.get("strongest_resistance") or trade_setup.get("resistance_ref") or 0
 
         setup_id = save_trade_setup(
             created_at=timestamp,
@@ -247,7 +297,15 @@ class TradeTracker:
             verdict_at_creation=analysis["verdict"],
             signal_confidence=analysis["signal_confidence"],
             iv_at_creation=trade_setup.get("iv_at_strike", 0),
-            expiry_date=analysis.get("expiry_date", "")
+            expiry_date=analysis.get("expiry_date", ""),
+            # New technical analysis context
+            call_oi_change_at_creation=analysis.get("call_oi_change", 0),
+            put_oi_change_at_creation=analysis.get("put_oi_change", 0),
+            pcr_at_creation=analysis.get("pcr", 0),
+            max_pain_at_creation=analysis.get("max_pain", 0),
+            support_at_creation=support,
+            resistance_at_creation=resistance,
+            trade_reasoning=trade_reasoning
         )
 
         print(f"[TradeTracker] Created PENDING setup #{setup_id}: "

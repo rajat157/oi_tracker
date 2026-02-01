@@ -7,7 +7,7 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 
 from scheduler import OIScheduler
-from database import get_latest_analysis, get_analysis_history, get_latest_snapshot, get_recent_price_trend, get_active_trade_setup, get_trade_setup_stats
+from database import get_latest_analysis, get_analysis_history, get_latest_snapshot, get_recent_price_trend, get_active_trade_setup, get_trade_setup_stats, get_trade_history
 from oi_analyzer import analyze_tug_of_war
 
 
@@ -151,6 +151,46 @@ def api_refresh():
 def api_market_status():
     """Get current market status."""
     return jsonify(oi_scheduler.get_market_status())
+
+
+@app.route("/trades")
+def trades_page():
+    """Render the trade history page."""
+    return render_template("trades.html")
+
+
+@app.route("/api/trades")
+def api_trades():
+    """
+    Get historical trades with pagination and filters.
+
+    Query params:
+        limit: Number of trades to return (default 50)
+        offset: Number of trades to skip (default 0)
+        days: Number of days to look back (default 30)
+        status: Filter by status (WON, LOST, EXPIRED, CANCELLED)
+        direction: Filter by direction (BUY_CALL, BUY_PUT)
+    """
+    limit = request.args.get("limit", 50, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    days = request.args.get("days", 30, type=int)
+    status = request.args.get("status")
+    direction = request.args.get("direction")
+
+    trades = get_trade_history(
+        limit=limit,
+        offset=offset,
+        days=days,
+        status_filter=status,
+        direction_filter=direction
+    )
+
+    return jsonify({
+        "trades": trades,
+        "has_more": len(trades) == limit,
+        "offset": offset,
+        "limit": limit
+    })
 
 
 @socketio.on("connect")

@@ -130,6 +130,73 @@ def init_db():
             ON signal_outcomes(signal_timestamp)
         """)
 
+        # Table for persistent trade setups with lifecycle tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trade_setups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                -- Creation
+                created_at DATETIME NOT NULL,
+                direction TEXT NOT NULL,
+                strike INTEGER NOT NULL,
+                option_type TEXT NOT NULL,
+                moneyness TEXT NOT NULL,
+                entry_premium REAL NOT NULL,
+                sl_premium REAL NOT NULL,
+                target1_premium REAL NOT NULL,
+                target2_premium REAL,
+                risk_pct REAL NOT NULL,
+                spot_at_creation REAL NOT NULL,
+                verdict_at_creation TEXT NOT NULL,
+                signal_confidence REAL NOT NULL,
+                iv_at_creation REAL DEFAULT 0.0,
+                expiry_date TEXT NOT NULL,
+                -- Status
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                -- Activation
+                activated_at DATETIME,
+                activation_premium REAL,
+                -- Resolution
+                resolved_at DATETIME,
+                exit_premium REAL,
+                hit_sl BOOLEAN DEFAULT 0,
+                hit_target BOOLEAN DEFAULT 0,
+                profit_loss_pct REAL,
+                profit_loss_points REAL,
+                -- Tracking
+                max_premium_reached REAL,
+                min_premium_reached REAL,
+                last_checked_at DATETIME,
+                last_premium REAL
+            )
+        """)
+
+        # Index for trade setups
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trade_setups_status
+            ON trade_setups(status)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trade_setups_created
+            ON trade_setups(created_at)
+        """)
+
+        # Add migration for technical analysis context columns in trade_setups
+        trade_setup_columns_to_add = [
+            ("call_oi_change_at_creation", "REAL DEFAULT 0"),
+            ("put_oi_change_at_creation", "REAL DEFAULT 0"),
+            ("pcr_at_creation", "REAL DEFAULT 0"),
+            ("max_pain_at_creation", "INTEGER DEFAULT 0"),
+            ("support_at_creation", "INTEGER DEFAULT 0"),
+            ("resistance_at_creation", "INTEGER DEFAULT 0"),
+            ("trade_reasoning", "TEXT DEFAULT ''"),
+        ]
+        for col_name, col_def in trade_setup_columns_to_add:
+            try:
+                cursor.execute(f"ALTER TABLE trade_setups ADD COLUMN {col_name} {col_def}")
+                print(f"Added {col_name} column to trade_setups table")
+            except:
+                pass  # Column already exists
+
         # Add migration for ATM/ITM columns if they don't exist
         cursor.execute("""
             SELECT COUNT(*) as count FROM pragma_table_info('analysis_history')
@@ -727,6 +794,274 @@ def get_component_accuracy(lookback_days: int = 30) -> dict:
             }
 
         return results
+
+
+# ===== Trade Setup Functions =====
+
+def save_trade_setup(created_at: datetime, direction: str, strike: int,
+                     option_type: str, moneyness: str, entry_premium: float,
+                     sl_premium: float, target1_premium: float, target2_premium: float,
+                     risk_pct: float, spot_at_creation: float, verdict_at_creation: str,
+                     signal_confidence: float, iv_at_creation: float, expiry_date: str,
+                     call_oi_change_at_creation: float = 0, put_oi_change_at_creation: float = 0,
+                     pcr_at_creation: float = 0, max_pain_at_creation: int = 0,
+                     support_at_creation: int = 0, resistance_at_creation: int = 0,
+                     trade_reasoning: str = "") -> int:
+    """
+    Save a new trade setup with PENDING status.
+
+    Args:
+        created_at: Timestamp when trade was created
+        direction: BUY_CALL or BUY_PUT
+        strike: Strike price
+        option_type: CE or PE
+        moneyness: ATM, ITM, or OTM
+        entry_premium: Entry premium price
+        sl_premium: Stop loss premium
+        target1_premium: Target 1 premium
+        target2_premium: Target 2 premium
+        risk_pct: Risk percentage
+        spot_at_creation: Spot price at creation
+        verdict_at_creation: Market verdict at creation
+        signal_confidence: Signal confidence percentage
+        iv_at_creation: IV at strike
+        expiry_date: Option expiry date
+        call_oi_change_at_creation: Call OI change when trade created
+        put_oi_change_at_creation: Put OI change when trade created
+        pcr_at_creation: Put-Call Ratio at creation
+        max_pain_at_creation: Max pain strike at creation
+        support_at_creation: Support level from OI clusters
+        resistance_at_creation: Resistance level from OI clusters
+        trade_reasoning: Human-readable summary of why trade was taken
+
+    Returns:
+        The ID of the created setup
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO trade_setups
+            (created_at, direction, strike, option_type, moneyness,
+             entry_premium, sl_premium, target1_premium, target2_premium,
+             risk_pct, spot_at_creation, verdict_at_creation,
+             signal_confidence, iv_at_creation, expiry_date, status,
+             call_oi_change_at_creation, put_oi_change_at_creation,
+             pcr_at_creation, max_pain_at_creation, support_at_creation,
+             resistance_at_creation, trade_reasoning)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING',
+                    ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            created_at.isoformat(),
+            direction,
+            strike,
+            option_type,
+            moneyness,
+            entry_premium,
+            sl_premium,
+            target1_premium,
+            target2_premium,
+            risk_pct,
+            spot_at_creation,
+            verdict_at_creation,
+            signal_confidence,
+            iv_at_creation,
+            expiry_date,
+            call_oi_change_at_creation,
+            put_oi_change_at_creation,
+            pcr_at_creation,
+            max_pain_at_creation,
+            support_at_creation or 0,
+            resistance_at_creation or 0,
+            trade_reasoning
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_active_trade_setup() -> Optional[dict]:
+    """
+    Get the current PENDING or ACTIVE trade setup.
+
+    Returns:
+        Dict with setup details or None if no active setup
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM trade_setups
+            WHERE status IN ('PENDING', 'ACTIVE')
+            ORDER BY created_at DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+
+def update_trade_setup_status(setup_id: int, status: str, **kwargs):
+    """
+    Update a trade setup's status and optional fields.
+
+    Args:
+        setup_id: The setup ID to update
+        status: New status (PENDING, ACTIVE, WON, LOST, EXPIRED, CANCELLED)
+        **kwargs: Additional fields to update (e.g., activated_at, exit_premium, etc.)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Build dynamic update query
+        fields = ["status = ?"]
+        values = [status]
+
+        for key, value in kwargs.items():
+            fields.append(f"{key} = ?")
+            if isinstance(value, datetime):
+                values.append(value.isoformat())
+            else:
+                values.append(value)
+
+        values.append(setup_id)
+
+        query = f"UPDATE trade_setups SET {', '.join(fields)} WHERE id = ?"
+        cursor.execute(query, values)
+        conn.commit()
+
+
+def get_trade_setup_stats(lookback_days: int = 30) -> dict:
+    """
+    Get trade setup win rate statistics.
+
+    Args:
+        lookback_days: Number of days to look back
+
+    Returns:
+        Dict with total, wins, losses, win_rate, avg_profit_loss
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+
+        # Get overall stats for resolved trades
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN status = 'WON' THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN status = 'LOST' THEN 1 ELSE 0 END) as losses,
+                AVG(profit_loss_pct) as avg_profit_loss,
+                AVG(CASE WHEN status = 'WON' THEN profit_loss_pct END) as avg_win,
+                AVG(CASE WHEN status = 'LOST' THEN profit_loss_pct END) as avg_loss
+            FROM trade_setups
+            WHERE status IN ('WON', 'LOST')
+              AND resolved_at IS NOT NULL
+              AND created_at >= ?
+        """, (cutoff.isoformat(),))
+
+        row = cursor.fetchone()
+
+        total = row["total"] or 0
+        wins = row["wins"] or 0
+        losses = row["losses"] or 0
+        win_rate = (wins / total * 100) if total > 0 else 0
+
+        return {
+            "total": total,
+            "wins": wins,
+            "losses": losses,
+            "win_rate": round(win_rate, 1),
+            "avg_profit_loss": round(row["avg_profit_loss"] or 0, 2),
+            "avg_win": round(row["avg_win"] or 0, 2),
+            "avg_loss": round(row["avg_loss"] or 0, 2)
+        }
+
+
+def get_recent_trade_setups(limit: int = 10) -> list:
+    """Get recent trade setups for history display."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM trade_setups
+            ORDER BY created_at DESC
+            LIMIT ?
+        """, (limit,))
+
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_trade_history(limit: int = 50, offset: int = 0, days: int = 30,
+                      status_filter: str = None, direction_filter: str = None) -> list:
+    """
+    Get historical trade setups with pagination and filters.
+
+    Args:
+        limit: Maximum number of trades to return
+        offset: Number of trades to skip (for pagination)
+        days: Number of days to look back
+        status_filter: Filter by status (WON, LOST, EXPIRED, CANCELLED)
+        direction_filter: Filter by direction (BUY_CALL, BUY_PUT)
+
+    Returns:
+        List of trade setup dicts ordered by resolved_at DESC (most recent first)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Build query with filters
+        conditions = ["status IN ('WON', 'LOST', 'EXPIRED', 'CANCELLED')"]
+        params = []
+
+        # Date filter
+        cutoff = datetime.now() - timedelta(days=days)
+        conditions.append("created_at >= ?")
+        params.append(cutoff.isoformat())
+
+        # Status filter
+        if status_filter:
+            conditions.append("status = ?")
+            params.append(status_filter)
+
+        # Direction filter
+        if direction_filter:
+            conditions.append("direction = ?")
+            params.append(direction_filter)
+
+        where_clause = " AND ".join(conditions)
+        params.extend([limit, offset])
+
+        cursor.execute(f"""
+            SELECT * FROM trade_setups
+            WHERE {where_clause}
+            ORDER BY COALESCE(resolved_at, created_at) DESC
+            LIMIT ? OFFSET ?
+        """, params)
+
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_last_resolved_trade() -> Optional[dict]:
+    """
+    Get the most recent resolved trade (WON, LOST, CANCELLED, or EXPIRED).
+
+    Returns:
+        Dict with trade setup details or None if no resolved trades
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM trade_setups
+            WHERE status IN ('WON', 'LOST', 'CANCELLED', 'EXPIRED')
+              AND resolved_at IS NOT NULL
+            ORDER BY resolved_at DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
 
 
 # Initialize database on import

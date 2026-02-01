@@ -121,6 +121,38 @@ def calculate_conviction_multiplier(volume: int, oi_change: int) -> float:
         return 0.5
 
 
+def calculate_dynamic_sl_pct(strikes_data: dict, strike: int, option_type: str) -> float:
+    """
+    Calculate IV-based stop loss percentage (10-18% range).
+
+    Lower IV = tighter stop loss (less premium decay expected)
+    Higher IV = wider stop loss (more volatility expected)
+
+    Args:
+        strikes_data: Dict of strike -> {..., ce_iv, pe_iv}
+        strike: The strike price to check IV for
+        option_type: 'CE' or 'PE'
+
+    Returns:
+        SL percentage as decimal (0.10 to 0.18)
+    """
+    strike_data = strikes_data.get(strike, {})
+    iv = strike_data.get('ce_iv' if option_type == 'CE' else 'pe_iv', 0)
+
+    if iv <= 0:
+        return 0.15  # Default 15% if no IV data
+
+    # IV-based SL percentage
+    if iv < 12:
+        return 0.10  # Low IV = tighter SL
+    elif iv < 15:
+        return 0.12
+    elif iv < 18:
+        return 0.15
+    else:
+        return 0.18  # High IV = wider SL (max 18%)
+
+
 def calculate_iv_skew(strikes_data: dict, spot_price: float, num_strikes: int = 3) -> float:
     """
     Calculate IV Skew = avg(Put IV) - avg(Call IV) for OTM strikes.
@@ -343,12 +375,17 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
     if strike_to_buy is None or premium <= 0:
         return None
 
-    # Calculate SL/targets based on premium (20% risk)
-    sl_pct = 0.20
+    # Calculate IV-based dynamic SL percentage (10-18% range)
+    sl_pct = calculate_dynamic_sl_pct(strikes_data, strike_to_buy, option_type)
     risk = premium * sl_pct
     sl_premium = premium - risk
     t1_premium = premium + risk        # 1:1 R:R
     t2_premium = premium + (risk * 2)  # 1:2 R:R
+
+    # Get IV for the selected strike (for tracking)
+    strike_iv = strikes_data.get(strike_to_buy, {}).get(
+        'ce_iv' if option_type == 'CE' else 'pe_iv', 0
+    )
 
     return {
         # Option buyer setup
@@ -364,6 +401,7 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
         "risk_pct": round(sl_pct * 100, 1),
         "risk_reward_t1": 1.0,
         "risk_reward_t2": 2.0,
+        "iv_at_strike": round(strike_iv, 2),
         # Spot reference (for context)
         "spot_price": round(spot_price, 2),
         "support_ref": support,

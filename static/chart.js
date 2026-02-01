@@ -9,6 +9,7 @@ let lastChartTimestamp = null;
 // Toggle state (persisted in localStorage)
 let includeATM = localStorage.getItem('includeATM') === 'true';
 let includeITM = localStorage.getItem('includeITM') === 'true';
+let forceAutoFetch = localStorage.getItem('forceAutoFetch') === 'true';
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -29,10 +30,12 @@ document.addEventListener('DOMContentLoaded', function() {
 function initToggles() {
     const atmToggle = document.getElementById('atm-toggle');
     const itmToggle = document.getElementById('itm-toggle');
+    const autoToggle = document.getElementById('auto-toggle');
 
     // Set initial state from localStorage
     if (atmToggle) atmToggle.checked = includeATM;
     if (itmToggle) itmToggle.checked = includeITM;
+    if (autoToggle) autoToggle.checked = forceAutoFetch;
 
     // Update UI visibility
     updateSectionVisibility();
@@ -55,6 +58,14 @@ function initToggles() {
             socket.emit('update_toggles', { include_atm: includeATM, include_itm: includeITM });
         });
     }
+
+    if (autoToggle) {
+        autoToggle.addEventListener('change', (e) => {
+            forceAutoFetch = e.target.checked;
+            localStorage.setItem('forceAutoFetch', forceAutoFetch);
+            socket.emit('set_force_fetch', { enabled: forceAutoFetch });
+        });
+    }
 }
 
 // Show/hide sections based on toggle state
@@ -67,11 +78,21 @@ function updateSectionVisibility() {
     const itmChartSection = document.getElementById('itm-chart-section');
 
     if (atmSection) atmSection.style.display = includeATM ? 'block' : 'none';
-    if (atmBreakdown) atmBreakdown.style.display = includeATM ? 'block' : 'none';
+    if (atmBreakdown) atmBreakdown.style.display = includeATM ? 'flex' : 'none';
     if (atmChartSection) atmChartSection.style.display = includeATM ? 'block' : 'none';
     if (itmSection) itmSection.style.display = includeITM ? 'grid' : 'none';
-    if (itmBreakdown) itmBreakdown.style.display = includeITM ? 'block' : 'none';
+    if (itmBreakdown) itmBreakdown.style.display = includeITM ? 'flex' : 'none';
     if (itmChartSection) itmChartSection.style.display = includeITM ? 'block' : 'none';
+}
+
+// Update score gauge visualization
+function updateScoreGauge(score) {
+    const marker = document.getElementById('score-gauge-marker');
+    if (marker && score != null) {
+        // Score is -100 to +100, normalize to 0-100%
+        const normalized = Math.max(0, Math.min(100, (score + 100) / 2));
+        marker.style.left = `${normalized}%`;
+    }
 }
 
 // Initialize Chart.js
@@ -86,24 +107,24 @@ function initChart() {
                 {
                     label: 'Call OI Change',
                     data: [],
-                    borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderColor: '#f87171',
+                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: '#ef4444'
+                    pointBackgroundColor: '#f87171'
                 },
                 {
                     label: 'Put OI Change',
                     data: [],
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: '#10b981'
+                    pointBackgroundColor: '#22c55e'
                 }
             ]
         },
@@ -120,7 +141,7 @@ function initChart() {
                     position: 'top',
                     align: 'end',
                     labels: {
-                        color: '#8b8b9e',
+                        color: '#a1a1b5',
                         usePointStyle: true,
                         pointStyle: 'circle',
                         padding: 20,
@@ -130,7 +151,7 @@ function initChart() {
                 tooltip: {
                     backgroundColor: '#1a1a24',
                     titleColor: '#ffffff',
-                    bodyColor: '#8b8b9e',
+                    bodyColor: '#a1a1b5',
                     borderColor: '#2a2a3a',
                     borderWidth: 1,
                     padding: 12,
@@ -142,12 +163,12 @@ function initChart() {
             scales: {
                 x: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#5c5c6f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
                 },
                 y: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
                     ticks: {
-                        color: '#5c5c6f',
+                        color: '#6b6b7f',
                         font: { size: 11, family: 'Inter' },
                         callback: value => formatCompact(value)
                     }
@@ -169,24 +190,24 @@ function initATMChart() {
                 {
                     label: 'ATM Call OI Change',
                     data: [],
-                    borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderColor: '#f87171',
+                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: '#ef4444'
+                    pointBackgroundColor: '#f87171'
                 },
                 {
                     label: 'ATM Put OI Change',
                     data: [],
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: '#10b981'
+                    pointBackgroundColor: '#22c55e'
                 }
             ]
         },
@@ -203,7 +224,7 @@ function initATMChart() {
                     position: 'top',
                     align: 'end',
                     labels: {
-                        color: '#8b8b9e',
+                        color: '#a1a1b5',
                         usePointStyle: true,
                         pointStyle: 'circle',
                         padding: 20,
@@ -213,7 +234,7 @@ function initATMChart() {
                 tooltip: {
                     backgroundColor: '#1a1a24',
                     titleColor: '#ffffff',
-                    bodyColor: '#8b8b9e',
+                    bodyColor: '#a1a1b5',
                     borderColor: '#2a2a3a',
                     borderWidth: 1,
                     padding: 12,
@@ -225,12 +246,12 @@ function initATMChart() {
             scales: {
                 x: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#5c5c6f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
                 },
                 y: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
                     ticks: {
-                        color: '#5c5c6f',
+                        color: '#6b6b7f',
                         font: { size: 11, family: 'Inter' },
                         callback: value => formatCompact(value)
                     }
@@ -252,24 +273,24 @@ function initITMChart() {
                 {
                     label: 'ITM Call OI Change',
                     data: [],
-                    borderColor: '#ef4444',
-                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderColor: '#f87171',
+                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: '#ef4444'
+                    pointBackgroundColor: '#f87171'
                 },
                 {
                     label: 'ITM Put OI Change',
                     data: [],
-                    borderColor: '#10b981',
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 3,
-                    pointBackgroundColor: '#10b981'
+                    pointBackgroundColor: '#22c55e'
                 }
             ]
         },
@@ -286,7 +307,7 @@ function initITMChart() {
                     position: 'top',
                     align: 'end',
                     labels: {
-                        color: '#8b8b9e',
+                        color: '#a1a1b5',
                         usePointStyle: true,
                         pointStyle: 'circle',
                         padding: 20,
@@ -296,7 +317,7 @@ function initITMChart() {
                 tooltip: {
                     backgroundColor: '#1a1a24',
                     titleColor: '#ffffff',
-                    bodyColor: '#8b8b9e',
+                    bodyColor: '#a1a1b5',
                     borderColor: '#2a2a3a',
                     borderWidth: 1,
                     padding: 12,
@@ -308,12 +329,12 @@ function initITMChart() {
             scales: {
                 x: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#5c5c6f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
                 },
                 y: {
                     grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
                     ticks: {
-                        color: '#5c5c6f',
+                        color: '#6b6b7f',
                         font: { size: 11, family: 'Inter' },
                         callback: value => formatCompact(value)
                     }
@@ -328,6 +349,8 @@ function setupSocketListeners() {
     socket.on('connect', () => {
         console.log('Connected');
         updateConnectionStatus(true);
+        // Sync force fetch state with server on connect
+        socket.emit('set_force_fetch', { enabled: forceAutoFetch });
     });
 
     socket.on('disconnect', () => {
@@ -411,8 +434,9 @@ function updateDashboard(data) {
         }
     }
 
-    // Update scores
+    // Update scores and gauge
     updateScore('combined-score', data.combined_score);
+    updateScoreGauge(data.combined_score);
 
     // Update weight displays and individual scores
     if (data.weights) {
@@ -424,32 +448,15 @@ function updateDashboard(data) {
         // Show/hide momentum breakdown based on weight
         const momentumBreakdown = document.getElementById('momentum-breakdown');
         if (momentumBreakdown) {
-            momentumBreakdown.style.display = data.weights.momentum > 0 ? 'block' : 'none';
+            momentumBreakdown.style.display = data.weights.momentum > 0 ? 'flex' : 'none';
         }
     }
 
-    // Update zone scores and their 70/30 components
+    // Update zone scores (simplified - just zone scores without 70/30 breakdown)
     updateScore('otm-score-display', data.otm_score, true);
-    updateScore('otm-change-score', data.otm_change_score, true);
-    updateScore('otm-total-score', data.otm_total_score, true);
-
     updateScore('atm-score-display', data.atm_score, true);
-    updateScore('atm-change-score', data.atm_change_score, true);
-    updateScore('atm-total-score', data.atm_total_score, true);
-
     updateScore('itm-score-display', data.itm_score, true);
-    updateScore('itm-change-score', data.itm_change_score, true);
-    updateScore('itm-total-score', data.itm_total_score, true);
-
-    // Update momentum scores
     updateScore('momentum-score-display', data.momentum_score, true);
-    const momentumPctElem = document.getElementById('momentum-change-pct');
-    if (momentumPctElem && data.price_change_pct !== undefined) {
-        const pct = data.price_change_pct;
-        momentumPctElem.textContent = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
-        momentumPctElem.classList.remove('positive', 'negative', 'neutral');
-        momentumPctElem.classList.add(pct > 0 ? 'positive' : pct < 0 ? 'negative' : 'neutral');
-    }
 
     // Update confirmation indicator
     const confirmIcon = document.getElementById('confirmation-icon');
@@ -488,12 +495,12 @@ function updateDashboard(data) {
     if (momentumElem && data.price_change_pct !== undefined) {
         const pct = data.price_change_pct;
         const arrow = pct > 0 ? '↑' : pct < 0 ? '↓' : '→';
-        const color = pct > 0 ? '#10b981' : pct < 0 ? '#ef4444' : '#8b8b9e';
+        const color = pct > 0 ? '#22c55e' : pct < 0 ? '#f87171' : '#a1a1b5';
         momentumElem.textContent = `${arrow} ${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
         momentumElem.style.color = color;
     } else if (momentumElem) {
         momentumElem.textContent = '--';
-        momentumElem.style.color = '#8b8b9e';
+        momentumElem.style.color = '#a1a1b5';
     }
 
     // Update volume metrics
@@ -504,8 +511,8 @@ function updateDashboard(data) {
     const convictionElem = document.getElementById('avg-conviction');
     if (convictionElem) {
         convictionElem.textContent = avgConviction > 0 ? avgConviction.toFixed(2) + 'x' : '--';
-        convictionElem.style.color = avgConviction > 1.2 ? '#10b981' :
-                                     avgConviction < 0.8 ? '#ef4444' : '#8b8b9e';
+        convictionElem.style.color = avgConviction > 1.2 ? '#22c55e' :
+                                     avgConviction < 0.8 ? '#f87171' : '#a1a1b5';
     }
 
     // Update OI comparison
@@ -583,7 +590,7 @@ function updateDashboard(data) {
     if (ivSkewElem && data.iv_skew !== undefined) {
         const skew = data.iv_skew;
         ivSkewElem.textContent = (skew > 0 ? '+' : '') + skew.toFixed(2) + '%';
-        ivSkewElem.style.color = skew > 2 ? '#ef4444' : skew < -2 ? '#10b981' : '#8b8b9e';
+        ivSkewElem.style.color = skew > 2 ? '#f87171' : skew < -2 ? '#22c55e' : '#a1a1b5';
     }
 
     // Update Trade Setup Card (only show if confidence > 60%)
@@ -603,36 +610,45 @@ function updateTradeSetup(data) {
     const confidence = data.signal_confidence || 0;
     const setup = data.trade_setup;
 
-    // Only show if confidence > 60% and we have a setup
-    if (confidence < 60 || !setup) {
+    // Show if we have a setup (regardless of confidence)
+    if (!setup) {
         card.style.display = 'none';
         return;
     }
 
     card.style.display = 'block';
 
-    // Update direction
+    // Update direction (BUY_CALL or BUY_PUT)
     const dirElem = document.getElementById('trade-direction');
     if (dirElem) {
-        dirElem.textContent = setup.direction;
-        dirElem.classList.remove('long', 'short');
-        dirElem.classList.add(setup.direction === 'LONG' ? 'long' : 'short');
+        const directionText = setup.direction === 'BUY_CALL' ? 'BUY CALL' : 'BUY PUT';
+        dirElem.textContent = directionText;
+        dirElem.classList.remove('long', 'short', 'buy-call', 'buy-put');
+        dirElem.classList.add(setup.direction === 'BUY_CALL' ? 'buy-call' : 'buy-put');
+    }
+
+    // Update strike info
+    const strikeElem = document.getElementById('trade-strike');
+    if (strikeElem) {
+        strikeElem.textContent = `${setup.strike} ${setup.option_type} (${setup.moneyness})`;
     }
 
     // Update confidence
     setText('trade-confidence', `Confidence: ${confidence}%`);
 
-    // Update levels
-    setText('trade-entry', formatNumber(setup.entry));
-    setText('trade-sl', formatNumber(setup.sl));
-    setText('trade-target1', formatNumber(setup.target1));
-    setText('trade-target2', formatNumber(setup.target2));
+    // Update premium-based levels
+    setText('trade-entry', setup.entry_premium?.toFixed(2) || '--');
+    setText('trade-sl', setup.sl_premium?.toFixed(2) || '--');
+    setText('trade-sl-detail', `-${setup.risk_pct}%`);
+    setText('trade-target1', setup.target1_premium?.toFixed(2) || '--');
+    setText('trade-target2', setup.target2_premium?.toFixed(2) || '--');
 
     // Update meta
-    setText('trade-risk', Math.round(setup.risk_points));
-    setText('trade-rr', setup.risk_reward);
-    setText('trade-support', formatNumber(setup.support));
-    setText('trade-resistance', formatNumber(setup.resistance));
+    setText('trade-risk', setup.risk_points?.toFixed(2) || '--');
+    setText('trade-risk-pct', setup.risk_pct || '--');
+    setText('trade-support', setup.support_ref ? formatNumber(setup.support_ref) : '--');
+    setText('trade-resistance', setup.resistance_ref ? formatNumber(setup.resistance_ref) : '--');
+    setText('trade-max-pain', setup.max_pain ? formatNumber(setup.max_pain) : '--');
 }
 
 function updateTrapWarning(trapWarning) {
@@ -646,11 +662,6 @@ function updateTrapWarning(trapWarning) {
 
     card.style.display = 'flex';
 
-    const iconElem = document.getElementById('trap-icon');
-    if (iconElem) {
-        iconElem.textContent = trapWarning.type === 'BULL_TRAP' ? '!!!' : '!!!';
-    }
-
     setText('trap-type', trapWarning.type.replace('_', ' '));
     setText('trap-message', trapWarning.message);
 }
@@ -662,8 +673,8 @@ function updateLearningStatus(learning) {
     const accElem = document.getElementById('learning-accuracy');
     if (accElem) {
         accElem.textContent = learning.ema_accuracy + '%';
-        accElem.style.color = learning.ema_accuracy >= 55 ? '#10b981' :
-                             learning.ema_accuracy < 50 ? '#ef4444' : '#8b8b9e';
+        accElem.style.color = learning.ema_accuracy >= 55 ? '#22c55e' :
+                             learning.ema_accuracy < 50 ? '#f87171' : '#a1a1b5';
     }
 
     // Update status

@@ -13,11 +13,10 @@
 </head>
 <body>
     <div class="app">
-        <!-- Header -->
+        <!-- Header (Simplified) -->
         <header class="header">
             <div class="header-left">
                 <h1 class="logo">NIFTY OI Analyzer</h1>
-                <span class="subtitle">Tug-of-War Analysis</span>
             </div>
             <div class="header-right">
                 <div id="market-badge" class="badge badge-closed">
@@ -35,6 +34,11 @@
                     Refresh
                 </button>
                 <div class="toggle-container">
+                    <label class="toggle-switch toggle-auto" id="auto-toggle-wrapper">
+                        <input type="checkbox" id="auto-toggle">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">Auto</span>
+                    </label>
                     <label class="toggle-switch">
                         <input type="checkbox" id="atm-toggle">
                         <span class="toggle-slider"></span>
@@ -53,189 +57,167 @@
         <main class="main">
             <!-- Left Column -->
             <div class="column-left">
-                <!-- Verdict Card -->
+                <!-- Verdict Card (Simplified with Score Gauge) -->
                 <div class="card verdict-card" id="verdict-card">
-                    <div class="verdict-content">
+                    <div class="verdict-primary">
                         <span class="verdict-label">Market Sentiment</span>
-                        <h2 class="verdict-text" id="verdict-text">Loading...</h2>
-                        <div class="verdict-score">
-                            <span class="score-value" id="combined-score">--</span>
-                            <span class="score-label">Composite Score</span>
+                        <div class="verdict-main">
+                            <span class="verdict-icon" id="verdict-icon"></span>
+                            <h2 class="verdict-text" id="verdict-text">Loading...</h2>
                         </div>
+                        <div class="verdict-score-display">
+                            <span class="score-value" id="combined-score">--</span>
+                            <span class="score-scale">/ 100</span>
+                        </div>
+                        <!-- Visual gauge for score context -->
+                        <div class="score-gauge">
+                            <div class="gauge-track">
+                                <div class="gauge-fill" id="score-gauge-fill"></div>
+                                <div class="gauge-marker" id="score-gauge-marker"></div>
+                            </div>
+                            <div class="gauge-labels">
+                                <span>Bearish</span>
+                                <span>Neutral</span>
+                                <span>Bullish</span>
+                            </div>
+                        </div>
+                        <!-- Confirmation indicator -->
                         <div class="confirmation-indicator" id="confirmation-indicator">
                             <span class="confirmation-icon" id="confirmation-icon">--</span>
                             <span class="confirmation-text" id="confirmation-text">Loading...</span>
                         </div>
                     </div>
-                    <div class="verdict-breakdown">
-                        <!-- OTM Zone -->
-                        <div class="breakdown-zone">
-                            <div class="breakdown-item zone-header">
-                                <div class="breakdown-header">
-                                    <span class="breakdown-label">OTM Score</span>
-                                    <span class="breakdown-weight" id="otm-weight">100%</span>
-                                </div>
+                    <!-- Collapsible breakdown using <details> -->
+                    <details class="verdict-details">
+                        <summary>Score Breakdown</summary>
+                        <div class="breakdown-grid">
+                            <!-- OTM Zone -->
+                            <div class="breakdown-row">
+                                <span class="breakdown-zone-label">OTM Zone</span>
+                                <span class="breakdown-weight" id="otm-weight">100%</span>
                                 <span class="breakdown-value" id="otm-score-display">--</span>
                             </div>
-                            <div class="breakdown-sub">
-                                <div class="sub-item">
-                                    <span class="sub-label">Today's Activity</span>
-                                    <span class="sub-weight">70%</span>
-                                    <span class="sub-value" id="otm-change-score">--</span>
-                                </div>
-                                <div class="sub-item">
-                                    <span class="sub-label">Overall Position</span>
-                                    <span class="sub-weight">30%</span>
-                                    <span class="sub-value" id="otm-total-score">--</span>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- ATM Zone -->
-                        <div class="breakdown-zone" id="atm-breakdown" style="display: none;">
-                            <div class="breakdown-item zone-header">
-                                <div class="breakdown-header">
-                                    <span class="breakdown-label">ATM Score</span>
-                                    <span class="breakdown-weight" id="atm-weight">0%</span>
-                                </div>
+                            <!-- ATM Zone (shown when enabled) -->
+                            <div class="breakdown-row" id="atm-breakdown" style="display: none;">
+                                <span class="breakdown-zone-label">ATM Zone</span>
+                                <span class="breakdown-weight" id="atm-weight">0%</span>
                                 <span class="breakdown-value" id="atm-score-display">--</span>
                             </div>
-                            <div class="breakdown-sub">
-                                <div class="sub-item">
-                                    <span class="sub-label">Today's Activity</span>
-                                    <span class="sub-weight">70%</span>
-                                    <span class="sub-value" id="atm-change-score">--</span>
-                                </div>
-                                <div class="sub-item">
-                                    <span class="sub-label">Overall Position</span>
-                                    <span class="sub-weight">30%</span>
-                                    <span class="sub-value" id="atm-total-score">--</span>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- ITM Zone -->
-                        <div class="breakdown-zone" id="itm-breakdown" style="display: none;">
-                            <div class="breakdown-item zone-header">
-                                <div class="breakdown-header">
-                                    <span class="breakdown-label">ITM Score</span>
-                                    <span class="breakdown-weight" id="itm-weight">0%</span>
-                                </div>
+                            <!-- ITM Zone (shown when enabled) -->
+                            <div class="breakdown-row" id="itm-breakdown" style="display: none;">
+                                <span class="breakdown-zone-label">ITM Zone</span>
+                                <span class="breakdown-weight" id="itm-weight">0%</span>
                                 <span class="breakdown-value" id="itm-score-display">--</span>
                             </div>
-                            <div class="breakdown-sub">
-                                <div class="sub-item">
-                                    <span class="sub-label">Today's Activity</span>
-                                    <span class="sub-weight">70%</span>
-                                    <span class="sub-value" id="itm-change-score">--</span>
-                                </div>
-                                <div class="sub-item">
-                                    <span class="sub-label">Overall Position</span>
-                                    <span class="sub-weight">30%</span>
-                                    <span class="sub-value" id="itm-total-score">--</span>
-                                </div>
-                            </div>
-                        </div>
-                        <!-- Momentum Zone -->
-                        <div class="breakdown-zone" id="momentum-breakdown" style="display: none;">
-                            <div class="breakdown-item zone-header">
-                                <div class="breakdown-header">
-                                    <span class="breakdown-label">Price Momentum</span>
-                                    <span class="breakdown-weight" id="momentum-weight">0%</span>
-                                </div>
+                            <!-- Momentum Zone -->
+                            <div class="breakdown-row" id="momentum-breakdown" style="display: none;">
+                                <span class="breakdown-zone-label">Momentum</span>
+                                <span class="breakdown-weight" id="momentum-weight">0%</span>
                                 <span class="breakdown-value" id="momentum-score-display">--</span>
                             </div>
-                            <div class="breakdown-sub">
-                                <div class="sub-item">
-                                    <span class="sub-label">9-minute price trend</span>
-                                    <span class="sub-weight">100%</span>
-                                    <span class="sub-value" id="momentum-change-pct">--</span>
-                                </div>
-                            </div>
                         </div>
-                    </div>
+                    </details>
                 </div>
 
-                <!-- Key Metrics -->
-                <div class="card metrics-card">
-                    <h3 class="card-title">Key Metrics</h3>
-                    <div class="metrics-grid">
-                        <div class="metric">
-                            <span class="metric-label">Spot Price</span>
-                            <span class="metric-value" id="spot-price">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">ATM Strike</span>
-                            <span class="metric-value" id="atm-strike">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Expiry</span>
-                            <span class="metric-value" id="expiry-date">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">PCR</span>
-                            <span class="metric-value" id="pcr-value">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Momentum (9m)</span>
-                            <span class="metric-value" id="momentum-value">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Volume PCR</span>
-                            <span class="metric-value" id="volume-pcr">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Avg Conviction</span>
-                            <span class="metric-value" id="avg-conviction">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">Max Pain</span>
-                            <span class="metric-value" id="max-pain">--</span>
-                        </div>
-                        <div class="metric">
-                            <span class="metric-label">IV Skew</span>
-                            <span class="metric-value" id="iv-skew">--</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Trade Setup Card (shown only when confidence > 60%) -->
+                <!-- Trade Setup Card -->
                 <div class="card trade-setup-card" id="trade-setup-card" style="display: none;">
-                    <h3 class="card-title">Trade Setup</h3>
+                    <h3 class="card-title">Option Buyer Setup</h3>
                     <div class="trade-setup-header">
                         <span class="trade-direction" id="trade-direction">--</span>
+                        <span class="trade-strike" id="trade-strike">--</span>
                         <span class="trade-confidence" id="trade-confidence">Confidence: --</span>
                     </div>
                     <div class="trade-levels">
                         <div class="trade-level entry">
-                            <span class="level-label">Entry</span>
+                            <span class="level-label">Entry Premium</span>
                             <span class="level-value" id="trade-entry">--</span>
                         </div>
                         <div class="trade-level sl">
                             <span class="level-label">Stop Loss</span>
                             <span class="level-value" id="trade-sl">--</span>
+                            <span class="level-detail" id="trade-sl-detail">--</span>
                         </div>
                         <div class="trade-level target">
-                            <span class="level-label">Target 1</span>
+                            <span class="level-label">Target 1 (1:1)</span>
                             <span class="level-value" id="trade-target1">--</span>
                         </div>
                         <div class="trade-level target">
-                            <span class="level-label">Target 2</span>
+                            <span class="level-label">Target 2 (1:2)</span>
                             <span class="level-value" id="trade-target2">--</span>
                         </div>
                     </div>
                     <div class="trade-meta">
-                        <span>Risk: <strong id="trade-risk">--</strong> pts</span>
-                        <span>R:R = <strong id="trade-rr">--</strong></span>
+                        <span>Risk: <strong id="trade-risk">--</strong> pts (<strong id="trade-risk-pct">--</strong>%)</span>
                         <span>Support: <strong id="trade-support">--</strong></span>
                         <span>Resistance: <strong id="trade-resistance">--</strong></span>
+                        <span>Max Pain: <strong id="trade-max-pain">--</strong></span>
                     </div>
                 </div>
 
                 <!-- Trap Warning Card -->
                 <div class="card trap-warning-card" id="trap-warning-card" style="display: none;">
-                    <div class="trap-icon" id="trap-icon">!!!</div>
+                    <div class="trap-icon" id="trap-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                            <line x1="12" y1="9" x2="12" y2="13"></line>
+                            <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                        </svg>
+                    </div>
                     <div class="trap-content">
                         <span class="trap-type" id="trap-type">TRAP WARNING</span>
                         <span class="trap-message" id="trap-message">--</span>
+                    </div>
+                </div>
+
+                <!-- Key Metrics (Grouped by Category) -->
+                <div class="card metrics-card">
+                    <h3 class="card-title">Key Metrics</h3>
+                    <div class="metrics-grouped">
+                        <div class="metric-group">
+                            <h4 class="group-title">Price Levels</h4>
+                            <div class="metric">
+                                <span class="metric-label">Spot Price</span>
+                                <span class="metric-value" id="spot-price">--</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">ATM Strike</span>
+                                <span class="metric-value" id="atm-strike">--</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Max Pain</span>
+                                <span class="metric-value" id="max-pain">--</span>
+                            </div>
+                        </div>
+                        <div class="metric-group">
+                            <h4 class="group-title">Sentiment</h4>
+                            <div class="metric">
+                                <span class="metric-label">PCR</span>
+                                <span class="metric-value" id="pcr-value">--</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Volume PCR</span>
+                                <span class="metric-value" id="volume-pcr">--</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">IV Skew</span>
+                                <span class="metric-value" id="iv-skew">--</span>
+                            </div>
+                        </div>
+                        <div class="metric-group">
+                            <h4 class="group-title">Activity</h4>
+                            <div class="metric">
+                                <span class="metric-label">Momentum (9m)</span>
+                                <span class="metric-value" id="momentum-value">--</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Avg Conviction</span>
+                                <span class="metric-value" id="avg-conviction">--</span>
+                            </div>
+                            <div class="metric">
+                                <span class="metric-label">Expiry</span>
+                                <span class="metric-value" id="expiry-date">--</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

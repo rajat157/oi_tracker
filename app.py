@@ -151,6 +151,14 @@ def handle_toggle_update(data):
         emit("oi_update", analysis)
 
 
+@socketio.on("set_force_fetch")
+def handle_set_force_fetch(data):
+    """Handle force fetch toggle from client."""
+    enabled = data.get("enabled", False)
+    oi_scheduler.set_force_enabled(enabled)
+    print(f"Force auto-fetch: {'enabled' if enabled else 'disabled'}")
+
+
 def start_app(debug: bool = False, port: int = 5000):
     """Start the application."""
     import threading

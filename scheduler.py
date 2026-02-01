@@ -38,6 +38,11 @@ class OIScheduler:
         self.last_purge_date = None
         self.last_learning_date = None
         self.self_learner = get_self_learner()
+        self.force_enabled = False
+
+    def set_force_enabled(self, enabled: bool):
+        """Enable/disable force fetch mode for automatic polling."""
+        self.force_enabled = enabled
 
     def is_market_open(self) -> bool:
         """Check if the market is currently open."""
@@ -82,8 +87,8 @@ class OIScheduler:
         # Check and purge old data at start of new day
         self.check_and_purge_old_data()
 
-        # Check if market is open
-        if not force and not self.is_market_open():
+        # Check if market is open OR force is enabled
+        if not force and not self.force_enabled and not self.is_market_open():
             print(f"[{datetime.now()}] Market is closed. Skipping fetch.")
             return
 

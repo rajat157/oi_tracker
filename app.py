@@ -73,6 +73,18 @@ def api_latest():
     analysis = get_latest_analysis()
 
     if analysis:
+        # Add self_learning if missing (for old data stored without it)
+        if "self_learning" not in analysis:
+            from self_learner import get_self_learner
+            learner = get_self_learner()
+            status = learner.get_status()
+            analysis["self_learning"] = {
+                "should_trade": status["signal_tracker"]["should_trade"],
+                "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
+                "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
+                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"]
+            }
+
         # Add live trade tracker data (needs current snapshot for live P/L)
         snapshot = get_latest_snapshot()
         if snapshot and snapshot.get("strikes"):
@@ -161,9 +173,38 @@ def api_trades():
 def handle_connect():
     """Handle client connection."""
     print("Client connected")
-    # Send latest data to newly connected client
-    analysis = oi_scheduler.get_last_analysis()
+    # Send latest data from database (single source of truth)
+    analysis = get_latest_analysis()
+
     if analysis:
+        # Add self_learning if missing (for old data stored without it)
+        if "self_learning" not in analysis:
+            from self_learner import get_self_learner
+            learner = get_self_learner()
+            status = learner.get_status()
+            analysis["self_learning"] = {
+                "should_trade": status["signal_tracker"]["should_trade"],
+                "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
+                "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
+                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"]
+            }
+
+        # Add live trade tracker data
+        snapshot = get_latest_snapshot()
+        if snapshot and snapshot.get("strikes"):
+            active_setup = get_active_trade_setup()
+            if active_setup:
+                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+            else:
+                analysis["active_trade"] = None
+            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+        else:
+            analysis["active_trade"] = None
+            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+
+        # Add chart history for frontend sync
+        analysis["chart_history"] = get_analysis_history(limit=30)
+
         socketio.emit("oi_update", analysis)
 
 
@@ -189,6 +230,18 @@ def handle_request_latest():
     analysis = get_latest_analysis()
 
     if analysis:
+        # Add self_learning if missing (for old data stored without it)
+        if "self_learning" not in analysis:
+            from self_learner import get_self_learner
+            learner = get_self_learner()
+            status = learner.get_status()
+            analysis["self_learning"] = {
+                "should_trade": status["signal_tracker"]["should_trade"],
+                "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
+                "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
+                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"]
+            }
+
         # Add live trade tracker data (needs current snapshot for live P/L)
         snapshot = get_latest_snapshot()
         if snapshot and snapshot.get("strikes"):

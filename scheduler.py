@@ -167,7 +167,26 @@ class OIScheduler:
             analysis["timestamp"] = timestamp.isoformat()
             analysis["expiry_date"] = current_expiry
 
-            # Serialize complete analysis to JSON for storage
+            # Self-learning: check pending signal outcomes FIRST (before serialization)
+            resolved = self.self_learner.check_outcomes(spot_price, timestamp)
+            for r in resolved:
+                status = "CORRECT" if r["was_correct"] else "WRONG"
+                print(f"[SelfLearner] Signal resolved: {r['verdict']} -> {status} ({r['profit_loss_pct']:+.2f}%)")
+
+            # Self-learning: record new signal and get status
+            learning_result = self.self_learner.process_new_signal(timestamp, analysis)
+            if learning_result["signal_id"]:
+                print(f"[SelfLearner] Recorded signal #{learning_result['signal_id']} (confidence: {learning_result['confidence']:.0f}%)")
+
+            # Add self_learning to analysis BEFORE serialization so it's stored in DB
+            analysis["self_learning"] = {
+                "should_trade": learning_result["should_trade"],
+                "is_paused": learning_result["is_paused"],
+                "ema_accuracy": round(learning_result["ema_accuracy"] * 100, 1),
+                "consecutive_errors": learning_result["consecutive_errors"]
+            }
+
+            # Serialize complete analysis to JSON for storage (now includes self_learning)
             analysis_json = json.dumps(analysis, default=str)
 
             # Save analysis to database with full JSON blob
@@ -224,25 +243,6 @@ class OIScheduler:
             active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
             analysis["active_trade"] = active_setup_with_pnl
             analysis["trade_stats"] = tracker_data["stats"]
-
-            # Self-learning: check pending signal outcomes
-            resolved = self.self_learner.check_outcomes(spot_price, timestamp)
-            for r in resolved:
-                status = "CORRECT" if r["was_correct"] else "WRONG"
-                print(f"[SelfLearner] Signal resolved: {r['verdict']} -> {status} ({r['profit_loss_pct']:+.2f}%)")
-
-            # Self-learning: record new signal
-            learning_result = self.self_learner.process_new_signal(timestamp, analysis)
-            if learning_result["signal_id"]:
-                print(f"[SelfLearner] Recorded signal #{learning_result['signal_id']} (confidence: {learning_result['confidence']:.0f}%)")
-
-            # Add learning status to analysis for dashboard
-            analysis["self_learning"] = {
-                "should_trade": learning_result["should_trade"],
-                "is_paused": learning_result["is_paused"],
-                "ema_accuracy": round(learning_result["ema_accuracy"] * 100, 1),
-                "consecutive_errors": learning_result["consecutive_errors"]
-            }
 
             # Run daily learning update at market close
             self._check_daily_learning_update()

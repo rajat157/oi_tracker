@@ -798,15 +798,54 @@ function updateChartFromServer(history) {
     oiChart.data.datasets[0].data = limited.map(item => item.call_oi_change);
     oiChart.data.datasets[1].data = limited.map(item => item.put_oi_change);
     oiChart.update('none');
+
+    // Also update OTM/ITM charts from history (zone force data)
+    updateZoneChartsFromHistory(limited);
 }
 
 /**
- * Update OTM/ITM charts with zone force data.
- * Called from updateDashboard with current analysis data.
+ * Update OTM/ITM charts with zone force data from server history.
+ * Called on page load and socket updates to restore chart state.
+ */
+function updateZoneChartsFromHistory(history) {
+    if (!history?.length || !otmChart || !itmChart) return;
+
+    // Debug: log the zone force data
+    console.log('Zone chart history sample:', history.slice(0, 2).map(h => ({
+        ts: h.timestamp,
+        otm_put: h.otm_put_force,
+        otm_call: h.otm_call_force,
+        itm_put: h.itm_put_force,
+        itm_call: h.itm_call_force
+    })));
+
+    // Populate OTM chart (OTM Puts vs OTM Calls)
+    otmChart.data.labels = history.map(item =>
+        new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    );
+    otmChart.data.datasets[0].data = history.map(item => item.otm_put_force || 0);
+    otmChart.data.datasets[1].data = history.map(item => item.otm_call_force || 0);
+    otmChart.update('none');
+
+    // Populate ITM chart (ITM Puts vs ITM Calls)
+    itmChart.data.labels = history.map(item =>
+        new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    );
+    itmChart.data.datasets[0].data = history.map(item => item.itm_put_force || 0);
+    itmChart.data.datasets[1].data = history.map(item => item.itm_call_force || 0);
+    itmChart.update('none');
+}
+
+/**
+ * Update OTM/ITM charts with zone force data from current analysis.
+ * Only adds new data point if chart_history wasn't provided (live update only).
+ * When chart_history is available, updateZoneChartsFromHistory handles the full refresh.
  */
 function updateZoneCharts(data) {
-    // For now, OTM/ITM charts need history - we'll accumulate from server updates
-    // This is a simplified approach until we have zone-specific history from server
+    // Skip if we have chart_history - that's handled by updateZoneChartsFromHistory
+    // This function is only for adding single live updates when no history is provided
+    if (data.chart_history?.length > 0) return;
+
     if (!otmChart || !itmChart) return;
 
     const timestamp = data.timestamp ?

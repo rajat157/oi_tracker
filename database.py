@@ -470,21 +470,39 @@ def get_latest_analysis() -> Optional[dict]:
 
 
 def get_analysis_history(limit: int = 50) -> list:
-    """Get historical analysis results for charting."""
+    """Get historical analysis results for charting, including zone force data."""
+    import json as json_module
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT timestamp, spot_price, total_call_oi, total_put_oi,
                    call_oi_change, put_oi_change, verdict,
                    atm_call_oi_change, atm_put_oi_change,
-                   itm_call_oi_change, itm_put_oi_change
+                   itm_call_oi_change, itm_put_oi_change,
+                   analysis_json
             FROM analysis_history
             ORDER BY timestamp DESC
             LIMIT ?
         """, (limit,))
 
         rows = cursor.fetchall()
-        return [dict(row) for row in reversed(rows)]  # Chronological order
+        results = []
+        for row in reversed(rows):  # Chronological order
+            item = dict(row)
+            # Extract zone force data from analysis_json if present
+            if item.get('analysis_json'):
+                try:
+                    full = json_module.loads(item['analysis_json'])
+                    item['otm_put_force'] = full.get('otm_puts', {}).get('total_force', 0)
+                    item['otm_call_force'] = full.get('otm_calls', {}).get('total_force', 0)
+                    item['itm_put_force'] = full.get('itm_puts', {}).get('total_force', 0)
+                    item['itm_call_force'] = full.get('itm_calls', {}).get('total_force', 0)
+                except (json_module.JSONDecodeError, TypeError):
+                    pass
+            # Remove bulky analysis_json from response
+            item.pop('analysis_json', None)
+            results.append(item)
+        return results
 
 
 def get_recent_price_trend(lookback_minutes: int = 9) -> list:

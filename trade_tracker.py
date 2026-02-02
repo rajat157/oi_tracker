@@ -359,14 +359,25 @@ class TradeTracker:
         """
         Check if a PENDING setup should be activated.
 
-        Entry is considered hit when current premium <= entry_premium * (1 + tolerance)
-        This accounts for 3-minute gaps between checks.
+        For option BUYING, activate when:
+        1. Premium is at or below entry (getting same or better price), OR
+        2. Premium hasn't moved too far above entry (favorable move, still reasonable to enter)
+
+        This handles both scenarios:
+        - Limit order style: wait for premium to drop to entry
+        - Market moved favorably: premium went up but trade is still valid
         """
         entry_premium = setup["entry_premium"]
-        entry_threshold = entry_premium * (1 + self.entry_tolerance)
 
-        # For buying, we want price to be at or below our entry
-        if current_premium <= entry_threshold:
+        # Lower threshold: at or below entry (with 2% tolerance for slippage)
+        lower_threshold = entry_premium * (1 + self.entry_tolerance)
+
+        # Upper threshold: don't chase if premium moved too far up (10% max above entry)
+        upper_threshold = entry_premium * 1.10
+
+        # Activate if premium is within acceptable range
+        # Either at/below entry OR hasn't moved too far above entry
+        if current_premium <= upper_threshold:
             # Activate the trade
             update_trade_setup_status(
                 setup["id"],
@@ -379,8 +390,9 @@ class TradeTracker:
                 last_premium=current_premium
             )
 
+            slippage_pct = ((current_premium - entry_premium) / entry_premium) * 100
             print(f"[TradeTracker] Setup #{setup['id']} ACTIVATED at {current_premium:.2f} "
-                  f"(entry was {entry_premium:.2f})")
+                  f"(entry was {entry_premium:.2f}, slippage {slippage_pct:+.1f}%)")
 
             return {
                 "setup_id": setup["id"],
@@ -388,6 +400,11 @@ class TradeTracker:
                 "new_status": "ACTIVE",
                 "activation_premium": current_premium
             }
+
+        # Premium moved too far above entry - don't chase
+        move_pct = ((current_premium - entry_premium) / entry_premium) * 100
+        print(f"[TradeTracker] Setup #{setup['id']} NOT activated - premium {current_premium:.2f} "
+              f"moved {move_pct:+.1f}% from entry {entry_premium:.2f} (max allowed: +10%)")
 
         # Update tracking even if not activated
         update_trade_setup_status(
@@ -673,7 +690,11 @@ class TradeTracker:
             **setup,
             "current_premium": round(current_premium, 2),
             "live_pnl_pct": round(live_pnl_pct, 2),
-            "live_pnl_points": round(live_pnl_points, 2)
+            "live_pnl_points": round(live_pnl_points, 2),
+            # Map database field names to frontend expected names
+            "support_ref": setup.get("support_at_creation"),
+            "resistance_ref": setup.get("resistance_at_creation"),
+            "max_pain": setup.get("max_pain_at_creation"),
         }
 
 

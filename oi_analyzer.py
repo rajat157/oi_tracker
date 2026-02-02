@@ -195,10 +195,13 @@ def calculate_conviction_multiplier(volume: int, oi_change: int) -> float:
 
 def calculate_dynamic_sl_pct(strikes_data: dict, strike: int, option_type: str) -> float:
     """
-    Calculate IV-based stop loss percentage (10-18% range).
+    Calculate IV-based stop loss percentage (15-25% range).
 
     Lower IV = tighter stop loss (less premium decay expected)
     Higher IV = wider stop loss (more volatility expected)
+
+    Widened from 10-18% to 15-25% to reduce quick SL hits during
+    normal intraday volatility (38% of trades were hitting SL within 6 min).
 
     Args:
         strikes_data: Dict of strike -> {..., ce_iv, pe_iv}
@@ -206,23 +209,25 @@ def calculate_dynamic_sl_pct(strikes_data: dict, strike: int, option_type: str) 
         option_type: 'CE' or 'PE'
 
     Returns:
-        SL percentage as decimal (0.10 to 0.18)
+        SL percentage as decimal (0.15 to 0.25)
     """
     strike_data = strikes_data.get(strike, {})
     iv = strike_data.get('ce_iv' if option_type == 'CE' else 'pe_iv', 0)
 
     if iv <= 0:
-        return 0.15  # Default 15% if no IV data
+        return 0.20  # Default 20% if no IV data
 
-    # IV-based SL percentage
+    # IV-based SL percentage (widened range)
     if iv < 12:
-        return 0.10  # Low IV = tighter SL
+        return 0.15  # Low IV = tighter SL
     elif iv < 15:
-        return 0.12
+        return 0.18
     elif iv < 18:
-        return 0.15
+        return 0.20
+    elif iv < 22:
+        return 0.22
     else:
-        return 0.18  # High IV = wider SL (max 18%)
+        return 0.25  # High IV = wider SL (max 25%)
 
 
 def calculate_oi_acceleration(prev_oi_changes: List[tuple], current_call_change: float,

@@ -12,7 +12,8 @@ from nse_fetcher import NSEFetcher
 from oi_analyzer import analyze_tug_of_war
 from database import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
-    get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data
+    get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
+    get_previous_futures_oi
 )
 from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
@@ -140,8 +141,17 @@ class OIScheduler:
             # Fetch futures data for cross-validation
             futures_data = fetcher.fetch_futures_data() or {}
             futures_oi = futures_data.get("future_oi", 0)
-            futures_oi_change = futures_data.get("future_oi_change", 0)
             futures_basis = futures_data.get("basis", 0.0)
+
+            # Calculate futures OI change from previous stored value
+            prev_futures_oi = get_previous_futures_oi()
+            if prev_futures_oi > 0 and futures_oi > 0:
+                futures_oi_change = futures_oi - prev_futures_oi
+            else:
+                futures_oi_change = 0
+
+            if futures_oi > 0:
+                print(f"Futures OI Change: {futures_oi_change:+,} (prev: {prev_futures_oi:,}, curr: {futures_oi:,})")
 
             # Perform analysis with all enhanced data
             analysis = analyze_tug_of_war(

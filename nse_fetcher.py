@@ -361,13 +361,14 @@ class NSEFetcher:
 
             # Find current month NIFTY futures
             for item in data.get("data", []):
-                instrument = item.get("instrument", "")
-                if "FUTIDX" in instrument and "NIFTY" in item.get("underlying", "").upper():
+                instrument_type = item.get("instrumentType", "")
+                underlying = item.get("underlying", "")
+                # Check instrumentType (not instrument) for FUTIDX
+                if instrument_type == "FUTIDX" and underlying == "NIFTY":
                     expiry = item.get("expiryDate", "")
                     # Get current/near month futures
                     future_price = float(item.get("lastPrice", 0))
                     future_oi = int(item.get("openInterest", 0))
-                    future_oi_change = int(item.get("changeinOpenInterest", 0))
                     underlying_value = float(item.get("underlyingValue", 0))
 
                     # Calculate basis
@@ -375,12 +376,11 @@ class NSEFetcher:
                     basis_pct = (basis / underlying_value * 100) if underlying_value > 0 else 0
 
                     print(f"Futures: Price={future_price:.2f}, OI={future_oi:,}, "
-                          f"OI Change={future_oi_change:+,}, Basis={basis:.2f} ({basis_pct:.3f}%)")
+                          f"Basis={basis:.2f} ({basis_pct:.3f}%)")
 
                     return {
                         "future_price": future_price,
                         "future_oi": future_oi,
-                        "future_oi_change": future_oi_change,
                         "basis": basis,
                         "basis_pct": basis_pct,
                         "expiry": expiry

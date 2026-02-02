@@ -514,6 +514,26 @@ def get_recent_oi_changes(lookback: int = 3) -> list:
         return [(row["call_oi_change"], row["put_oi_change"]) for row in reversed(rows)]
 
 
+def get_previous_futures_oi() -> int:
+    """
+    Get the previous futures OI from the most recent analysis.
+
+    Returns:
+        Previous futures OI value, or 0 if no previous data
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT futures_oi FROM analysis_history
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        if row and row["futures_oi"]:
+            return row["futures_oi"]
+        return 0
+
+
 def get_previous_strikes_data() -> Optional[dict]:
     """
     Get the previous snapshot's strikes data for premium momentum calculation.

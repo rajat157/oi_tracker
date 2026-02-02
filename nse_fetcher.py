@@ -334,6 +334,96 @@ class NSEFetcher:
             print(f"Error fetching India VIX: {e}")
             return None
 
+    def fetch_futures_data(self) -> Optional[dict]:
+        """
+        Fetch NIFTY futures OI and price data from NSE.
+
+        Returns:
+            dict with:
+                - future_price: Current futures price
+                - future_oi: Current futures OI
+                - future_oi_change: Change in futures OI
+                - basis: Futures premium/discount vs spot (in points)
+                - basis_pct: Basis as percentage
+            Or None if fetch fails
+        """
+        try:
+            self._init_driver()
+
+            print("Loading NSE derivatives page for futures...")
+            self.driver.get("https://www.nseindia.com/api/liveEquity-derivatives?index=nse50_fut")
+
+            time.sleep(2)
+
+            # Parse JSON from page body
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+            data = json.loads(body_text)
+
+            # Find current month NIFTY futures
+            for item in data.get("data", []):
+                instrument = item.get("instrument", "")
+                if "FUTIDX" in instrument and "NIFTY" in item.get("underlying", "").upper():
+                    expiry = item.get("expiryDate", "")
+                    # Get current/near month futures
+                    future_price = float(item.get("lastPrice", 0))
+                    future_oi = int(item.get("openInterest", 0))
+                    future_oi_change = int(item.get("changeinOpenInterest", 0))
+                    underlying_value = float(item.get("underlyingValue", 0))
+
+                    # Calculate basis
+                    basis = future_price - underlying_value if underlying_value > 0 else 0
+                    basis_pct = (basis / underlying_value * 100) if underlying_value > 0 else 0
+
+                    print(f"Futures: Price={future_price:.2f}, OI={future_oi:,}, "
+                          f"OI Change={future_oi_change:+,}, Basis={basis:.2f} ({basis_pct:.3f}%)")
+
+                    return {
+                        "future_price": future_price,
+                        "future_oi": future_oi,
+                        "future_oi_change": future_oi_change,
+                        "basis": basis,
+                        "basis_pct": basis_pct,
+                        "expiry": expiry
+                    }
+
+            # Try alternative API endpoint
+            self.driver.get("https://www.nseindia.com/api/equity-stockIndices?index=NIFTY%2050")
+            time.sleep(2)
+
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+            data = json.loads(body_text)
+
+            # This endpoint may have different structure
+            print("Futures data not found in primary endpoint, checking alternatives...")
+            return None
+
+        except json.JSONDecodeError as e:
+            # API may return HTML instead of JSON - try scraping the derivatives page
+            print(f"JSON decode error for futures API: {e}")
+            return self._fetch_futures_from_page()
+        except Exception as e:
+            print(f"Error fetching futures data: {e}")
+            return None
+
+    def _fetch_futures_from_page(self) -> Optional[dict]:
+        """Fallback: scrape futures data from derivatives page."""
+        try:
+            self.driver.get("https://www.nseindia.com/market-data/live-market-indices")
+            time.sleep(3)
+
+            # Look for NIFTY futures row
+            import re
+            page_source = self.driver.page_source
+
+            # Try to find futures data in the page
+            # This is a fallback - structure may vary
+            print("Attempting to scrape futures from page (fallback method)")
+            return None
+
+        except Exception as e:
+            print(f"Error in futures fallback: {e}")
+            return None
+
     def parse_option_data(self, data: dict) -> Optional[dict]:
         """
         Parse the raw data into structured format.

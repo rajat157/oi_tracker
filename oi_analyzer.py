@@ -88,6 +88,78 @@ def calculate_price_momentum(price_history: List[dict]) -> float:
     return max(-100, min(100, momentum_score))
 
 
+def detect_market_regime(price_history: List[dict], momentum_score: float) -> dict:
+    """
+    Detect if market is trending or range-bound.
+
+    Market regime affects OI interpretation:
+    - Trending: Where positions are trapped matters more (absolute OI)
+    - Range-bound: Fresh activity matters more (OI change)
+
+    Args:
+        price_history: List of recent price data
+        momentum_score: Current momentum score
+
+    Returns:
+        {
+            "regime": str,  # "trending_up", "trending_down", "range_bound"
+            "description": str,
+            "oi_change_weight": float,  # Weight for OI change component
+            "oi_total_weight": float    # Weight for absolute OI component
+        }
+    """
+    if not price_history or len(price_history) < 3:
+        return {
+            "regime": "range_bound",
+            "description": "Insufficient data - assuming range-bound",
+            "oi_change_weight": 0.70,
+            "oi_total_weight": 0.30
+        }
+
+    prices = [p.get("spot_price", 0) for p in price_history if p.get("spot_price", 0) > 0]
+    if len(prices) < 2:
+        return {
+            "regime": "range_bound",
+            "description": "Insufficient price data",
+            "oi_change_weight": 0.70,
+            "oi_total_weight": 0.30
+        }
+
+    high = max(prices)
+    low = min(prices)
+    current = prices[-1]
+
+    # Calculate range as percentage
+    range_pct = ((high - low) / current) * 100 if current > 0 else 0
+
+    # Check if price is near high/low
+    near_high = (high - current) / current < 0.001 if current > 0 else False  # Within 0.1%
+    near_low = (current - low) / current < 0.001 if current > 0 else False
+
+    # Determine regime
+    if near_high and momentum_score > 25 and range_pct > 0.2:
+        return {
+            "regime": "trending_up",
+            "description": f"Bullish trend - at highs with {momentum_score:.0f} momentum",
+            "oi_change_weight": 0.30,  # In trends, fresh activity less important
+            "oi_total_weight": 0.70    # Trapped positions more important
+        }
+    elif near_low and momentum_score < -25 and range_pct > 0.2:
+        return {
+            "regime": "trending_down",
+            "description": f"Bearish trend - at lows with {momentum_score:.0f} momentum",
+            "oi_change_weight": 0.30,
+            "oi_total_weight": 0.70
+        }
+    else:
+        return {
+            "regime": "range_bound",
+            "description": "Range-bound market - fresh activity signals important",
+            "oi_change_weight": 0.70,  # Fresh activity more important
+            "oi_total_weight": 0.30
+        }
+
+
 def calculate_conviction_multiplier(volume: int, oi_change: int) -> float:
     """
     Calculate conviction multiplier based on volume-to-OI turnover ratio.
@@ -151,6 +223,173 @@ def calculate_dynamic_sl_pct(strikes_data: dict, strike: int, option_type: str) 
         return 0.15
     else:
         return 0.18  # High IV = wider SL (max 18%)
+
+
+def calculate_oi_acceleration(prev_oi_changes: List[tuple], current_call_change: float,
+                               current_put_change: float) -> dict:
+    """
+    Calculate OI change acceleration over last N data points.
+
+    Acceleration helps distinguish:
+    - Fresh position building (accelerating) vs unwinding (decelerating)
+    - Short covering rally vs genuine bullish buying
+    - Profit booking vs trend reversal
+
+    Args:
+        prev_oi_changes: List of (call_oi_change, put_oi_change) tuples, oldest first
+        current_call_change: Current snapshot's call OI change
+        current_put_change: Current snapshot's put OI change
+
+    Returns:
+        {
+            "call_acceleration": float,  # +ve = accelerating bearish pressure
+            "put_acceleration": float,   # +ve = accelerating bullish pressure
+            "net_acceleration": float,   # put - call (positive = bullish acceleration)
+            "phase": str,                # "accumulation", "distribution", "unwinding", "stable"
+            "phase_description": str     # Human-readable explanation
+        }
+    """
+    if not prev_oi_changes or len(prev_oi_changes) < 1:
+        return {
+            "call_acceleration": 0.0,
+            "put_acceleration": 0.0,
+            "net_acceleration": 0.0,
+            "phase": "stable",
+            "phase_description": "Insufficient data for acceleration"
+        }
+
+    # Get previous period's changes (most recent in history)
+    prev_call_change, prev_put_change = prev_oi_changes[-1]
+
+    # Calculate velocity (change in OI change)
+    call_acceleration = current_call_change - prev_call_change
+    put_acceleration = current_put_change - prev_put_change
+
+    # Net acceleration: positive = bullish momentum building
+    net_acceleration = put_acceleration - call_acceleration
+
+    # Thresholds for phase detection (adjust based on typical OI values)
+    accel_threshold = 5000  # Minimum acceleration to be significant
+
+    # Determine market phase
+    phase = "stable"
+    phase_description = "OI changes are stable"
+
+    # Check for accumulation (bullish pressure building)
+    if net_acceleration > accel_threshold:
+        if current_put_change > 0 and put_acceleration > 0:
+            phase = "accumulation"
+            phase_description = "Bullish accumulation - Put writing accelerating"
+        elif current_call_change < prev_call_change:
+            phase = "accumulation"
+            phase_description = "Short covering - Call OI addition slowing"
+
+    # Check for distribution (bearish pressure building)
+    elif net_acceleration < -accel_threshold:
+        if current_call_change > 0 and call_acceleration > 0:
+            phase = "distribution"
+            phase_description = "Bearish distribution - Call writing accelerating"
+        elif current_put_change < prev_put_change:
+            phase = "distribution"
+            phase_description = "Long unwinding - Put OI addition slowing"
+
+    # Check for unwinding (both sides decelerating)
+    elif (abs(current_call_change) < abs(prev_call_change) and
+          abs(current_put_change) < abs(prev_put_change)):
+        phase = "unwinding"
+        phase_description = "Position unwinding - OI activity decreasing"
+
+    return {
+        "call_acceleration": round(call_acceleration, 0),
+        "put_acceleration": round(put_acceleration, 0),
+        "net_acceleration": round(net_acceleration, 0),
+        "phase": phase,
+        "phase_description": phase_description
+    }
+
+
+def calculate_premium_momentum(current_strikes: dict, prev_strikes: Optional[dict],
+                               spot_price: float) -> dict:
+    """
+    Calculate premium momentum for ATM strikes.
+
+    Premium momentum tracks buying pressure:
+    - Call premiums rising despite bearish OI = buyers overpowering writers
+    - Put premiums rising despite bullish OI = sellers overpowering writers
+
+    Args:
+        current_strikes: Current strike data with LTP
+        prev_strikes: Previous snapshot's strike data with LTP
+        spot_price: Current spot price
+
+    Returns:
+        {
+            "call_premium_change_pct": float,
+            "put_premium_change_pct": float,
+            "premium_momentum_score": float,  # -100 to +100
+            "interpretation": str
+        }
+    """
+    if not prev_strikes or not current_strikes:
+        return {
+            "call_premium_change_pct": 0.0,
+            "put_premium_change_pct": 0.0,
+            "premium_momentum_score": 0.0,
+            "interpretation": "No previous data for premium comparison"
+        }
+
+    all_strikes = sorted(current_strikes.keys())
+    if not all_strikes:
+        return {
+            "call_premium_change_pct": 0.0,
+            "put_premium_change_pct": 0.0,
+            "premium_momentum_score": 0.0,
+            "interpretation": "No strikes available"
+        }
+
+    atm_strike = find_atm_strike(spot_price, all_strikes)
+
+    # Get current and previous LTP for ATM strike
+    curr_data = current_strikes.get(atm_strike, {})
+    prev_data = prev_strikes.get(atm_strike, {})
+
+    curr_ce_ltp = curr_data.get("ce_ltp", 0)
+    prev_ce_ltp = prev_data.get("ce_ltp", curr_ce_ltp)
+    curr_pe_ltp = curr_data.get("pe_ltp", 0)
+    prev_pe_ltp = prev_data.get("pe_ltp", curr_pe_ltp)
+
+    # Calculate premium change percentages
+    call_change_pct = 0.0
+    put_change_pct = 0.0
+
+    if prev_ce_ltp > 0:
+        call_change_pct = ((curr_ce_ltp - prev_ce_ltp) / prev_ce_ltp) * 100
+    if prev_pe_ltp > 0:
+        put_change_pct = ((curr_pe_ltp - prev_pe_ltp) / prev_pe_ltp) * 100
+
+    # Premium momentum score: call rising = bullish pressure, put rising = bearish
+    # Scale to -100 to +100
+    premium_momentum = (call_change_pct - put_change_pct) * 5
+    premium_momentum = max(-100, min(100, premium_momentum))
+
+    # Interpretation
+    if premium_momentum > 20:
+        interpretation = "Bullish premium momentum - call buyers aggressive"
+    elif premium_momentum < -20:
+        interpretation = "Bearish premium momentum - put buyers aggressive"
+    elif abs(call_change_pct) > 2 or abs(put_change_pct) > 2:
+        interpretation = "Mixed premium activity"
+    else:
+        interpretation = "Premium momentum neutral"
+
+    return {
+        "call_premium_change_pct": round(call_change_pct, 2),
+        "put_premium_change_pct": round(put_change_pct, 2),
+        "premium_momentum_score": round(premium_momentum, 1),
+        "interpretation": interpretation,
+        "atm_ce_ltp": round(curr_ce_ltp, 2),
+        "atm_pe_ltp": round(curr_pe_ltp, 2)
+    }
 
 
 def calculate_iv_skew(strikes_data: dict, spot_price: float, num_strikes: int = 3) -> float:
@@ -415,7 +654,9 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
 def calculate_signal_confidence(combined_score: float, iv_skew: float,
                                 volume_pcr: float, oi_pcr: float,
                                 max_pain: int, spot_price: float,
-                                confirmation_status: str) -> float:
+                                confirmation_status: str,
+                                vix: float = 0.0,
+                                futures_oi_change: float = 0.0) -> float:
     """
     Calculate overall signal confidence based on multiple factors.
 
@@ -433,6 +674,8 @@ def calculate_signal_confidence(combined_score: float, iv_skew: float,
         max_pain: Max pain strike
         spot_price: Current spot
         confirmation_status: Price-OI confirmation status
+        vix: India VIX value (volatility index)
+        futures_oi_change: Futures OI change for cross-validation
 
     Returns:
         Confidence score 0-100
@@ -490,6 +733,25 @@ def calculate_signal_confidence(combined_score: float, iv_skew: float,
     elif confirmation_status == "CONFLICT":
         confidence -= 15
     # NEUTRAL: no change
+
+    # 6. VIX adjustment (±20 points)
+    # High VIX = volatile market = less reliable OI signals
+    if vix > 0:
+        if vix > 25:
+            confidence -= 20  # Very high volatility - unreliable signals
+        elif vix > 20:
+            confidence -= 10  # High volatility - reduce confidence
+        elif vix < 12:
+            confidence += 5   # Low VIX = stable = more reliable signals
+
+    # 7. Futures OI confirmation (±15 points)
+    # Futures OI change in same direction as options signal = strong confirmation
+    if futures_oi_change != 0:
+        futures_bullish = futures_oi_change > 0  # Rising futures OI = bullish
+        if (is_bullish_signal and futures_bullish) or (not is_bullish_signal and not futures_bullish):
+            confidence += 15  # Strong confirmation from futures
+        elif (is_bullish_signal and not futures_bullish) or (not is_bullish_signal and futures_bullish):
+            confidence -= 10  # Futures disagree with options signal
 
     # Clamp to 0-100
     return max(0, min(100, confidence))
@@ -590,7 +852,11 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
                         include_atm: bool = False,
                         include_itm: bool = False,
                         momentum_score: Optional[float] = None,
-                        price_history: Optional[List[dict]] = None) -> dict:
+                        price_history: Optional[List[dict]] = None,
+                        vix: float = 0.0,
+                        futures_oi_change: float = 0.0,
+                        prev_oi_changes: Optional[List[tuple]] = None,
+                        prev_strikes_data: Optional[dict] = None) -> dict:
     """
     Perform tug-of-war analysis on option chain data.
 
@@ -598,6 +864,10 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     - High Call OI addition = Bears writing calls = Bearish pressure
     - High Put OI addition = Bulls writing puts = Bullish pressure
     - Price momentum confirms/contradicts OI signals
+    - VIX affects signal reliability
+    - Futures OI provides cross-validation
+    - OI acceleration detects accumulation/unwinding phases
+    - Premium momentum tracks buyer pressure
 
     Args:
         strikes_data: Dict of strike -> {ce_oi, ce_oi_change, pe_oi, pe_oi_change}
@@ -607,6 +877,10 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         include_itm: Include ITM strikes in analysis
         momentum_score: Pre-calculated momentum score (-100 to +100)
         price_history: List of recent price data for momentum calculation
+        vix: India VIX value for volatility context
+        futures_oi_change: NIFTY futures OI change for cross-validation
+        prev_oi_changes: List of (call_oi_change, put_oi_change) tuples for acceleration
+        prev_strikes_data: Previous snapshot's strikes data for premium momentum
 
     Returns:
         dict with analysis results including verdict
@@ -791,19 +1065,52 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     elif momentum_score is None:
         momentum_score = 0.0
 
+    # Pre-calculate OI direction for confirmation check (needed for dynamic weights)
+    # Calculate preliminary net OI change to determine direction
+    preliminary_net_change = total_put_oi_change - total_call_oi_change
+    preliminary_oi_direction = "bullish" if preliminary_net_change > 0 else "bearish" if preliminary_net_change < 0 else "neutral"
+
+    # Calculate price direction from history
+    preliminary_price_change = 0.0
+    if price_history and len(price_history) >= 2:
+        current = price_history[-1]['spot_price']
+        past = price_history[0]['spot_price']
+        if past > 0:
+            preliminary_price_change = ((current - past) / past) * 100
+    preliminary_price_direction = "rising" if preliminary_price_change > 0.05 else "falling" if preliminary_price_change < -0.05 else "flat"
+
+    # Detect if OI and price are diverging (for dynamic momentum weight)
+    is_diverging = (
+        (preliminary_oi_direction == "bullish" and preliminary_price_direction == "falling") or
+        (preliminary_oi_direction == "bearish" and preliminary_price_direction == "rising")
+    )
+
     # Determine weights based on enabled options
     # With momentum enabled, reduce other weights proportionally
+    # DYNAMIC: Increase momentum weight to 45% when OI and price diverge
     if momentum_score != 0.0:
-        # Momentum gets 20% weight
-        momentum_weight = 0.20
-        if include_atm and include_itm:
-            otm_weight, atm_weight, itm_weight = 0.50, 0.20, 0.10
-        elif include_atm:
-            otm_weight, atm_weight, itm_weight = 0.60, 0.20, 0.0
-        elif include_itm:
-            otm_weight, atm_weight, itm_weight = 0.70, 0.0, 0.10
+        if is_diverging:
+            # Divergence detected - trust price momentum more
+            momentum_weight = 0.45
+            if include_atm and include_itm:
+                otm_weight, atm_weight, itm_weight = 0.35, 0.12, 0.08
+            elif include_atm:
+                otm_weight, atm_weight, itm_weight = 0.42, 0.13, 0.0
+            elif include_itm:
+                otm_weight, atm_weight, itm_weight = 0.47, 0.0, 0.08
+            else:
+                otm_weight, atm_weight, itm_weight = 0.55, 0.0, 0.0
         else:
-            otm_weight, atm_weight, itm_weight = 0.80, 0.0, 0.0
+            # Normal case - momentum gets 20% weight
+            momentum_weight = 0.20
+            if include_atm and include_itm:
+                otm_weight, atm_weight, itm_weight = 0.50, 0.20, 0.10
+            elif include_atm:
+                otm_weight, atm_weight, itm_weight = 0.60, 0.20, 0.0
+            elif include_itm:
+                otm_weight, atm_weight, itm_weight = 0.70, 0.0, 0.10
+            else:
+                otm_weight, atm_weight, itm_weight = 0.80, 0.0, 0.0
     else:
         # No momentum, use original weights
         momentum_weight = 0.0
@@ -816,14 +1123,19 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         else:
             otm_weight, atm_weight, itm_weight = 1.0, 0.0, 0.0
 
-    # Calculate OTM score (70% OI change + 30% Total OI)
+    # Detect market regime for dynamic OI weighting (Phase 4)
+    market_regime = detect_market_regime(price_history or [], momentum_score)
+    oi_change_weight = market_regime["oi_change_weight"]
+    oi_total_weight = market_regime["oi_total_weight"]
+
+    # Calculate OTM score with dynamic OI change/total weighting
     max_otm_change = max(abs(total_call_oi_change), abs(total_put_oi_change), 1)
     max_otm_total = max(total_call_oi, total_put_oi, 1)
     otm_change_score = (net_oi_change / max_otm_change) * 100
     otm_total_score = (net_total_oi / max_otm_total) * 100
-    otm_score = (0.7 * otm_change_score) + (0.3 * otm_total_score)
+    otm_score = (oi_change_weight * otm_change_score) + (oi_total_weight * otm_total_score)
 
-    # Calculate ATM score (70% OI change + 30% Total OI)
+    # Calculate ATM score with dynamic weighting
     atm_score = 0.0
     atm_change_score = 0.0
     atm_total_score = 0.0
@@ -837,9 +1149,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         max_atm_total = max(atm_call_oi, atm_put_oi, 1)
         atm_change_score = (atm_net_change / max_atm_change) * 100
         atm_total_score = (atm_net_total / max_atm_total) * 100
-        atm_score = (0.7 * atm_change_score) + (0.3 * atm_total_score)
+        atm_score = (oi_change_weight * atm_change_score) + (oi_total_weight * atm_total_score)
 
-    # Calculate ITM score (70% OI change + 30% Total OI)
+    # Calculate ITM score with dynamic weighting
     # ITM Zone Scoring Logic:
     # - ITM Call writers (below spot) want price to fall → Bearish pressure
     # - ITM Put writers (above spot) want price to rise → Bullish pressure
@@ -856,7 +1168,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         max_itm_total = max(total_itm_call_oi, total_itm_put_oi, 1)
         itm_change_score = (itm_net_change / max_itm_change) * 100
         itm_total_score = (itm_net_total / max_itm_total) * 100
-        itm_score = (0.7 * itm_change_score) + (0.3 * itm_total_score)
+        itm_score = (oi_change_weight * itm_change_score) + (oi_total_weight * itm_total_score)
 
     # Combined weighted score across zones (including momentum)
     combined_score = (otm_weight * otm_score) + (atm_weight * atm_score) + (itm_weight * itm_score) + (momentum_weight * momentum_score)
@@ -929,6 +1241,54 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     # Calculate volume PCR
     volume_pcr = total_put_volume / max(total_call_volume, 1)
 
+    # Calculate OI acceleration (Phase 2 enhancement)
+    oi_acceleration = calculate_oi_acceleration(
+        prev_oi_changes or [],
+        total_call_oi_change,
+        total_put_oi_change
+    )
+
+    # Adjust combined score based on OI phase and momentum
+    # If unwinding + price rising = short covering rally → boost bullish signal
+    if oi_acceleration["phase"] == "unwinding" and momentum_score > 15:
+        # OI unwinding but price rising = likely short covering
+        # Trust price momentum more
+        combined_score += 15
+        oi_acceleration["adjustment"] = "+15 (short covering detected)"
+    elif oi_acceleration["phase"] == "unwinding" and momentum_score < -15:
+        # OI unwinding but price falling = likely profit booking
+        combined_score -= 15
+        oi_acceleration["adjustment"] = "-15 (profit booking detected)"
+    elif oi_acceleration["phase"] == "accumulation":
+        # Fresh bullish positions building
+        combined_score += 10
+        oi_acceleration["adjustment"] = "+10 (bullish accumulation)"
+    elif oi_acceleration["phase"] == "distribution":
+        # Fresh bearish positions building
+        combined_score -= 10
+        oi_acceleration["adjustment"] = "-10 (bearish distribution)"
+    else:
+        oi_acceleration["adjustment"] = "0 (stable phase)"
+
+    # Calculate premium momentum (Phase 3 enhancement)
+    premium_momentum = calculate_premium_momentum(strikes_data, prev_strikes_data, spot_price)
+
+    # Adjust score when OI and premium momentum conflict
+    # If OI says bearish but call premiums rallying = buyers winning
+    pm_score = premium_momentum["premium_momentum_score"]
+    if combined_score < -10 and pm_score > 20:
+        # OI bearish but premium bullish - reduce bearish conviction
+        adjustment = pm_score * 0.3
+        combined_score += adjustment
+        premium_momentum["score_adjustment"] = f"+{adjustment:.1f} (bullish premium vs bearish OI)"
+    elif combined_score > 10 and pm_score < -20:
+        # OI bullish but premium bearish - reduce bullish conviction
+        adjustment = pm_score * 0.3
+        combined_score += adjustment  # pm_score is negative, so this subtracts
+        premium_momentum["score_adjustment"] = f"{adjustment:.1f} (bearish premium vs bullish OI)"
+    else:
+        premium_momentum["score_adjustment"] = "0 (aligned)"
+
     # Calculate new metrics: IV Skew, Max Pain, OI Clusters
     iv_skew = calculate_iv_skew(strikes_data, spot_price, num_otm_strikes)
     max_pain = calculate_max_pain(strikes_data)
@@ -937,10 +1297,11 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     # Calculate trade setup (pass price_history for swing-based SL/targets)
     trade_setup = calculate_trade_setup(strikes_data, spot_price, verdict, max_pain, price_history)
 
-    # Calculate signal confidence
+    # Calculate signal confidence (with VIX and futures data)
     signal_confidence = calculate_signal_confidence(
         combined_score, iv_skew, volume_pcr, pcr,
-        max_pain, spot_price, confirmation_status
+        max_pain, spot_price, confirmation_status,
+        vix=vix, futures_oi_change=futures_oi_change
     )
 
     # Detect potential traps
@@ -1005,7 +1366,17 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         "oi_clusters": oi_clusters,
         "signal_confidence": round(signal_confidence, 1),
         "trade_setup": trade_setup,
-        "trap_warning": trap_warning
+        "trap_warning": trap_warning,
+        # Market context
+        "vix": round(vix, 2) if vix else 0.0,
+        "futures_oi_change": round(futures_oi_change, 0) if futures_oi_change else 0,
+        "is_diverging": is_diverging,
+        # OI acceleration (Phase 2)
+        "oi_acceleration": oi_acceleration,
+        # Premium momentum (Phase 3)
+        "premium_momentum": premium_momentum,
+        # Market regime (Phase 4)
+        "market_regime": market_regime
     }
 
 

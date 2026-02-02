@@ -241,6 +241,17 @@ def init_db():
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN signal_confidence REAL DEFAULT 0.0")
             print("Added VIX, IV skew, max pain, and confidence columns to analysis_history table")
 
+        # Add migration for futures OI columns if they don't exist
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pragma_table_info('analysis_history')
+            WHERE name='futures_oi'
+        """)
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN futures_oi INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN futures_oi_change INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN futures_basis REAL DEFAULT 0.0")
+            print("Added futures OI columns to analysis_history table")
+
         # Add migration for LTP columns if they don't exist
         cursor.execute("""
             SELECT COUNT(*) as count FROM pragma_table_info('oi_snapshots')
@@ -302,7 +313,8 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
                   atm_call_oi_change: int = 0, atm_put_oi_change: int = 0,
                   itm_call_oi_change: int = 0, itm_put_oi_change: int = 0,
                   vix: float = 0.0, iv_skew: float = 0.0, max_pain: int = 0,
-                  signal_confidence: float = 0.0):
+                  signal_confidence: float = 0.0,
+                  futures_oi: int = 0, futures_oi_change: int = 0, futures_basis: float = 0.0):
     """Save analysis result to history."""
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -311,8 +323,9 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
             (timestamp, spot_price, atm_strike, total_call_oi, total_put_oi,
              call_oi_change, put_oi_change, verdict, expiry_date,
              atm_call_oi_change, atm_put_oi_change, itm_call_oi_change, itm_put_oi_change,
-             vix, iv_skew, max_pain, signal_confidence)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             vix, iv_skew, max_pain, signal_confidence,
+             futures_oi, futures_oi_change, futures_basis)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             timestamp.isoformat(),
             spot_price,
@@ -330,7 +343,10 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
             vix,
             iv_skew,
             max_pain,
-            signal_confidence
+            signal_confidence,
+            futures_oi,
+            futures_oi_change,
+            futures_basis
         ))
         conn.commit()
 
@@ -472,6 +488,53 @@ def get_recent_price_trend(lookback_minutes: int = 9) -> list:
 
         rows = cursor.fetchall()
         return [dict(row) for row in reversed(rows)]  # Chronological order
+
+
+def get_recent_oi_changes(lookback: int = 3) -> list:
+    """
+    Get recent OI changes for acceleration calculation.
+
+    Args:
+        lookback: Number of data points to retrieve (default 3 = 9 minutes at 3-min intervals)
+
+    Returns:
+        List of (call_oi_change, put_oi_change) tuples, oldest first
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT call_oi_change, put_oi_change
+            FROM analysis_history
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (lookback,))
+
+        rows = cursor.fetchall()
+        # Reverse to get oldest first
+        return [(row["call_oi_change"], row["put_oi_change"]) for row in reversed(rows)]
+
+
+def get_previous_strikes_data() -> Optional[dict]:
+    """
+    Get the previous snapshot's strikes data for premium momentum calculation.
+
+    Returns:
+        Dict of strike -> {ce_ltp, pe_ltp, ...} or None if no previous data
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # Get the second most recent timestamp (skip current)
+        cursor.execute("""
+            SELECT DISTINCT timestamp FROM oi_snapshots
+            ORDER BY timestamp DESC
+            LIMIT 1 OFFSET 1
+        """)
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        prev_timestamp = row["timestamp"]
+        return get_strikes_for_timestamp(prev_timestamp)
 
 
 def get_strikes_for_timestamp(timestamp: str) -> dict:

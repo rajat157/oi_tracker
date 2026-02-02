@@ -36,7 +36,7 @@ class TradeTracker:
         self.confidence_max = 85.0  # Maximum confidence (contrarian filter)
         self.entry_tolerance = 0.02  # 2% tolerance for entry activation
         self.cooldown_minutes = 6  # Cooldown after trade resolution (2 fetch cycles)
-        self.move_threshold_pct = 0.5  # Skip if spot moved 0.5%+ in direction
+        self.move_threshold_pct = 0.8  # Skip if spot moved 0.8%+ in direction (widened from 0.5%)
         self.bounce_threshold_pct = 0.3  # Skip PUT if bounced 0.3%+ from low
         self.self_learner = get_self_learner()
 

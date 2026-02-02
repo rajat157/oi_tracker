@@ -10,7 +10,10 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from nse_fetcher import NSEFetcher
 from oi_analyzer import analyze_tug_of_war
-from database import save_snapshot, save_analysis, purge_old_data, get_last_data_date, get_recent_price_trend
+from database import (
+    save_snapshot, save_analysis, purge_old_data, get_last_data_date,
+    get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data
+)
 from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
 
@@ -124,13 +127,33 @@ class OIScheduler:
             # Get price history for momentum calculation
             price_history = get_recent_price_trend(lookback_minutes=9)
 
-            # Perform analysis with momentum
+            # Get previous OI changes for acceleration calculation (3 points = 9 min)
+            prev_oi_changes = get_recent_oi_changes(lookback=3)
+
+            # Get previous strikes data for premium momentum
+            prev_strikes_data = get_previous_strikes_data()
+
+            # Fetch India VIX for volatility context
+            vix = fetcher.fetch_india_vix() or 0.0
+            print(f"India VIX: {vix:.2f}" if vix > 0 else "VIX: Not available")
+
+            # Fetch futures data for cross-validation
+            futures_data = fetcher.fetch_futures_data() or {}
+            futures_oi = futures_data.get("future_oi", 0)
+            futures_oi_change = futures_data.get("future_oi_change", 0)
+            futures_basis = futures_data.get("basis", 0.0)
+
+            # Perform analysis with all enhanced data
             analysis = analyze_tug_of_war(
                 strikes_data,
                 spot_price,
                 include_atm=True,
                 include_itm=True,
-                price_history=price_history
+                price_history=price_history,
+                vix=vix,
+                futures_oi_change=futures_oi_change,
+                prev_oi_changes=prev_oi_changes,
+                prev_strikes_data=prev_strikes_data
             )
             analysis["timestamp"] = timestamp.isoformat()
             analysis["expiry_date"] = current_expiry
@@ -150,10 +173,13 @@ class OIScheduler:
                 atm_put_oi_change=analysis.get("atm_data", {}).get("put_oi_change", 0) if analysis.get("atm_data") else 0,
                 itm_call_oi_change=analysis.get("itm_call_oi_change", 0),
                 itm_put_oi_change=analysis.get("itm_put_oi_change", 0),
-                vix=0.0,  # Will be fetched separately
+                vix=vix,
                 iv_skew=analysis.get("iv_skew", 0.0),
                 max_pain=analysis.get("max_pain", 0),
-                signal_confidence=analysis.get("signal_confidence", 0.0)
+                signal_confidence=analysis.get("signal_confidence", 0.0),
+                futures_oi=futures_oi,
+                futures_oi_change=futures_oi_change,
+                futures_basis=futures_basis
             )
 
             self.last_analysis = analysis

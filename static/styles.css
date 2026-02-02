@@ -1512,55 +1512,39 @@ body {
     color: var(--text-secondary);
 }
 
-/* ===== Self-Learning Card ===== */
-.learning-card {
-    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(99, 102, 241, 0.05) 100%);
-}
-
-.learning-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
-}
-
-.learning-item {
+/* ===== Self-Learning Inline (inside verdict card) ===== */
+.learning-inline {
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 6px;
-    padding: 14px;
-    background: var(--bg-secondary);
-    border-radius: var(--radius-md);
-    text-align: center;
-}
-
-.learning-label {
-    font-size: var(--text-xs);
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-.learning-value {
-    font-size: var(--text-lg);
-    font-weight: 700;
-    color: var(--text-primary);
-    font-variant-numeric: tabular-nums;
-}
-
-.learning-status {
+    justify-content: center;
+    gap: 1.5rem;
+    padding-top: 0.75rem;
+    margin-top: 0.75rem;
+    border-top: 1px solid var(--border);
     font-size: var(--text-sm);
+}
+
+.learning-inline .learning-item {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.learning-inline .learning-label {
+    color: var(--text-muted);
+}
+
+.learning-inline .learning-status {
     font-weight: 600;
-    padding: 4px 10px;
+    padding: 2px 8px;
     border-radius: var(--radius-sm);
 }
 
-.learning-status.active {
+.learning-inline .learning-status.active {
     background: var(--bullish-light);
     color: var(--bullish);
 }
 
-.learning-status.paused {
+.learning-inline .learning-status.paused {
     background: var(--warning-light);
     color: var(--warning);
 }
@@ -1609,8 +1593,8 @@ body {
         gap: 16px;
     }
 
-    .learning-grid {
-        grid-template-columns: repeat(3, 1fr);
+    .learning-inline {
+        gap: 1rem;
     }
 
     .trade-levels {
@@ -1686,8 +1670,9 @@ body {
         grid-template-columns: 1fr 1fr 1fr;
     }
 
-    .learning-grid {
-        grid-template-columns: repeat(3, 1fr);
+    .learning-inline {
+        gap: 1rem;
+        font-size: var(--text-xs);
     }
 
     .trade-levels {
@@ -1741,10 +1726,15 @@ body {
     .tables-row,
     .metrics-grouped,
     .atm-grid,
-    .learning-grid,
     .strength-grid,
     .charts-row {
         grid-template-columns: 1fr;
+    }
+
+    .learning-inline {
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        font-size: var(--text-xs);
     }
 
     .metric-group:last-child {

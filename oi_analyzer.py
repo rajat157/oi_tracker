@@ -806,8 +806,8 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
         'ce_iv' if option_type == 'CE' else 'pe_iv', 0
     )
 
-    # Calculate rupee risk/reward (NIFTY lot size = 75 from Nov 2024)
-    NIFTY_LOT_SIZE = 75
+    # Calculate rupee risk/reward (NIFTY lot size = 65)
+    NIFTY_LOT_SIZE = 65
     entry_cost_rs = premium * NIFTY_LOT_SIZE
     risk_amount_rs = risk * NIFTY_LOT_SIZE
     potential_profit_t1_rs = risk * NIFTY_LOT_SIZE  # 1:1 R:R

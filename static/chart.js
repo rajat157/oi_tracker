@@ -677,11 +677,24 @@ function updateTradeSetup(data) {
     setText('trade-max-pain', setup.max_pain ? formatNumber(setup.max_pain) : '--');
 
     // Update rupee risk/reward display
-    setText('trade-lot-size', setup.lot_size || 75);
-    setText('trade-entry-cost-rs', setup.entry_cost_rs ? '₹' + formatNumber(setup.entry_cost_rs) : '--');
-    setText('trade-risk-rs', setup.risk_amount_rs ? '₹' + formatNumber(setup.risk_amount_rs) : '--');
-    setText('trade-profit-t1-rs', setup.potential_profit_t1_rs ? '₹' + formatNumber(setup.potential_profit_t1_rs) : '--');
-    setText('trade-profit-t2-rs', setup.potential_profit_t2_rs ? '₹' + formatNumber(setup.potential_profit_t2_rs) : '--');
+    // Calculate from premium values if not provided (for active trades from DB)
+    const lotSize = setup.lot_size || 65;
+    const entryPremium = setup.entry_premium || 0;
+    const slPremium = setup.sl_premium || 0;
+    const t1Premium = setup.target1_premium || 0;
+    const t2Premium = setup.target2_premium || 0;
+    const riskPoints = entryPremium - slPremium;
+
+    const entryCostRs = setup.entry_cost_rs || (entryPremium * lotSize);
+    const riskAmountRs = setup.risk_amount_rs || (riskPoints * lotSize);
+    const profitT1Rs = setup.potential_profit_t1_rs || ((t1Premium - entryPremium) * lotSize);
+    const profitT2Rs = setup.potential_profit_t2_rs || ((t2Premium - entryPremium) * lotSize);
+
+    setText('trade-lot-size', lotSize);
+    setText('trade-entry-cost-rs', entryCostRs > 0 ? '₹' + formatNumber(Math.round(entryCostRs)) : '--');
+    setText('trade-risk-rs', riskAmountRs > 0 ? '₹' + formatNumber(Math.round(riskAmountRs)) : '--');
+    setText('trade-profit-t1-rs', profitT1Rs > 0 ? '₹' + formatNumber(Math.round(profitT1Rs)) : '--');
+    setText('trade-profit-t2-rs', profitT2Rs > 0 ? '₹' + formatNumber(Math.round(profitT2Rs)) : '--');
 }
 
 function updateWinRate(tradeStats) {

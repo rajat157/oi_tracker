@@ -262,6 +262,15 @@ def init_db():
             cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_ltp REAL DEFAULT 0.0")
             print("Added LTP columns to oi_snapshots table")
 
+        # Add migration for analysis_json column to store complete analysis
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pragma_table_info('analysis_history')
+            WHERE name='analysis_json'
+        """)
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN analysis_json TEXT")
+            print("Added analysis_json column to analysis_history table")
+
         conn.commit()
 
 
@@ -314,8 +323,9 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
                   itm_call_oi_change: int = 0, itm_put_oi_change: int = 0,
                   vix: float = 0.0, iv_skew: float = 0.0, max_pain: int = 0,
                   signal_confidence: float = 0.0,
-                  futures_oi: int = 0, futures_oi_change: int = 0, futures_basis: float = 0.0):
-    """Save analysis result to history."""
+                  futures_oi: int = 0, futures_oi_change: int = 0, futures_basis: float = 0.0,
+                  analysis_json: str = None):
+    """Save analysis result to history including full JSON blob."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -324,8 +334,8 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
              call_oi_change, put_oi_change, verdict, expiry_date,
              atm_call_oi_change, atm_put_oi_change, itm_call_oi_change, itm_put_oi_change,
              vix, iv_skew, max_pain, signal_confidence,
-             futures_oi, futures_oi_change, futures_basis)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             futures_oi, futures_oi_change, futures_basis, analysis_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             timestamp.isoformat(),
             spot_price,
@@ -346,7 +356,8 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
             signal_confidence,
             futures_oi,
             futures_oi_change,
-            futures_basis
+            futures_basis,
+            analysis_json
         ))
         conn.commit()
 
@@ -434,7 +445,8 @@ def get_latest_snapshot() -> Optional[dict]:
 
 
 def get_latest_analysis() -> Optional[dict]:
-    """Get the most recent analysis result."""
+    """Get the most recent analysis result with full data."""
+    import json as json_module
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -445,7 +457,15 @@ def get_latest_analysis() -> Optional[dict]:
         row = cursor.fetchone()
 
         if row:
-            return dict(row)
+            result = dict(row)
+            # Parse JSON blob if present and return complete analysis
+            if result.get('analysis_json'):
+                try:
+                    full_analysis = json_module.loads(result['analysis_json'])
+                    return full_analysis  # Return complete analysis
+                except (json_module.JSONDecodeError, TypeError):
+                    pass  # Fallback to basic fields
+            return result  # Fallback to basic fields for old data
         return None
 
 

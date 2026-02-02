@@ -9,10 +9,8 @@ from flask_socketio import SocketIO
 from scheduler import OIScheduler
 from database import (
     get_latest_analysis, get_analysis_history, get_latest_snapshot,
-    get_recent_price_trend, get_active_trade_setup, get_trade_setup_stats,
-    get_trade_history
+    get_active_trade_setup, get_trade_setup_stats, get_trade_history
 )
-from oi_analyzer import analyze_tug_of_war
 
 
 app = Flask(__name__)
@@ -70,45 +68,28 @@ def dashboard():
 
 @app.route("/api/latest")
 def api_latest():
-    """Get the latest OI analysis."""
-    # Get price history for momentum calculation
-    price_history = get_recent_price_trend(lookback_minutes=9)
+    """Get the latest OI analysis from database (single source of truth)."""
+    # ALWAYS fetch from database - single source of truth
+    analysis = get_latest_analysis()
 
-    # Always get fresh analysis from snapshot to ensure scores are calculated
-    snapshot = get_latest_snapshot()
-
-    if snapshot and snapshot.get("strikes"):
-        # Re-run analysis to get full details with scores
-        analysis = analyze_tug_of_war(
-            snapshot["strikes"],
-            snapshot["spot_price"],
-            price_history=price_history
-        )
-        analysis["timestamp"] = snapshot["timestamp"]
-        analysis["expiry_date"] = snapshot["expiry_date"]
-
-        # Add trade tracker data (active_trade and trade_stats)
-        active_setup = get_active_trade_setup()
-        if active_setup:
-            analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+    if analysis:
+        # Add live trade tracker data (needs current snapshot for live P/L)
+        snapshot = get_latest_snapshot()
+        if snapshot and snapshot.get("strikes"):
+            active_setup = get_active_trade_setup()
+            if active_setup:
+                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+            else:
+                analysis["active_trade"] = None
+            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
         else:
             analysis["active_trade"] = None
-        analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
 
         # Add chart history for frontend sync (last 30 data points)
         analysis["chart_history"] = get_analysis_history(limit=30)
 
         return jsonify(analysis)
-
-    # Fall back to scheduler's cached analysis
-    cached = oi_scheduler.get_last_analysis()
-    if cached:
-        return jsonify(cached)
-
-    # Last resort: database summary (without scores)
-    db_analysis = get_latest_analysis()
-    if db_analysis:
-        return jsonify(db_analysis)
 
     return jsonify({"error": "No data available yet"}), 404
 
@@ -201,30 +182,25 @@ def handle_refresh_request():
 
 @socketio.on("request_latest")
 def handle_request_latest():
-    """Handle request for latest analysis from client."""
+    """Handle request for latest analysis from client (uses database as single source of truth)."""
     from flask_socketio import emit
 
-    # Get price history for momentum calculation
-    price_history = get_recent_price_trend(lookback_minutes=9)
+    # ALWAYS fetch from database - single source of truth
+    analysis = get_latest_analysis()
 
-    # Get latest snapshot and re-analyze
-    snapshot = get_latest_snapshot()
-    if snapshot and snapshot.get("strikes"):
-        analysis = analyze_tug_of_war(
-            snapshot["strikes"],
-            snapshot["spot_price"],
-            price_history=price_history
-        )
-        analysis["timestamp"] = snapshot.get("timestamp")
-        analysis["expiry_date"] = snapshot.get("expiry_date")
-
-        # Add trade tracker data
-        active_setup = get_active_trade_setup()
-        if active_setup:
-            analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+    if analysis:
+        # Add live trade tracker data (needs current snapshot for live P/L)
+        snapshot = get_latest_snapshot()
+        if snapshot and snapshot.get("strikes"):
+            active_setup = get_active_trade_setup()
+            if active_setup:
+                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
+            else:
+                analysis["active_trade"] = None
+            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
         else:
             analysis["active_trade"] = None
-        analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
 
         # Add chart history for frontend sync (last 30 data points)
         analysis["chart_history"] = get_analysis_history(limit=30)

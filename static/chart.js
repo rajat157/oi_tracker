@@ -664,22 +664,25 @@ function updateTradeSetup(data) {
 }
 
 function updateWinRate(tradeStats) {
-    if (!tradeStats) return;
-
-    // Update win rate display
+    // Update win rate display - handle missing data gracefully
     const winRateElem = document.getElementById('win-rate');
     if (winRateElem) {
-        const rate = tradeStats.win_rate || 0;
-        winRateElem.textContent = rate.toFixed(1) + '%';
-        winRateElem.classList.remove('good', 'bad');
-        winRateElem.classList.add(rate >= 50 ? 'good' : 'bad');
+        if (tradeStats?.win_rate != null) {
+            const rate = tradeStats.win_rate;
+            winRateElem.textContent = rate.toFixed(1) + '%';
+            winRateElem.classList.remove('good', 'bad');
+            winRateElem.classList.add(rate >= 50 ? 'good' : 'bad');
+        } else {
+            winRateElem.textContent = '--';
+            winRateElem.classList.remove('good', 'bad');
+        }
     }
 
-    setText('total-trades', tradeStats.total || 0);
-    setText('trade-wins', tradeStats.wins || 0);
-    setText('trade-losses', tradeStats.losses || 0);
-    setText('avg-win', tradeStats.avg_win ? `+${tradeStats.avg_win.toFixed(1)}` : '--');
-    setText('avg-loss', tradeStats.avg_loss ? tradeStats.avg_loss.toFixed(1) : '--');
+    setText('total-trades', tradeStats?.total ?? '--');
+    setText('trade-wins', tradeStats?.wins ?? '--');
+    setText('trade-losses', tradeStats?.losses ?? '--');
+    setText('avg-win', tradeStats?.avg_win ? `+${tradeStats.avg_win.toFixed(1)}` : '--');
+    setText('avg-loss', tradeStats?.avg_loss ? tradeStats.avg_loss.toFixed(1) : '--');
 }
 
 function updateTrapWarning(trapWarning) {
@@ -698,26 +701,34 @@ function updateTrapWarning(trapWarning) {
 }
 
 function updateLearningStatus(learning) {
-    if (!learning) return;
-
-    // Update accuracy
+    // Update accuracy - handle missing data gracefully
     const accElem = document.getElementById('learning-accuracy');
     if (accElem) {
-        accElem.textContent = learning.ema_accuracy + '%';
-        accElem.style.color = learning.ema_accuracy >= 55 ? '#22c55e' :
-                             learning.ema_accuracy < 50 ? '#f87171' : '#a1a1b5';
+        if (learning?.ema_accuracy != null) {
+            accElem.textContent = learning.ema_accuracy + '%';
+            accElem.style.color = learning.ema_accuracy >= 55 ? '#22c55e' :
+                                 learning.ema_accuracy < 50 ? '#f87171' : '#a1a1b5';
+        } else {
+            accElem.textContent = '--';
+            accElem.style.color = '#a1a1b5';
+        }
     }
 
     // Update status
     const statusElem = document.getElementById('learning-status');
     if (statusElem) {
-        statusElem.textContent = learning.is_paused ? 'PAUSED' : 'ACTIVE';
-        statusElem.classList.remove('active', 'paused');
-        statusElem.classList.add(learning.is_paused ? 'paused' : 'active');
+        if (learning) {
+            statusElem.textContent = learning.is_paused ? 'PAUSED' : 'ACTIVE';
+            statusElem.classList.remove('active', 'paused');
+            statusElem.classList.add(learning.is_paused ? 'paused' : 'active');
+        } else {
+            statusElem.textContent = '--';
+            statusElem.classList.remove('active', 'paused');
+        }
     }
 
     // Update errors
-    setText('learning-errors', learning.consecutive_errors);
+    setText('learning-errors', learning?.consecutive_errors ?? '--');
 }
 
 function updateScore(id, value, addColorClass = false) {

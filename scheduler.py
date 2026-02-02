@@ -4,6 +4,7 @@ Runs every 3 minutes to match NSE update frequency
 Only runs during market hours (9:15 AM - 3:30 PM IST, weekdays)
 """
 
+import json
 from datetime import datetime, time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -166,7 +167,10 @@ class OIScheduler:
             analysis["timestamp"] = timestamp.isoformat()
             analysis["expiry_date"] = current_expiry
 
-            # Save analysis to database
+            # Serialize complete analysis to JSON for storage
+            analysis_json = json.dumps(analysis, default=str)
+
+            # Save analysis to database with full JSON blob
             save_analysis(
                 timestamp=timestamp,
                 spot_price=spot_price,
@@ -187,7 +191,8 @@ class OIScheduler:
                 signal_confidence=analysis.get("signal_confidence", 0.0),
                 futures_oi=futures_oi,
                 futures_oi_change=futures_oi_change,
-                futures_basis=futures_basis
+                futures_basis=futures_basis,
+                analysis_json=analysis_json  # Store complete analysis
             )
 
             self.last_analysis = analysis

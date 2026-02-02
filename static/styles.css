@@ -817,13 +817,161 @@ body {
     opacity: 0.7;
 }
 
+/* ===== Section Title ===== */
+.section-title {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin: 24px 0 16px 0;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+/* ===== Strength Analysis Card ===== */
+.strength-card {
+    background: linear-gradient(135deg, var(--bg-card) 0%, rgba(99, 102, 241, 0.05) 100%);
+}
+
+.strength-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.strength-item {
+    padding: 16px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+}
+
+.strength-item.support {
+    border-top: 3px solid var(--bullish);
+}
+
+.strength-item.resistance {
+    border-top: 3px solid var(--bearish);
+}
+
+.strength-label {
+    display: block;
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+}
+
+.strength-values {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 8px;
+}
+
+.strength-ratio {
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.strength-score {
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.strength-score.positive {
+    color: var(--bullish);
+}
+
+.strength-score.negative {
+    color: var(--bearish);
+}
+
+.strength-formula {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.strength-result {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    padding: 14px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border);
+}
+
+.result-label {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.result-direction {
+    font-size: var(--text-lg);
+    font-weight: 700;
+    padding: 4px 14px;
+    border-radius: var(--radius-sm);
+}
+
+.result-direction.bullish {
+    background: var(--bullish-light);
+    color: var(--bullish);
+}
+
+.result-direction.bearish {
+    background: var(--bearish-light);
+    color: var(--bearish);
+}
+
+.result-direction.neutral {
+    background: var(--warning-light);
+    color: var(--warning);
+}
+
+.result-net {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+}
+
+.result-net strong {
+    font-weight: 700;
+}
+
+.result-net strong.positive {
+    color: var(--bullish);
+}
+
+.result-net strong.negative {
+    color: var(--bearish);
+}
+
 /* ===== Chart Section ===== */
 .chart-section {
     width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.charts-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
 }
 
 .chart-card {
     height: auto;
+}
+
+.chart-card.chart-half {
+    /* Half-width chart cards */
 }
 
 .chart-container {
@@ -831,7 +979,14 @@ body {
     position: relative;
 }
 
-#oi-chart {
+.chart-container-small {
+    height: 200px;
+    position: relative;
+}
+
+#oi-chart,
+#otm-chart,
+#itm-chart {
     width: 100% !important;
     height: 100% !important;
 }
@@ -1461,6 +1616,14 @@ body {
     .trade-levels {
         grid-template-columns: repeat(4, 1fr);
     }
+
+    .strength-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .charts-row {
+        grid-template-columns: 1fr 1fr;
+    }
 }
 
 /* Large mobile: 480-767px */
@@ -1578,7 +1741,9 @@ body {
     .tables-row,
     .metrics-grouped,
     .atm-grid,
-    .learning-grid {
+    .learning-grid,
+    .strength-grid,
+    .charts-row {
         grid-template-columns: 1fr;
     }
 
@@ -1596,6 +1761,11 @@ body {
 
     .verdict-score-display .score-value {
         font-size: 1.5rem;
+    }
+
+    .strength-result {
+        flex-direction: column;
+        gap: 8px;
     }
 }
 

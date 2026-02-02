@@ -1,140 +1,34 @@
 // OI Tracker Dashboard JavaScript
+// NOTE: All state is server-controlled. Frontend is a pure display layer.
 
 const socket = io();
 let oiChart = null;
-let atmChart = null;
+let otmChart = null;
 let itmChart = null;
-let lastChartTimestamp = null;
-
-// Toggle state (persisted in localStorage)
-let includeATM = localStorage.getItem('includeATM') === 'true';
-let includeITM = localStorage.getItem('includeITM') === 'true';
-let forceAutoFetch = localStorage.getItem('forceAutoFetch') === 'true';
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     initChart();
-    initATMChart();
+    initOTMChart();
     initITMChart();
     initToggles();
     setupSocketListeners();
 
     setTimeout(fetchMarketStatus, 500);
     setTimeout(fetchLatestData, 1000);
-    setTimeout(fetchHistory, 1500);
 
     setInterval(fetchMarketStatus, 60000);
 });
 
 // Initialize toggle switches
 function initToggles() {
-    const atmToggle = document.getElementById('atm-toggle');
-    const itmToggle = document.getElementById('itm-toggle');
     const autoToggle = document.getElementById('auto-toggle');
 
-    // Set initial state from localStorage
-    if (atmToggle) atmToggle.checked = includeATM;
-    if (itmToggle) itmToggle.checked = includeITM;
-    if (autoToggle) autoToggle.checked = forceAutoFetch;
-
-    // Update UI visibility
-    updateSectionVisibility();
-
-    // Add event listeners
-    if (atmToggle) {
-        atmToggle.addEventListener('change', (e) => {
-            includeATM = e.target.checked;
-            localStorage.setItem('includeATM', includeATM);
-            updateSectionVisibility();
-            socket.emit('update_toggles', { include_atm: includeATM, include_itm: includeITM });
-        });
-    }
-
-    if (itmToggle) {
-        itmToggle.addEventListener('change', (e) => {
-            includeITM = e.target.checked;
-            localStorage.setItem('includeITM', includeITM);
-            updateSectionVisibility();
-            socket.emit('update_toggles', { include_atm: includeATM, include_itm: includeITM });
-        });
-    }
-
+    // Add event listener for auto-fetch toggle (server-controlled, no localStorage)
     if (autoToggle) {
         autoToggle.addEventListener('change', (e) => {
-            forceAutoFetch = e.target.checked;
-            localStorage.setItem('forceAutoFetch', forceAutoFetch);
-            socket.emit('set_force_fetch', { enabled: forceAutoFetch });
+            socket.emit('set_force_fetch', { enabled: e.target.checked });
         });
-    }
-}
-
-// Show/hide sections based on toggle state
-function updateSectionVisibility() {
-    const atmSection = document.getElementById('atm-section');
-    const atmBreakdown = document.getElementById('atm-breakdown');
-    const atmChartSection = document.getElementById('atm-chart-section');
-    const itmSection = document.getElementById('itm-section');
-    const itmBreakdown = document.getElementById('itm-breakdown');
-    const itmChartSection = document.getElementById('itm-chart-section');
-
-    if (atmSection) atmSection.style.display = includeATM ? 'block' : 'none';
-    if (atmBreakdown) atmBreakdown.style.display = includeATM ? 'flex' : 'none';
-    if (atmChartSection) atmChartSection.style.display = includeATM ? 'block' : 'none';
-    if (itmSection) itmSection.style.display = includeITM ? 'grid' : 'none';
-    if (itmBreakdown) itmBreakdown.style.display = includeITM ? 'flex' : 'none';
-    if (itmChartSection) itmChartSection.style.display = includeITM ? 'block' : 'none';
-}
-
-// Filter incoming WebSocket data based on toggle state
-function filterDataByToggles(data) {
-    // Create a shallow copy to avoid mutating original
-    const filtered = { ...data };
-
-    // If ATM toggle is OFF, subtract ATM data from totals
-    if (!includeATM && data.atm_data) {
-        filtered.call_oi_change = (data.call_oi_change || 0) - (data.atm_data.call_oi_change || 0);
-        filtered.put_oi_change = (data.put_oi_change || 0) - (data.atm_data.put_oi_change || 0);
-        filtered.atm_data = null;
-    }
-
-    // If ITM toggle is OFF, subtract ITM data from totals
-    if (!includeITM) {
-        filtered.call_oi_change = (filtered.call_oi_change || 0) - (data.itm_call_oi_change || 0);
-        filtered.put_oi_change = (filtered.put_oi_change || 0) - (data.itm_put_oi_change || 0);
-        filtered.itm_call_oi_change = 0;
-        filtered.itm_put_oi_change = 0;
-        filtered.itm_calls = null;
-        filtered.itm_puts = null;
-    }
-
-    // Recalculate net OI change
-    filtered.net_oi_change = (filtered.put_oi_change || 0) - (filtered.call_oi_change || 0);
-
-    // Recalculate verdict based on filtered OI changes
-    filtered.verdict = calculateFilteredVerdict(filtered.call_oi_change, filtered.put_oi_change);
-
-    return filtered;
-}
-
-// Calculate verdict for filtered data (matches oi_analyzer.py logic)
-function calculateFilteredVerdict(callChange, putChange) {
-    const diff = (putChange || 0) - (callChange || 0);
-    const total = Math.abs(callChange || 0) + Math.abs(putChange || 0);
-
-    if (total === 0) return "Neutral";
-
-    const ratio = Math.abs(diff) / total * 100;
-
-    if (diff > 0) {
-        // Bullish (Put OI > Call OI means writers selling puts = bullish)
-        if (ratio > 40) return "Bulls Strongly Winning";
-        if (ratio > 15) return "Bulls Winning";
-        return "Slightly Bullish";
-    } else {
-        // Bearish (Call OI > Put OI means writers selling calls = bearish)
-        if (ratio > 40) return "Bears Strongly Winning";
-        if (ratio > 15) return "Bears Winning";
-        return "Slightly Bearish";
     }
 }
 
@@ -231,36 +125,36 @@ function initChart() {
     });
 }
 
-// Initialize ATM Chart
-function initATMChart() {
-    const ctx = document.getElementById('atm-chart').getContext('2d');
+// Initialize OTM Chart (Put vs Call OI trend)
+function initOTMChart() {
+    const canvas = document.getElementById('otm-chart');
+    if (!canvas) return;
 
-    atmChart = new Chart(ctx, {
+    const ctx = canvas.getContext('2d');
+    otmChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
             datasets: [
                 {
-                    label: 'ATM Call OI Change',
-                    data: [],
-                    borderColor: '#f87171',
-                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
-                    fill: true,
-                    tension: 0.4,
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    pointBackgroundColor: '#f87171'
-                },
-                {
-                    label: 'ATM Put OI Change',
+                    label: 'OTM Put Force',
                     data: [],
                     borderColor: '#22c55e',
                     backgroundColor: 'rgba(34, 197, 94, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 3,
-                    pointBackgroundColor: '#22c55e'
+                    pointRadius: 2
+                },
+                {
+                    label: 'OTM Call Force',
+                    data: [],
+                    borderColor: '#f87171',
+                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 2
                 }
             ]
         },
@@ -268,82 +162,47 @@ function initATMChart() {
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
             plugins: {
-                legend: {
-                    position: 'top',
-                    align: 'end',
-                    labels: {
-                        color: '#a1a1b5',
-                        usePointStyle: true,
-                        pointStyle: 'circle',
-                        padding: 20,
-                        font: { size: 12, family: 'Inter' }
-                    }
-                },
-                tooltip: {
-                    backgroundColor: '#1a1a24',
-                    titleColor: '#ffffff',
-                    bodyColor: '#a1a1b5',
-                    borderColor: '#2a2a3a',
-                    borderWidth: 1,
-                    padding: 12,
-                    cornerRadius: 8,
-                    titleFont: { size: 13, family: 'Inter' },
-                    bodyFont: { size: 12, family: 'Inter' }
-                }
+                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } }
             },
             scales: {
-                x: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
-                },
-                y: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: {
-                        color: '#6b6b7f',
-                        font: { size: 11, family: 'Inter' },
-                        callback: value => formatCompact(value)
-                    }
-                }
+                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
+                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, callback: v => formatCompact(v) } }
             }
         }
     });
 }
 
-// Initialize ITM Chart
+// Initialize ITM Chart (Put vs Call OI trend)
 function initITMChart() {
-    const ctx = document.getElementById('itm-chart').getContext('2d');
+    const canvas = document.getElementById('itm-chart');
+    if (!canvas) return;
 
+    const ctx = canvas.getContext('2d');
     itmChart = new Chart(ctx, {
         type: 'line',
         data: {
             labels: [],
             datasets: [
                 {
-                    label: 'ITM Call OI Change',
-                    data: [],
-                    borderColor: '#f87171',
-                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
-                    fill: true,
-                    tension: 0.4,
-                    borderWidth: 2,
-                    pointRadius: 3,
-                    pointBackgroundColor: '#f87171'
-                },
-                {
-                    label: 'ITM Put OI Change',
+                    label: 'ITM Put Force',
                     data: [],
                     borderColor: '#22c55e',
                     backgroundColor: 'rgba(34, 197, 94, 0.1)',
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 3,
-                    pointBackgroundColor: '#22c55e'
+                    pointRadius: 2
+                },
+                {
+                    label: 'ITM Call Force',
+                    data: [],
+                    borderColor: '#f87171',
+                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 2
                 }
             ]
         },
@@ -351,47 +210,12 @@ function initITMChart() {
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
-            interaction: {
-                intersect: false,
-                mode: 'index'
-            },
             plugins: {
-                legend: {
-                    position: 'top',
-                    align: 'end',
-                    labels: {
-                        color: '#a1a1b5',
-                        usePointStyle: true,
-                        pointStyle: 'circle',
-                        padding: 20,
-                        font: { size: 12, family: 'Inter' }
-                    }
-                },
-                tooltip: {
-                    backgroundColor: '#1a1a24',
-                    titleColor: '#ffffff',
-                    bodyColor: '#a1a1b5',
-                    borderColor: '#2a2a3a',
-                    borderWidth: 1,
-                    padding: 12,
-                    cornerRadius: 8,
-                    titleFont: { size: 13, family: 'Inter' },
-                    bodyFont: { size: 12, family: 'Inter' }
-                }
+                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } }
             },
             scales: {
-                x: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
-                },
-                y: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: {
-                        color: '#6b6b7f',
-                        font: { size: 11, family: 'Inter' },
-                        callback: value => formatCompact(value)
-                    }
-                }
+                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
+                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, callback: v => formatCompact(v) } }
             }
         }
     });
@@ -402,8 +226,6 @@ function setupSocketListeners() {
     socket.on('connect', () => {
         console.log('Connected');
         updateConnectionStatus(true);
-        // Sync force fetch state with server on connect
-        socket.emit('set_force_fetch', { enabled: forceAutoFetch });
     });
 
     socket.on('disconnect', () => {
@@ -413,12 +235,12 @@ function setupSocketListeners() {
 
     socket.on('oi_update', data => {
         console.log('OI update received');
-
-        // Filter data based on current toggle state before displaying
-        const filteredData = filterDataByToggles(data);
-
-        updateDashboard(filteredData);
-        addChartDataPoint(filteredData);
+        // Single source of truth - update everything from server data
+        updateDashboard(data);
+        // Replace chart with full history from server
+        if (data.chart_history) {
+            updateChartFromServer(data.chart_history);
+        }
     });
 }
 
@@ -431,24 +253,17 @@ function fetchMarketStatus() {
 }
 
 function fetchLatestData() {
-    const params = new URLSearchParams({
-        include_atm: includeATM,
-        include_itm: includeITM
-    });
-    fetch(`/api/latest?${params}`)
+    fetch('/api/latest')
         .then(r => r.ok ? r.json() : Promise.reject('No data'))
         .then(data => {
             console.log('Latest data:', data);
             updateDashboard(data);
+            // Server sends chart_history with latest data
+            if (data.chart_history) {
+                updateChartFromServer(data.chart_history);
+            }
         })
         .catch(e => console.log('Waiting for data:', e));
-}
-
-function fetchHistory() {
-    fetch('/api/history')
-        .then(r => r.json())
-        .then(updateChartHistory)
-        .catch(e => console.error('History error:', e));
 }
 
 // Update functions
@@ -495,11 +310,10 @@ function updateDashboard(data) {
     updateScore('combined-score', data.combined_score);
     updateScoreGauge(data.combined_score);
 
-    // Update weight displays and individual scores
+    // Update weight displays and individual scores for new zone structure
     if (data.weights) {
-        setText('otm-weight', Math.round(data.weights.otm * 100) + '%');
-        setText('atm-weight', Math.round(data.weights.atm * 100) + '%');
-        setText('itm-weight', Math.round(data.weights.itm * 100) + '%');
+        setText('below-spot-weight', Math.round((data.weights.below_spot || 0.5) * 100) + '%');
+        setText('above-spot-weight', Math.round((data.weights.above_spot || 0.5) * 100) + '%');
         setText('momentum-weight', Math.round(data.weights.momentum * 100) + '%');
 
         // Show/hide momentum breakdown based on weight
@@ -509,10 +323,9 @@ function updateDashboard(data) {
         }
     }
 
-    // Update zone scores (simplified - just zone scores without 70/30 breakdown)
-    updateScore('otm-score-display', data.otm_score, true);
-    updateScore('atm-score-display', data.atm_score, true);
-    updateScore('itm-score-display', data.itm_score, true);
+    // Update zone scores
+    updateScore('below-spot-score-display', data.below_spot_score, true);
+    updateScore('above-spot-score-display', data.above_spot_score, true);
     updateScore('momentum-score-display', data.momentum_score, true);
 
     // Update confirmation indicator
@@ -572,19 +385,28 @@ function updateDashboard(data) {
                                      avgConviction < 0.8 ? '#f87171' : '#a1a1b5';
     }
 
-    // Update OI comparison
-    const maxOI = Math.max(data.total_call_oi || 0, data.total_put_oi || 0);
+    // Update Zone Force comparison
+    const belowSpot = data.below_spot || {};
+    const aboveSpot = data.above_spot || {};
 
-    setText('call-oi-total', formatNumber(data.total_call_oi));
-    setText('put-oi-total', formatNumber(data.total_put_oi));
+    // Calculate max for bar widths
+    const maxForce = Math.max(
+        Math.abs(belowSpot.net_force || 0),
+        Math.abs(aboveSpot.net_force || 0),
+        1
+    );
 
-    setWidth('call-oi-bar', maxOI > 0 ? (data.total_call_oi / maxOI * 100) : 0);
-    setWidth('put-oi-bar', maxOI > 0 ? (data.total_put_oi / maxOI * 100) : 0);
+    // Below Spot (Support)
+    setText('below-spot-net', formatNumber(belowSpot.net_force));
+    setWidth('below-spot-bar', Math.abs(belowSpot.net_force || 0) / maxForce * 100);
+    updateChange('below-spot-change', belowSpot.score, false);
 
-    updateChange('call-oi-change', data.call_oi_change, true);
-    updateChange('put-oi-change', data.put_oi_change, false);
+    // Above Spot (Resistance)
+    setText('above-spot-net', formatNumber(aboveSpot.net_force));
+    setWidth('above-spot-bar', Math.abs(aboveSpot.net_force || 0) / maxForce * 100);
+    updateChange('above-spot-change', aboveSpot.score, true);
 
-    // Net OI change
+    // Net Force
     const netElem = document.getElementById('net-oi-change');
     if (netElem) {
         netElem.textContent = formatSigned(data.net_oi_change);
@@ -592,53 +414,19 @@ function updateDashboard(data) {
         netElem.classList.add(data.net_oi_change >= 0 ? 'positive' : 'negative');
     }
 
-    // Update tables
-    updateTable('calls-tbody', data.otm_calls);
-    updateTable('puts-tbody', data.otm_puts);
+    // Update Zone tables with new strike-level data
+    updateZoneTable('below-spot-tbody', belowSpot.strikes || []);
+    updateZoneTable('above-spot-tbody', aboveSpot.strikes || []);
 
-    setText('calls-total-oi', formatNumber(data.total_call_oi));
-    setText('calls-total-change', formatSigned(data.call_oi_change));
-    setText('calls-total-volume', formatNumber(data.total_call_volume || 0));
-    setText('calls-avg-conviction', data.avg_call_conviction ? data.avg_call_conviction.toFixed(2) + 'x' : '--');
+    // Update totals for Below Spot
+    setText('below-spot-total-bullish', formatNumber(belowSpot.total_bullish_force));
+    setText('below-spot-total-bearish', formatNumber(belowSpot.total_bearish_force));
+    setText('below-spot-total-net', formatSigned(belowSpot.net_force));
 
-    setText('puts-total-oi', formatNumber(data.total_put_oi));
-    setText('puts-total-change', formatSigned(data.put_oi_change));
-    setText('puts-total-volume', formatNumber(data.total_put_volume || 0));
-    setText('puts-avg-conviction', data.avg_put_conviction ? data.avg_put_conviction.toFixed(2) + 'x' : '--');
-
-    // Update ATM section
-    if (data.atm_data) {
-        setText('atm-strike-value', formatNumber(data.atm_data.strike));
-        setText('atm-call-oi', formatNumber(data.atm_data.call_oi));
-        setText('atm-put-oi', formatNumber(data.atm_data.put_oi));
-        updateATMChange('atm-call-change', data.atm_data.call_oi_change);
-        updateATMChange('atm-put-change', data.atm_data.put_oi_change);
-    }
-
-    // Update ITM tables
-    if (data.itm_calls) {
-        updateTable('itm-calls-tbody', data.itm_calls);
-        setText('itm-calls-total-oi', formatNumber(data.total_itm_call_oi));
-        setText('itm-calls-total-change', formatSigned(data.itm_call_oi_change));
-        // Calculate ITM calls volume and conviction
-        const itmCallsVolume = data.itm_calls.reduce((sum, s) => sum + (s.volume || 0), 0);
-        const itmCallsAvgConviction = data.itm_calls.length > 0 ?
-            data.itm_calls.reduce((sum, s) => sum + (s.conviction || 0), 0) / data.itm_calls.length : 0;
-        setText('itm-calls-total-volume', formatNumber(itmCallsVolume));
-        setText('itm-calls-avg-conviction', itmCallsAvgConviction > 0 ? itmCallsAvgConviction.toFixed(2) + 'x' : '--');
-    }
-
-    if (data.itm_puts) {
-        updateTable('itm-puts-tbody', data.itm_puts);
-        setText('itm-puts-total-oi', formatNumber(data.total_itm_put_oi));
-        setText('itm-puts-total-change', formatSigned(data.itm_put_oi_change));
-        // Calculate ITM puts volume and conviction
-        const itmPutsVolume = data.itm_puts.reduce((sum, s) => sum + (s.volume || 0), 0);
-        const itmPutsAvgConviction = data.itm_puts.length > 0 ?
-            data.itm_puts.reduce((sum, s) => sum + (s.conviction || 0), 0) / data.itm_puts.length : 0;
-        setText('itm-puts-total-volume', formatNumber(itmPutsVolume));
-        setText('itm-puts-avg-conviction', itmPutsAvgConviction > 0 ? itmPutsAvgConviction.toFixed(2) + 'x' : '--');
-    }
+    // Update totals for Above Spot
+    setText('above-spot-total-bullish', formatNumber(aboveSpot.total_bullish_force));
+    setText('above-spot-total-bearish', formatNumber(aboveSpot.total_bearish_force));
+    setText('above-spot-total-net', formatSigned(aboveSpot.net_force));
 
     // Update new metrics: Max Pain, IV Skew
     setText('max-pain', data.max_pain ? formatNumber(data.max_pain) : '--');
@@ -661,6 +449,138 @@ function updateDashboard(data) {
 
     // Update Self-Learning Status
     updateLearningStatus(data.self_learning);
+
+    // Update OTM/ITM tables
+    updateOTMITMTables(data);
+
+    // Update Strength Analysis
+    updateStrengthAnalysis(data.strength_analysis);
+
+    // Update zone charts
+    updateZoneCharts(data);
+}
+
+function updateOTMITMTables(data) {
+    // OTM Puts table (below spot - support)
+    const otmPutsTbody = document.getElementById('otm-puts-tbody');
+    if (otmPutsTbody && data.otm_puts?.strikes) {
+        otmPutsTbody.innerHTML = data.otm_puts.strikes.map(s => `
+            <tr>
+                <td>${formatNumber(s.strike)}</td>
+                <td>${formatNumber(s.put_oi)}</td>
+                <td class="positive-change">${formatSigned(s.put_oi_change)}</td>
+                <td class="positive-change">${formatNumber(s.put_force)}</td>
+            </tr>
+        `).join('');
+    }
+
+    // OTM Puts totals
+    if (data.otm_puts) {
+        setText('otm-puts-total-oi', formatNumber(data.otm_puts.total_oi));
+        setText('otm-puts-total-change', formatSigned(data.otm_puts.total_oi_change));
+        setText('otm-puts-total-force', formatNumber(data.otm_puts.total_force));
+    }
+
+    // ITM Calls table (below spot - trapped longs)
+    const itmCallsTbody = document.getElementById('itm-calls-tbody');
+    if (itmCallsTbody && data.itm_calls?.strikes) {
+        itmCallsTbody.innerHTML = data.itm_calls.strikes.map(s => `
+            <tr>
+                <td>${formatNumber(s.strike)}</td>
+                <td>${formatNumber(s.call_oi)}</td>
+                <td class="negative-change">${formatSigned(s.call_oi_change)}</td>
+                <td class="negative-change">${formatNumber(s.call_force)}</td>
+            </tr>
+        `).join('');
+    }
+
+    // ITM Calls totals
+    if (data.itm_calls) {
+        setText('itm-calls-total-oi', formatNumber(data.itm_calls.total_oi));
+        setText('itm-calls-total-change', formatSigned(data.itm_calls.total_oi_change));
+        setText('itm-calls-total-force', formatNumber(data.itm_calls.total_force));
+    }
+
+    // OTM Calls table (above spot - resistance)
+    const otmCallsTbody = document.getElementById('otm-calls-tbody');
+    if (otmCallsTbody && data.otm_calls?.strikes) {
+        otmCallsTbody.innerHTML = data.otm_calls.strikes.map(s => `
+            <tr>
+                <td>${formatNumber(s.strike)}</td>
+                <td>${formatNumber(s.call_oi)}</td>
+                <td class="negative-change">${formatSigned(s.call_oi_change)}</td>
+                <td class="negative-change">${formatNumber(s.call_force)}</td>
+            </tr>
+        `).join('');
+    }
+
+    // OTM Calls totals
+    if (data.otm_calls) {
+        setText('otm-calls-total-oi', formatNumber(data.otm_calls.total_oi));
+        setText('otm-calls-total-change', formatSigned(data.otm_calls.total_oi_change));
+        setText('otm-calls-total-force', formatNumber(data.otm_calls.total_force));
+    }
+
+    // ITM Puts table (above spot - trapped shorts)
+    const itmPutsTbody = document.getElementById('itm-puts-tbody');
+    if (itmPutsTbody && data.itm_puts?.strikes) {
+        itmPutsTbody.innerHTML = data.itm_puts.strikes.map(s => `
+            <tr>
+                <td>${formatNumber(s.strike)}</td>
+                <td>${formatNumber(s.put_oi)}</td>
+                <td class="positive-change">${formatSigned(s.put_oi_change)}</td>
+                <td class="positive-change">${formatNumber(s.put_force)}</td>
+            </tr>
+        `).join('');
+    }
+
+    // ITM Puts totals
+    if (data.itm_puts) {
+        setText('itm-puts-total-oi', formatNumber(data.itm_puts.total_oi));
+        setText('itm-puts-total-change', formatSigned(data.itm_puts.total_oi_change));
+        setText('itm-puts-total-force', formatNumber(data.itm_puts.total_force));
+    }
+}
+
+function updateStrengthAnalysis(strength) {
+    if (!strength) return;
+
+    // Put Strength (Support)
+    setText('put-strength-ratio', strength.put_strength?.ratio?.toFixed(2) || '--');
+    const putScoreElem = document.getElementById('put-strength-score');
+    if (putScoreElem) {
+        const score = strength.put_strength?.score || 0;
+        putScoreElem.textContent = (score >= 0 ? '+' : '') + score.toFixed(1);
+        putScoreElem.classList.remove('positive', 'negative');
+        putScoreElem.classList.add(score >= 0 ? 'positive' : 'negative');
+    }
+
+    // Call Strength (Resistance)
+    setText('call-strength-ratio', strength.call_strength?.ratio?.toFixed(2) || '--');
+    const callScoreElem = document.getElementById('call-strength-score');
+    if (callScoreElem) {
+        const score = strength.call_strength?.score || 0;
+        callScoreElem.textContent = (score >= 0 ? '+' : '') + score.toFixed(1);
+        callScoreElem.classList.remove('positive', 'negative');
+        callScoreElem.classList.add(score >= 0 ? 'positive' : 'negative');
+    }
+
+    // Direction indicator
+    const dirElem = document.getElementById('strength-direction');
+    if (dirElem) {
+        dirElem.textContent = strength.direction || '--';
+        dirElem.classList.remove('bullish', 'bearish', 'neutral');
+        dirElem.classList.add(strength.direction?.toLowerCase() || 'neutral');
+    }
+
+    // Net Strength
+    const netElem = document.getElementById('net-strength');
+    if (netElem) {
+        const net = strength.net_strength || 0;
+        netElem.textContent = (net >= 0 ? '+' : '') + net.toFixed(1);
+        netElem.classList.remove('positive', 'negative');
+        netElem.classList.add(net >= 0 ? 'positive' : 'negative');
+    }
 }
 
 function updateTradeSetup(data) {
@@ -825,127 +745,96 @@ function updateChange(id, value, isNegativeGood) {
     elem.classList.add(value >= 0 ? (isNegativeGood ? 'negative' : 'positive') : (isNegativeGood ? 'positive' : 'negative'));
 }
 
-function updateATMChange(id, value) {
-    const elem = document.getElementById(id);
-    if (!elem) return;
 
-    elem.textContent = formatSigned(value);
-    elem.classList.remove('positive', 'negative');
-    elem.classList.add(value >= 0 ? 'positive' : 'negative');
-}
-
-function updateTable(tbodyId, strikes) {
+function updateZoneTable(tbodyId, strikes) {
     const tbody = document.getElementById(tbodyId);
     if (!tbody) return;
 
     if (!strikes?.length) {
-        tbody.innerHTML = '<tr><td colspan="5" class="loading-cell">No data</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" class="loading-cell">No data</td></tr>';
         return;
     }
 
     tbody.innerHTML = strikes.map(s => {
-        const volume = s.volume !== undefined ? formatNumber(s.volume) : '--';
-        const conviction = s.conviction !== undefined ? s.conviction.toFixed(2) + 'x' : '--';
-        const convictionColor = s.conviction > 1.2 ? 'high-conviction' :
-                               s.conviction < 0.8 ? 'low-conviction' : '';
+        const netClass = s.net_force >= 0 ? 'positive-change' : 'negative-change';
 
         return `
             <tr>
                 <td>${formatNumber(s.strike)}</td>
-                <td>${formatNumber(s.oi)}</td>
-                <td class="${s.oi_change >= 0 ? 'positive-change' : 'negative-change'}">${formatSigned(s.oi_change)}</td>
-                <td>${volume}</td>
-                <td class="${convictionColor}">${conviction}</td>
+                <td class="positive-change">${formatNumber(s.bullish_force)}</td>
+                <td class="negative-change">${formatNumber(s.bearish_force)}</td>
+                <td class="${netClass}">${formatSigned(s.net_force)}</td>
             </tr>
         `;
     }).join('');
 }
 
-// Chart functions
-function updateChartHistory(history) {
-    if (!history?.length) return;
+// Chart functions - Server is the single source of truth
+
+/**
+ * Update main OI chart with full history from server.
+ * No client-side accumulation or deduplication needed.
+ */
+function updateChartFromServer(history) {
+    if (!history?.length || !oiChart) return;
 
     const limited = history.slice(-30);
 
-    // Update OTM chart (existing)
+    // Replace all chart data with server data
     oiChart.data.labels = limited.map(item =>
         new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     );
     oiChart.data.datasets[0].data = limited.map(item => item.call_oi_change);
     oiChart.data.datasets[1].data = limited.map(item => item.put_oi_change);
-
-    // Update ATM chart
-    if (atmChart) {
-        atmChart.data.labels = oiChart.data.labels;
-        atmChart.data.datasets[0].data = limited.map(item => item.atm_call_oi_change || 0);
-        atmChart.data.datasets[1].data = limited.map(item => item.atm_put_oi_change || 0);
-        atmChart.update('none');
-    }
-
-    // Update ITM chart
-    if (itmChart) {
-        itmChart.data.labels = oiChart.data.labels;
-        itmChart.data.datasets[0].data = limited.map(item => item.itm_call_oi_change || 0);
-        itmChart.data.datasets[1].data = limited.map(item => item.itm_put_oi_change || 0);
-        itmChart.update('none');
-    }
-
-    if (limited.length > 0) {
-        lastChartTimestamp = limited[limited.length - 1].timestamp;
-    }
-
     oiChart.update('none');
 }
 
-function addChartDataPoint(data) {
-    if (!data.timestamp || data.timestamp === lastChartTimestamp) return;
+/**
+ * Update OTM/ITM charts with zone force data.
+ * Called from updateDashboard with current analysis data.
+ */
+function updateZoneCharts(data) {
+    // For now, OTM/ITM charts need history - we'll accumulate from server updates
+    // This is a simplified approach until we have zone-specific history from server
+    if (!otmChart || !itmChart) return;
 
-    const label = new Date(data.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
+    const timestamp = data.timestamp ?
+        new Date(data.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '';
 
-    if (oiChart.data.labels.includes(label)) return;
+    if (!timestamp) return;
 
-    lastChartTimestamp = data.timestamp;
+    // Add to OTM chart (OTM Puts vs OTM Calls)
+    const otmPutForce = data.otm_puts?.total_force || 0;
+    const otmCallForce = data.otm_calls?.total_force || 0;
 
-    // Handle rolling window for all charts
-    if (oiChart.data.labels.length >= 30) {
-        oiChart.data.labels.shift();
-        oiChart.data.datasets[0].data.shift();
-        oiChart.data.datasets[1].data.shift();
-
-        if (atmChart) {
-            atmChart.data.labels.shift();
-            atmChart.data.datasets[0].data.shift();
-            atmChart.data.datasets[1].data.shift();
-        }
-
-        if (itmChart) {
-            itmChart.data.labels.shift();
-            itmChart.data.datasets[0].data.shift();
-            itmChart.data.datasets[1].data.shift();
-        }
+    if (otmChart.data.labels.length >= 30) {
+        otmChart.data.labels.shift();
+        otmChart.data.datasets[0].data.shift();
+        otmChart.data.datasets[1].data.shift();
     }
 
-    // Add new data point to OTM chart
-    oiChart.data.labels.push(label);
-    oiChart.data.datasets[0].data.push(data.call_oi_change);
-    oiChart.data.datasets[1].data.push(data.put_oi_change);
-    oiChart.update('none');
-
-    // Add new data point to ATM chart
-    if (atmChart) {
-        atmChart.data.labels.push(label);
-        const atmCallChange = data.atm_data?.call_oi_change || 0;
-        const atmPutChange = data.atm_data?.put_oi_change || 0;
-        atmChart.data.datasets[0].data.push(atmCallChange);
-        atmChart.data.datasets[1].data.push(atmPutChange);
-        atmChart.update('none');
+    // Avoid duplicate timestamps
+    if (!otmChart.data.labels.includes(timestamp)) {
+        otmChart.data.labels.push(timestamp);
+        otmChart.data.datasets[0].data.push(otmPutForce);
+        otmChart.data.datasets[1].data.push(otmCallForce);
+        otmChart.update('none');
     }
 
-    // Add new data point to ITM chart
-    if (itmChart) {
-        itmChart.data.labels.push(label);
-        itmChart.data.datasets[0].data.push(data.itm_call_oi_change || 0);
-        itmChart.data.datasets[1].data.push(data.itm_put_oi_change || 0);
+    // Add to ITM chart (ITM Puts vs ITM Calls)
+    const itmPutForce = data.itm_puts?.total_force || 0;
+    const itmCallForce = data.itm_calls?.total_force || 0;
+
+    if (itmChart.data.labels.length >= 30) {
+        itmChart.data.labels.shift();
+        itmChart.data.datasets[0].data.shift();
+        itmChart.data.datasets[1].data.shift();
+    }
+
+    if (!itmChart.data.labels.includes(timestamp)) {
+        itmChart.data.labels.push(timestamp);
+        itmChart.data.datasets[0].data.push(itmPutForce);
+        itmChart.data.datasets[1].data.push(itmCallForce);
         itmChart.update('none');
     }
 }

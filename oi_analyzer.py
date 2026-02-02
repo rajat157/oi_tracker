@@ -853,44 +853,40 @@ def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) ->
 
 
 def analyze_tug_of_war(strikes_data: dict, spot_price: float,
-                        num_otm_strikes: int = 3,
-                        include_atm: bool = False,
-                        include_itm: bool = False,
+                        num_strikes: int = 3,
                         momentum_score: Optional[float] = None,
                         price_history: Optional[List[dict]] = None,
                         vix: float = 0.0,
                         futures_oi_change: float = 0.0,
                         prev_oi_changes: Optional[List[tuple]] = None,
-                        prev_strikes_data: Optional[dict] = None) -> dict:
+                        prev_strikes_data: Optional[dict] = None,
+                        total_oi_weight: float = 0.15) -> dict:
     """
-    Perform tug-of-war analysis on option chain data.
+    Perform enhanced tug-of-war analysis with OTM/ITM zone separation.
 
-    Analysis Logic:
-    - High Call OI addition = Bears writing calls = Bearish pressure
-    - High Put OI addition = Bulls writing puts = Bullish pressure
-    - Price momentum confirms/contradicts OI signals
-    - VIX affects signal reliability
-    - Futures OI provides cross-validation
-    - OI acceleration detects accumulation/unwinding phases
-    - Premium momentum tracks buyer pressure
+    Enhanced Analysis Logic:
+    - 4 Zones: OTM Puts (below), ITM Calls (below), OTM Calls (above), ITM Puts (above)
+    - Force = (0.85 × OI Change) + (0.15 × Total OI / scale_factor)
+    - Put Strength = OTM Put Force / (ITM Call Force + OTM Call Force)
+    - Call Strength = OTM Call Force / (ITM Put Force + OTM Put Force)
+    - Market Direction based on relative strength comparison
 
     Args:
         strikes_data: Dict of strike -> {ce_oi, ce_oi_change, pe_oi, pe_oi_change}
         spot_price: Current underlying spot price
-        num_otm_strikes: Number of OTM strikes to analyze on each side
-        include_atm: Include ATM strike in analysis
-        include_itm: Include ITM strikes in analysis
+        num_strikes: Number of strikes to analyze on each side
         momentum_score: Pre-calculated momentum score (-100 to +100)
         price_history: List of recent price data for momentum calculation
         vix: India VIX value for volatility context
         futures_oi_change: NIFTY futures OI change for cross-validation
         prev_oi_changes: List of (call_oi_change, put_oi_change) tuples for acceleration
         prev_strikes_data: Previous snapshot's strikes data for premium momentum
+        total_oi_weight: Weight for total OI in force calculation (default 0.15)
 
     Returns:
-        dict with analysis results including verdict
+        dict with analysis results including verdict and zone-separated data
     """
-    all_strikes = list(strikes_data.keys())
+    all_strikes = sorted(strikes_data.keys())
 
     if not all_strikes:
         return {
@@ -900,169 +896,288 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
     # Find ATM strike
     atm_strike = find_atm_strike(spot_price, all_strikes)
+    try:
+        atm_idx = all_strikes.index(atm_strike)
+    except ValueError:
+        atm_idx = min(range(len(all_strikes)),
+                     key=lambda i: abs(all_strikes[i] - atm_strike))
 
-    # Get OTM strikes
-    otm_call_strikes, otm_put_strikes = get_otm_strikes(
-        atm_strike, all_strikes, num_otm_strikes
-    )
+    # Get strikes below and above spot
+    below_spot_strikes = all_strikes[max(0, atm_idx - num_strikes):atm_idx]
+    above_spot_strikes = all_strikes[atm_idx + 1:atm_idx + 1 + num_strikes]
 
-    # Calculate totals for OTM Calls (bearish indicator)
-    otm_calls_data = []
-    total_call_oi = 0
-    total_call_oi_change = 0
-    total_call_volume = 0
-
-    for strike in otm_call_strikes:
+    # Calculate scale factor for Total OI (normalize to OI change magnitude)
+    # Use average OI change as baseline to scale Total OI contribution
+    all_oi_changes = []
+    all_total_oi = []
+    for strike in below_spot_strikes + above_spot_strikes:
         data = strikes_data.get(strike, {})
-        ce_oi = data.get("ce_oi", 0)
-        ce_oi_change = data.get("ce_oi_change", 0)
-        ce_volume = data.get("ce_volume", 0)
+        all_oi_changes.extend([abs(data.get("pe_oi_change", 0)), abs(data.get("ce_oi_change", 0))])
+        all_total_oi.extend([data.get("pe_oi", 0), data.get("ce_oi", 0)])
 
-        # Calculate conviction multiplier
-        conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
-        weighted_change = ce_oi_change * conviction
+    avg_oi_change = sum(all_oi_changes) / len(all_oi_changes) if all_oi_changes else 1
+    avg_total_oi = sum(all_total_oi) / len(all_total_oi) if all_total_oi else 1
+    scale_factor = avg_total_oi / avg_oi_change if avg_oi_change > 0 else 1
 
-        total_call_oi += ce_oi
-        total_call_oi_change += weighted_change
-        total_call_volume += ce_volume
+    oi_change_weight = 1.0 - total_oi_weight
 
-        otm_calls_data.append({
-            "strike": strike,
-            "oi": ce_oi,
-            "oi_change": ce_oi_change,
-            "volume": ce_volume,
-            "conviction": conviction
-        })
+    # Helper function to calculate force with Total OI weighting
+    def calculate_force(oi_change: float, total_oi: float, conviction: float) -> float:
+        """Calculate force = conviction × ((1-w) × OI Change + w × Total OI / scale)"""
+        weighted_change = oi_change * oi_change_weight
+        weighted_total = (total_oi / scale_factor) * total_oi_weight if scale_factor > 0 else 0
+        return conviction * (weighted_change + weighted_total)
 
-    # Calculate totals for OTM Puts (bullish indicator)
+    # ========================================
+    # OTM PUTS - Below Spot (Support Zone)
+    # Put writers selling puts = bullish support
+    # ========================================
     otm_puts_data = []
-    total_put_oi = 0
-    total_put_oi_change = 0
-    total_put_volume = 0
+    otm_puts_total_oi = 0
+    otm_puts_total_oi_change = 0
+    otm_puts_total_force = 0
 
-    for strike in otm_put_strikes:
+    for strike in below_spot_strikes:
         data = strikes_data.get(strike, {})
         pe_oi = data.get("pe_oi", 0)
         pe_oi_change = data.get("pe_oi_change", 0)
         pe_volume = data.get("pe_volume", 0)
 
-        # Calculate conviction multiplier
-        conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
-        weighted_change = pe_oi_change * conviction
+        put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
+        put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
 
-        total_put_oi += pe_oi
-        total_put_oi_change += weighted_change
-        total_put_volume += pe_volume
+        otm_puts_total_oi += pe_oi
+        otm_puts_total_oi_change += pe_oi_change
+        otm_puts_total_force += put_force
 
         otm_puts_data.append({
             "strike": strike,
-            "oi": pe_oi,
-            "oi_change": pe_oi_change,
-            "volume": pe_volume,
-            "conviction": conviction
+            "put_oi": pe_oi,
+            "put_oi_change": pe_oi_change,
+            "put_force": round(put_force, 0),
+            "conviction": put_conviction
         })
 
-    # ATM Analysis (if enabled)
-    atm_data = None
-    atm_call_oi = 0
-    atm_put_oi = 0
-    atm_call_oi_change = 0
-    atm_put_oi_change = 0
-    atm_call_volume = 0
-    atm_put_volume = 0
-    atm_call_conviction = 1.0
-    atm_put_conviction = 1.0
-
-    if include_atm:
-        atm_strike_data = strikes_data.get(atm_strike, {})
-        atm_call_oi = atm_strike_data.get("ce_oi", 0)
-        atm_put_oi = atm_strike_data.get("pe_oi", 0)
-        atm_call_oi_change = atm_strike_data.get("ce_oi_change", 0)
-        atm_put_oi_change = atm_strike_data.get("pe_oi_change", 0)
-        atm_call_volume = atm_strike_data.get("ce_volume", 0)
-        atm_put_volume = atm_strike_data.get("pe_volume", 0)
-
-        # Calculate conviction for ATM strikes
-        atm_call_conviction = calculate_conviction_multiplier(atm_call_volume, atm_call_oi_change)
-        atm_put_conviction = calculate_conviction_multiplier(atm_put_volume, atm_put_oi_change)
-
-        atm_data = {
-            "strike": atm_strike,
-            "call_oi": atm_call_oi,
-            "put_oi": atm_put_oi,
-            "call_oi_change": atm_call_oi_change,
-            "put_oi_change": atm_put_oi_change,
-            "call_volume": atm_call_volume,
-            "put_volume": atm_put_volume,
-            "call_conviction": atm_call_conviction,
-            "put_conviction": atm_put_conviction
-        }
-
-    # ITM Analysis (if enabled)
+    # ========================================
+    # ITM CALLS - Below Spot (Same strikes as OTM Puts)
+    # Trapped longs (calls in the money)
+    # ========================================
     itm_calls_data = []
+    itm_calls_total_oi = 0
+    itm_calls_total_oi_change = 0
+    itm_calls_total_force = 0
+
+    for strike in below_spot_strikes:
+        data = strikes_data.get(strike, {})
+        ce_oi = data.get("ce_oi", 0)
+        ce_oi_change = data.get("ce_oi_change", 0)
+        ce_volume = data.get("ce_volume", 0)
+
+        call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
+        call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+
+        itm_calls_total_oi += ce_oi
+        itm_calls_total_oi_change += ce_oi_change
+        itm_calls_total_force += call_force
+
+        itm_calls_data.append({
+            "strike": strike,
+            "call_oi": ce_oi,
+            "call_oi_change": ce_oi_change,
+            "call_force": round(call_force, 0),
+            "conviction": call_conviction
+        })
+
+    # ========================================
+    # OTM CALLS - Above Spot (Resistance Zone)
+    # Call writers selling calls = bearish resistance
+    # ========================================
+    otm_calls_data = []
+    otm_calls_total_oi = 0
+    otm_calls_total_oi_change = 0
+    otm_calls_total_force = 0
+
+    for strike in above_spot_strikes:
+        data = strikes_data.get(strike, {})
+        ce_oi = data.get("ce_oi", 0)
+        ce_oi_change = data.get("ce_oi_change", 0)
+        ce_volume = data.get("ce_volume", 0)
+
+        call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
+        call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+
+        otm_calls_total_oi += ce_oi
+        otm_calls_total_oi_change += ce_oi_change
+        otm_calls_total_force += call_force
+
+        otm_calls_data.append({
+            "strike": strike,
+            "call_oi": ce_oi,
+            "call_oi_change": ce_oi_change,
+            "call_force": round(call_force, 0),
+            "conviction": call_conviction
+        })
+
+    # ========================================
+    # ITM PUTS - Above Spot (Same strikes as OTM Calls)
+    # Trapped shorts (puts in the money)
+    # ========================================
     itm_puts_data = []
-    total_itm_call_oi = 0
-    total_itm_put_oi = 0
-    total_itm_call_oi_change = 0
-    total_itm_put_oi_change = 0
-    total_itm_call_volume = 0
-    total_itm_put_volume = 0
+    itm_puts_total_oi = 0
+    itm_puts_total_oi_change = 0
+    itm_puts_total_force = 0
 
-    if include_itm:
-        itm_call_strikes, itm_put_strikes = get_itm_strikes(
-            atm_strike, all_strikes, num_otm_strikes
-        )
+    for strike in above_spot_strikes:
+        data = strikes_data.get(strike, {})
+        pe_oi = data.get("pe_oi", 0)
+        pe_oi_change = data.get("pe_oi_change", 0)
+        pe_volume = data.get("pe_volume", 0)
 
-        for strike in itm_call_strikes:
-            data = strikes_data.get(strike, {})
-            ce_oi = data.get("ce_oi", 0)
-            ce_oi_change = data.get("ce_oi_change", 0)
-            ce_volume = data.get("ce_volume", 0)
+        put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
+        put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
 
-            # Calculate conviction multiplier
-            conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
-            weighted_change = ce_oi_change * conviction
+        itm_puts_total_oi += pe_oi
+        itm_puts_total_oi_change += pe_oi_change
+        itm_puts_total_force += put_force
 
-            total_itm_call_oi += ce_oi
-            total_itm_call_oi_change += weighted_change
-            total_itm_call_volume += ce_volume
+        itm_puts_data.append({
+            "strike": strike,
+            "put_oi": pe_oi,
+            "put_oi_change": pe_oi_change,
+            "put_force": round(put_force, 0),
+            "conviction": put_conviction
+        })
 
-            itm_calls_data.append({
-                "strike": strike,
-                "oi": ce_oi,
-                "oi_change": ce_oi_change,
-                "volume": ce_volume,
-                "conviction": conviction
-            })
+    # ========================================
+    # STRENGTH CALCULATIONS
+    # Put Strength = OTM Put Force / (ITM Call Force + OTM Call Force)
+    # Call Strength = OTM Call Force / (ITM Put Force + OTM Put Force)
+    # ========================================
 
-        for strike in itm_put_strikes:
-            data = strikes_data.get(strike, {})
-            pe_oi = data.get("pe_oi", 0)
-            pe_oi_change = data.get("pe_oi_change", 0)
-            pe_volume = data.get("pe_volume", 0)
+    # Put Strength (Support Power)
+    put_numerator = abs(otm_puts_total_force)
+    put_denominator = abs(itm_calls_total_force) + abs(otm_calls_total_force)
+    put_ratio = put_numerator / put_denominator if put_denominator > 0 else 1.0
+    # Normalize to -100 to +100 score (ratio > 1 = positive, < 1 = negative)
+    put_strength_score = (put_ratio - 1) * 50  # 2:1 ratio = +50, 0.5:1 = -25
+    put_strength_score = max(-100, min(100, put_strength_score))
 
-            # Calculate conviction multiplier
-            conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
-            weighted_change = pe_oi_change * conviction
+    # Call Strength (Resistance Power)
+    call_numerator = abs(otm_calls_total_force)
+    call_denominator = abs(itm_puts_total_force) + abs(otm_puts_total_force)
+    call_ratio = call_numerator / call_denominator if call_denominator > 0 else 1.0
+    call_strength_score = (call_ratio - 1) * 50
+    call_strength_score = max(-100, min(100, call_strength_score))
 
-            total_itm_put_oi += pe_oi
-            total_itm_put_oi_change += weighted_change
-            total_itm_put_volume += pe_volume
+    # Net Strength: positive = bullish (put strength > call strength)
+    net_strength = put_strength_score - call_strength_score
 
-            itm_puts_data.append({
-                "strike": strike,
-                "oi": pe_oi,
-                "oi_change": pe_oi_change,
-                "volume": pe_volume,
-                "conviction": conviction
-            })
+    # Determine direction from strength comparison
+    if net_strength > 15:
+        strength_direction = "BULLISH"
+    elif net_strength < -15:
+        strength_direction = "BEARISH"
+    else:
+        strength_direction = "NEUTRAL"
 
-    # Determine verdict based on OI changes AND Total OI
-    # Positive call OI change = more bearish pressure (resistance above)
-    # Positive put OI change = more bullish pressure (support below)
+    # ========================================
+    # BELOW/ABOVE SPOT ZONE DATA (for backward compatibility)
+    # ========================================
+    below_spot_data = []
+    total_below_bullish = 0
+    total_below_bearish = 0
+    total_below_put_oi = 0
+    total_below_call_oi = 0
+    total_below_volume = 0
 
-    net_oi_change = total_put_oi_change - total_call_oi_change
-    net_total_oi = total_put_oi - total_call_oi
+    for strike in below_spot_strikes:
+        data = strikes_data.get(strike, {})
+        pe_oi = data.get("pe_oi", 0)
+        pe_oi_change = data.get("pe_oi_change", 0)
+        ce_oi = data.get("ce_oi", 0)
+        ce_oi_change = data.get("ce_oi_change", 0)
+        pe_volume = data.get("pe_volume", 0)
+        ce_volume = data.get("ce_volume", 0)
+
+        put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
+        call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
+
+        weighted_put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
+        weighted_call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+        net_force = weighted_put_force - weighted_call_force
+
+        total_below_bullish += weighted_put_force
+        total_below_bearish += weighted_call_force
+        total_below_put_oi += pe_oi
+        total_below_call_oi += ce_oi
+        total_below_volume += pe_volume + ce_volume
+
+        below_spot_data.append({
+            "strike": strike,
+            "put_oi": pe_oi,
+            "put_oi_change": pe_oi_change,
+            "call_oi": ce_oi,
+            "call_oi_change": ce_oi_change,
+            "bullish_force": round(weighted_put_force, 0),
+            "bearish_force": round(weighted_call_force, 0),
+            "net_force": round(net_force, 0),
+            "put_conviction": put_conviction,
+            "call_conviction": call_conviction
+        })
+
+    below_net_change = total_below_bullish - total_below_bearish
+    max_below = max(abs(total_below_bullish), abs(total_below_bearish), 1)
+    below_spot_score = (below_net_change / max_below) * 100
+
+    above_spot_data = []
+    total_above_bullish = 0
+    total_above_bearish = 0
+    total_above_put_oi = 0
+    total_above_call_oi = 0
+    total_above_volume = 0
+
+    for strike in above_spot_strikes:
+        data = strikes_data.get(strike, {})
+        pe_oi = data.get("pe_oi", 0)
+        pe_oi_change = data.get("pe_oi_change", 0)
+        ce_oi = data.get("ce_oi", 0)
+        ce_oi_change = data.get("ce_oi_change", 0)
+        pe_volume = data.get("pe_volume", 0)
+        ce_volume = data.get("ce_volume", 0)
+
+        put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
+        call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
+
+        weighted_put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
+        weighted_call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+        net_force = weighted_put_force - weighted_call_force
+
+        total_above_bullish += weighted_put_force
+        total_above_bearish += weighted_call_force
+        total_above_put_oi += pe_oi
+        total_above_call_oi += ce_oi
+        total_above_volume += pe_volume + ce_volume
+
+        above_spot_data.append({
+            "strike": strike,
+            "put_oi": pe_oi,
+            "put_oi_change": pe_oi_change,
+            "call_oi": ce_oi,
+            "call_oi_change": ce_oi_change,
+            "bullish_force": round(weighted_put_force, 0),
+            "bearish_force": round(weighted_call_force, 0),
+            "net_force": round(net_force, 0),
+            "put_conviction": put_conviction,
+            "call_conviction": call_conviction
+        })
+
+    above_net_change = total_above_bullish - total_above_bearish
+    max_above = max(abs(total_above_bullish), abs(total_above_bearish), 1)
+    above_spot_score = (above_net_change / max_above) * 100
+
+    # ========================================
+    # COMBINED SCORE CALCULATION
+    # ========================================
 
     # Calculate momentum if price_history provided
     if momentum_score is None and price_history:
@@ -1070,118 +1185,96 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     elif momentum_score is None:
         momentum_score = 0.0
 
-    # Pre-calculate OI direction for confirmation check (needed for dynamic weights)
-    # Calculate preliminary net OI change to determine direction
-    preliminary_net_change = total_put_oi_change - total_call_oi_change
-    preliminary_oi_direction = "bullish" if preliminary_net_change > 0 else "bearish" if preliminary_net_change < 0 else "neutral"
-
     # Calculate price direction from history
-    preliminary_price_change = 0.0
+    price_change_pct = 0.0
     if price_history and len(price_history) >= 2:
         current = price_history[-1]['spot_price']
         past = price_history[0]['spot_price']
         if past > 0:
-            preliminary_price_change = ((current - past) / past) * 100
-    preliminary_price_direction = "rising" if preliminary_price_change > 0.05 else "falling" if preliminary_price_change < -0.05 else "flat"
+            price_change_pct = ((current - past) / past) * 100
 
-    # Detect if OI and price are diverging (for dynamic momentum weight)
+    # Preliminary combined score - blend zone average with net strength
+    zone_average = (below_spot_score + above_spot_score) / 2
+    # Weight the net_strength into the combined score (30% weight)
+    zone_average = (zone_average * 0.7) + (net_strength * 0.3)
+
+    # Detect if OI and price are diverging
+    preliminary_oi_direction = "bullish" if zone_average > 0 else "bearish" if zone_average < 0 else "neutral"
+    price_direction = "rising" if price_change_pct > 0.05 else "falling" if price_change_pct < -0.05 else "flat"
+
     is_diverging = (
-        (preliminary_oi_direction == "bullish" and preliminary_price_direction == "falling") or
-        (preliminary_oi_direction == "bearish" and preliminary_price_direction == "rising")
+        (preliminary_oi_direction == "bullish" and price_direction == "falling") or
+        (preliminary_oi_direction == "bearish" and price_direction == "rising")
     )
 
-    # Determine weights based on enabled options
-    # With momentum enabled, reduce other weights proportionally
-    # DYNAMIC: Increase momentum weight to 45% when OI and price diverge
+    # Dynamic momentum weighting
     if momentum_score != 0.0:
         if is_diverging:
-            # Divergence detected - trust price momentum more
+            # Trust price momentum more when diverging
             momentum_weight = 0.45
-            if include_atm and include_itm:
-                otm_weight, atm_weight, itm_weight = 0.35, 0.12, 0.08
-            elif include_atm:
-                otm_weight, atm_weight, itm_weight = 0.42, 0.13, 0.0
-            elif include_itm:
-                otm_weight, atm_weight, itm_weight = 0.47, 0.0, 0.08
-            else:
-                otm_weight, atm_weight, itm_weight = 0.55, 0.0, 0.0
+            zone_weight = 0.55
         else:
-            # Normal case - momentum gets 20% weight
+            # Normal case
             momentum_weight = 0.20
-            if include_atm and include_itm:
-                otm_weight, atm_weight, itm_weight = 0.50, 0.20, 0.10
-            elif include_atm:
-                otm_weight, atm_weight, itm_weight = 0.60, 0.20, 0.0
-            elif include_itm:
-                otm_weight, atm_weight, itm_weight = 0.70, 0.0, 0.10
-            else:
-                otm_weight, atm_weight, itm_weight = 0.80, 0.0, 0.0
+            zone_weight = 0.80
     else:
-        # No momentum, use original weights
         momentum_weight = 0.0
-        if include_atm and include_itm:
-            otm_weight, atm_weight, itm_weight = 0.60, 0.25, 0.15
-        elif include_atm:
-            otm_weight, atm_weight, itm_weight = 0.70, 0.30, 0.0
-        elif include_itm:
-            otm_weight, atm_weight, itm_weight = 0.85, 0.0, 0.15
-        else:
-            otm_weight, atm_weight, itm_weight = 1.0, 0.0, 0.0
+        zone_weight = 1.0
 
-    # Detect market regime for dynamic OI weighting (Phase 4)
+    # Detect market regime for context
     market_regime = detect_market_regime(price_history or [], momentum_score)
-    oi_change_weight = market_regime["oi_change_weight"]
-    oi_total_weight = market_regime["oi_total_weight"]
 
-    # Calculate OTM score with dynamic OI change/total weighting
-    max_otm_change = max(abs(total_call_oi_change), abs(total_put_oi_change), 1)
-    max_otm_total = max(total_call_oi, total_put_oi, 1)
-    otm_change_score = (net_oi_change / max_otm_change) * 100
-    otm_total_score = (net_total_oi / max_otm_total) * 100
-    otm_score = (oi_change_weight * otm_change_score) + (oi_total_weight * otm_total_score)
+    # Combined score
+    combined_score = (zone_weight * zone_average) + (momentum_weight * momentum_score)
 
-    # Calculate ATM score with dynamic weighting
-    atm_score = 0.0
-    atm_change_score = 0.0
-    atm_total_score = 0.0
-    if include_atm:
-        # Apply conviction weighting to ATM changes
-        weighted_atm_call_change = atm_call_oi_change * atm_call_conviction
-        weighted_atm_put_change = atm_put_oi_change * atm_put_conviction
-        atm_net_change = weighted_atm_put_change - weighted_atm_call_change
-        atm_net_total = atm_put_oi - atm_call_oi
-        max_atm_change = max(abs(weighted_atm_call_change), abs(weighted_atm_put_change), 1)
-        max_atm_total = max(atm_call_oi, atm_put_oi, 1)
-        atm_change_score = (atm_net_change / max_atm_change) * 100
-        atm_total_score = (atm_net_total / max_atm_total) * 100
-        atm_score = (oi_change_weight * atm_change_score) + (oi_total_weight * atm_total_score)
+    # ========================================
+    # OI ACCELERATION ADJUSTMENT
+    # ========================================
+    total_call_oi_change = total_below_bearish + total_above_bearish
+    total_put_oi_change = total_below_bullish + total_above_bullish
 
-    # Calculate ITM score with dynamic weighting
-    # ITM Zone Scoring Logic:
-    # - ITM Call writers (below spot) want price to fall → Bearish pressure
-    # - ITM Put writers (above spot) want price to rise → Bullish pressure
-    # - Formula: Put OI - Call OI (same directionality as OTM)
-    # - Positive score = Bulls pulling/holding price UP
-    # - Negative score = Bears pulling/holding price DOWN
-    itm_score = 0.0
-    itm_change_score = 0.0
-    itm_total_score = 0.0
-    if include_itm:
-        itm_net_change = total_itm_put_oi_change - total_itm_call_oi_change
-        itm_net_total = total_itm_put_oi - total_itm_call_oi
-        max_itm_change = max(abs(total_itm_call_oi_change), abs(total_itm_put_oi_change), 1)
-        max_itm_total = max(total_itm_call_oi, total_itm_put_oi, 1)
-        itm_change_score = (itm_net_change / max_itm_change) * 100
-        itm_total_score = (itm_net_total / max_itm_total) * 100
-        itm_score = (oi_change_weight * itm_change_score) + (oi_total_weight * itm_total_score)
+    oi_acceleration = calculate_oi_acceleration(
+        prev_oi_changes or [],
+        total_call_oi_change,
+        total_put_oi_change
+    )
 
-    # Combined weighted score across zones (including momentum)
-    combined_score = (otm_weight * otm_score) + (atm_weight * atm_score) + (itm_weight * itm_score) + (momentum_weight * momentum_score)
+    # Adjust combined score based on OI phase and momentum
+    if oi_acceleration["phase"] == "unwinding" and momentum_score > 15:
+        combined_score += 15
+        oi_acceleration["adjustment"] = "+15 (short covering detected)"
+    elif oi_acceleration["phase"] == "unwinding" and momentum_score < -15:
+        combined_score -= 15
+        oi_acceleration["adjustment"] = "-15 (profit booking detected)"
+    elif oi_acceleration["phase"] == "accumulation":
+        combined_score += 10
+        oi_acceleration["adjustment"] = "+10 (bullish accumulation)"
+    elif oi_acceleration["phase"] == "distribution":
+        combined_score -= 10
+        oi_acceleration["adjustment"] = "-10 (bearish distribution)"
+    else:
+        oi_acceleration["adjustment"] = "0 (stable phase)"
 
-    # Store component scores for display
-    total_oi_score = otm_total_score  # For backward compatibility display
+    # ========================================
+    # PREMIUM MOMENTUM ADJUSTMENT
+    # ========================================
+    premium_momentum = calculate_premium_momentum(strikes_data, prev_strikes_data, spot_price)
+    pm_score = premium_momentum["premium_momentum_score"]
 
-    # Determine verdict based on combined score
+    if combined_score < -10 and pm_score > 20:
+        adjustment = pm_score * 0.3
+        combined_score += adjustment
+        premium_momentum["score_adjustment"] = f"+{adjustment:.1f} (bullish premium vs bearish OI)"
+    elif combined_score > 10 and pm_score < -20:
+        adjustment = pm_score * 0.3
+        combined_score += adjustment
+        premium_momentum["score_adjustment"] = f"{adjustment:.1f} (bearish premium vs bullish OI)"
+    else:
+        premium_momentum["score_adjustment"] = "0 (aligned)"
+
+    # ========================================
+    # VERDICT DETERMINATION
+    # ========================================
     if combined_score > 40:
         verdict = "Bulls Strongly Winning"
         strength = "strong"
@@ -1204,20 +1297,27 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         verdict = "Neutral"
         strength = "none"
 
-    # PCR (Put-Call Ratio) based on OI
+    # ========================================
+    # ADDITIONAL METRICS
+    # ========================================
+
+    # Total OI for PCR calculation
+    total_put_oi = total_below_put_oi + total_above_put_oi
+    total_call_oi = total_below_call_oi + total_above_call_oi
     pcr = total_put_oi / total_call_oi if total_call_oi > 0 else 0
 
-    # Calculate price change percentage for display
-    price_change_pct = 0.0
-    if price_history and len(price_history) >= 2:
-        current = price_history[-1]['spot_price']
-        past = price_history[0]['spot_price']
-        if past > 0:
-            price_change_pct = ((current - past) / past) * 100
+    # Volume PCR
+    total_volume = total_below_volume + total_above_volume
+    volume_pcr = (total_below_bullish + total_above_bullish) / max(total_below_bearish + total_above_bearish, 1)
 
-    # Calculate confirmation status
+    # Average conviction
+    all_below_convictions = [d['put_conviction'] for d in below_spot_data] + [d['call_conviction'] for d in below_spot_data]
+    all_above_convictions = [d['put_conviction'] for d in above_spot_data] + [d['call_conviction'] for d in above_spot_data]
+    all_convictions = all_below_convictions + all_above_convictions
+    avg_conviction = sum(all_convictions) / len(all_convictions) if all_convictions else 1.0
+
+    # Confirmation status
     oi_direction = "bullish" if combined_score > 0 else "bearish" if combined_score < 0 else "neutral"
-    price_direction = "rising" if price_change_pct > 0.05 else "falling" if price_change_pct < -0.05 else "flat"
 
     if oi_direction == "neutral" or price_direction == "flat":
         confirmation_status = "NEUTRAL"
@@ -1235,74 +1335,15 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         confirmation_status = "CONFLICT"
         confirmation_message = f"OI {oi_direction} but price {price_direction} - wait for alignment"
 
-    # Calculate average conviction scores
-    avg_call_conviction = 0.0
-    avg_put_conviction = 0.0
-    if otm_calls_data:
-        avg_call_conviction = sum(d['conviction'] for d in otm_calls_data) / len(otm_calls_data)
-    if otm_puts_data:
-        avg_put_conviction = sum(d['conviction'] for d in otm_puts_data) / len(otm_puts_data)
-
-    # Calculate volume PCR
-    volume_pcr = total_put_volume / max(total_call_volume, 1)
-
-    # Calculate OI acceleration (Phase 2 enhancement)
-    oi_acceleration = calculate_oi_acceleration(
-        prev_oi_changes or [],
-        total_call_oi_change,
-        total_put_oi_change
-    )
-
-    # Adjust combined score based on OI phase and momentum
-    # If unwinding + price rising = short covering rally → boost bullish signal
-    if oi_acceleration["phase"] == "unwinding" and momentum_score > 15:
-        # OI unwinding but price rising = likely short covering
-        # Trust price momentum more
-        combined_score += 15
-        oi_acceleration["adjustment"] = "+15 (short covering detected)"
-    elif oi_acceleration["phase"] == "unwinding" and momentum_score < -15:
-        # OI unwinding but price falling = likely profit booking
-        combined_score -= 15
-        oi_acceleration["adjustment"] = "-15 (profit booking detected)"
-    elif oi_acceleration["phase"] == "accumulation":
-        # Fresh bullish positions building
-        combined_score += 10
-        oi_acceleration["adjustment"] = "+10 (bullish accumulation)"
-    elif oi_acceleration["phase"] == "distribution":
-        # Fresh bearish positions building
-        combined_score -= 10
-        oi_acceleration["adjustment"] = "-10 (bearish distribution)"
-    else:
-        oi_acceleration["adjustment"] = "0 (stable phase)"
-
-    # Calculate premium momentum (Phase 3 enhancement)
-    premium_momentum = calculate_premium_momentum(strikes_data, prev_strikes_data, spot_price)
-
-    # Adjust score when OI and premium momentum conflict
-    # If OI says bearish but call premiums rallying = buyers winning
-    pm_score = premium_momentum["premium_momentum_score"]
-    if combined_score < -10 and pm_score > 20:
-        # OI bearish but premium bullish - reduce bearish conviction
-        adjustment = pm_score * 0.3
-        combined_score += adjustment
-        premium_momentum["score_adjustment"] = f"+{adjustment:.1f} (bullish premium vs bearish OI)"
-    elif combined_score > 10 and pm_score < -20:
-        # OI bullish but premium bearish - reduce bullish conviction
-        adjustment = pm_score * 0.3
-        combined_score += adjustment  # pm_score is negative, so this subtracts
-        premium_momentum["score_adjustment"] = f"{adjustment:.1f} (bearish premium vs bullish OI)"
-    else:
-        premium_momentum["score_adjustment"] = "0 (aligned)"
-
     # Calculate new metrics: IV Skew, Max Pain, OI Clusters
-    iv_skew = calculate_iv_skew(strikes_data, spot_price, num_otm_strikes)
+    iv_skew = calculate_iv_skew(strikes_data, spot_price, num_strikes)
     max_pain = calculate_max_pain(strikes_data)
     oi_clusters = find_oi_clusters(strikes_data, spot_price)
 
-    # Calculate trade setup (pass price_history for swing-based SL/targets)
+    # Calculate trade setup
     trade_setup = calculate_trade_setup(strikes_data, spot_price, verdict, max_pain, price_history)
 
-    # Calculate signal confidence (with VIX and futures data)
+    # Calculate signal confidence
     signal_confidence = calculate_signal_confidence(
         combined_score, iv_skew, volume_pcr, pcr,
         max_pain, spot_price, confirmation_status,
@@ -1315,72 +1356,126 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     return {
         "spot_price": spot_price,
         "atm_strike": atm_strike,
-        "otm_calls": otm_calls_data,
-        "otm_puts": otm_puts_data,
+
+        # ========================================
+        # NEW: OTM/ITM Zone Data (4 zones)
+        # ========================================
+        "otm_puts": {
+            "strikes": otm_puts_data,
+            "total_oi": otm_puts_total_oi,
+            "total_oi_change": round(otm_puts_total_oi_change, 0),
+            "total_force": round(otm_puts_total_force, 0)
+        },
+        "itm_calls": {
+            "strikes": itm_calls_data,
+            "total_oi": itm_calls_total_oi,
+            "total_oi_change": round(itm_calls_total_oi_change, 0),
+            "total_force": round(itm_calls_total_force, 0)
+        },
+        "otm_calls": {
+            "strikes": otm_calls_data,
+            "total_oi": otm_calls_total_oi,
+            "total_oi_change": round(otm_calls_total_oi_change, 0),
+            "total_force": round(otm_calls_total_force, 0)
+        },
+        "itm_puts": {
+            "strikes": itm_puts_data,
+            "total_oi": itm_puts_total_oi,
+            "total_oi_change": round(itm_puts_total_oi_change, 0),
+            "total_force": round(itm_puts_total_force, 0)
+        },
+
+        # ========================================
+        # NEW: Strength Calculations
+        # ========================================
+        "strength_analysis": {
+            "put_strength": {
+                "numerator": round(put_numerator, 0),
+                "denominator": round(put_denominator, 0),
+                "ratio": round(put_ratio, 2),
+                "score": round(put_strength_score, 1)
+            },
+            "call_strength": {
+                "numerator": round(call_numerator, 0),
+                "denominator": round(call_denominator, 0),
+                "ratio": round(call_ratio, 2),
+                "score": round(call_strength_score, 1)
+            },
+            "direction": strength_direction,
+            "net_strength": round(net_strength, 1)
+        },
+
+        # ========================================
+        # Below/Above Spot Zone Data (backward compatibility)
+        # ========================================
+        "below_spot": {
+            "strikes": below_spot_data,
+            "total_bullish_force": round(total_below_bullish, 0),
+            "total_bearish_force": round(total_below_bearish, 0),
+            "net_force": round(below_net_change, 0),
+            "score": round(below_spot_score, 1)
+        },
+        "above_spot": {
+            "strikes": above_spot_data,
+            "total_bullish_force": round(total_above_bullish, 0),
+            "total_bearish_force": round(total_above_bearish, 0),
+            "net_force": round(above_net_change, 0),
+            "score": round(above_spot_score, 1)
+        },
+
+        # OI totals
         "total_call_oi": total_call_oi,
         "total_put_oi": total_put_oi,
-        "call_oi_change": total_call_oi_change,
-        "put_oi_change": total_put_oi_change,
-        "net_oi_change": net_oi_change,
-        "net_total_oi": net_total_oi,
-        "change_score": round(otm_score, 1),
-        "total_oi_score": round(total_oi_score, 1),
+        "call_oi_change": round(total_call_oi_change, 0),
+        "put_oi_change": round(total_put_oi_change, 0),
+        "net_oi_change": round(total_put_oi_change - total_call_oi_change, 0),
         "combined_score": round(combined_score, 1),
         "pcr": round(pcr, 2),
         "verdict": verdict,
         "strength": strength,
+
         # Volume metrics
-        "total_call_volume": total_call_volume,
-        "total_put_volume": total_put_volume,
+        "total_call_volume": 0,
+        "total_put_volume": 0,
         "volume_pcr": round(volume_pcr, 2),
-        "avg_call_conviction": round(avg_call_conviction, 2),
-        "avg_put_conviction": round(avg_put_conviction, 2),
+        "avg_call_conviction": round(avg_conviction, 2),
+        "avg_put_conviction": round(avg_conviction, 2),
+
         # Momentum data
         "momentum_score": round(momentum_score, 1),
         "price_change_pct": round(price_change_pct, 2),
-        # ATM/ITM toggle data
-        "include_atm": include_atm,
-        "include_itm": include_itm,
-        "atm_data": atm_data,
-        "itm_calls": itm_calls_data,
-        "itm_puts": itm_puts_data,
-        "total_itm_call_oi": total_itm_call_oi,
-        "total_itm_put_oi": total_itm_put_oi,
-        "itm_call_oi_change": total_itm_call_oi_change,
-        "itm_put_oi_change": total_itm_put_oi_change,
-        "otm_score": round(otm_score, 1),
-        "otm_change_score": round(otm_change_score, 1),
-        "otm_total_score": round(otm_total_score, 1),
-        "atm_score": round(atm_score, 1) if include_atm else None,
-        "atm_change_score": round(atm_change_score, 1) if include_atm else None,
-        "atm_total_score": round(atm_total_score, 1) if include_atm else None,
-        "itm_score": round(itm_score, 1) if include_itm else None,
-        "itm_change_score": round(itm_change_score, 1) if include_itm else None,
-        "itm_total_score": round(itm_total_score, 1) if include_itm else None,
+
+        # Zone scores for breakdown display
+        "below_spot_score": round(below_spot_score, 1),
+        "above_spot_score": round(above_spot_score, 1),
         "weights": {
-            "otm": otm_weight,
-            "atm": atm_weight,
-            "itm": itm_weight,
-            "momentum": momentum_weight
+            "below_spot": zone_weight / 2,
+            "above_spot": zone_weight / 2,
+            "momentum": momentum_weight,
+            "oi_change": oi_change_weight,
+            "total_oi": total_oi_weight
         },
         "confirmation_status": confirmation_status,
         "confirmation_message": confirmation_message,
-        # New metrics for improved accuracy
+
+        # Analysis metrics
         "iv_skew": round(iv_skew, 2),
         "max_pain": max_pain,
         "oi_clusters": oi_clusters,
         "signal_confidence": round(signal_confidence, 1),
         "trade_setup": trade_setup,
         "trap_warning": trap_warning,
+
         # Market context
         "vix": round(vix, 2) if vix else 0.0,
         "futures_oi_change": round(futures_oi_change, 0) if futures_oi_change else 0,
         "is_diverging": is_diverging,
-        # OI acceleration (Phase 2)
+
+        # OI acceleration
         "oi_acceleration": oi_acceleration,
-        # Premium momentum (Phase 3)
+        # Premium momentum
         "premium_momentum": premium_momentum,
-        # Market regime (Phase 4)
+        # Market regime
         "market_regime": market_regime
     }
 
@@ -1439,51 +1534,29 @@ if __name__ == "__main__":
 
     spot = 24025.50
 
-    # Test OTM only (default)
+    # Test strike-level analysis
     print("=" * 50)
-    print("TEST 1: OTM Only (Default)")
+    print("TEST 1: Strike-Level Tug-of-War Analysis")
     print("=" * 50)
     analysis = analyze_tug_of_war(sample_strikes, spot)
     print(format_analysis_summary(analysis))
-    print(f"\nWeights: OTM={analysis['weights']['otm']}, ATM={analysis['weights']['atm']}, ITM={analysis['weights']['itm']}")
-    print(f"OTM Score: {analysis['otm_score']}")
 
-    # Test with ATM
-    print("\n" + "=" * 50)
-    print("TEST 2: OTM + ATM")
-    print("=" * 50)
-    analysis_atm = analyze_tug_of_war(sample_strikes, spot, include_atm=True)
-    print(f"Verdict: {analysis_atm['verdict']}")
-    print(f"Combined Score: {analysis_atm['combined_score']}")
-    print(f"Weights: OTM={analysis_atm['weights']['otm']}, ATM={analysis_atm['weights']['atm']}, ITM={analysis_atm['weights']['itm']}")
-    print(f"OTM Score: {analysis_atm['otm_score']}, ATM Score: {analysis_atm['atm_score']}")
-    print(f"ATM Data: {analysis_atm['atm_data']}")
+    print(f"\n--- Zone Analysis ---")
+    print(f"Below Spot Score: {analysis['below_spot']['score']}")
+    print(f"  Bullish Force: {analysis['below_spot']['total_bullish_force']:,}")
+    print(f"  Bearish Force: {analysis['below_spot']['total_bearish_force']:,}")
+    print(f"  Net Force: {analysis['below_spot']['net_force']:,}")
+    print(f"\nAbove Spot Score: {analysis['above_spot']['score']}")
+    print(f"  Bullish Force: {analysis['above_spot']['total_bullish_force']:,}")
+    print(f"  Bearish Force: {analysis['above_spot']['total_bearish_force']:,}")
+    print(f"  Net Force: {analysis['above_spot']['net_force']:,}")
 
-    # Test with ITM
-    print("\n" + "=" * 50)
-    print("TEST 3: OTM + ITM")
-    print("=" * 50)
-    analysis_itm = analyze_tug_of_war(sample_strikes, spot, include_itm=True)
-    print(f"Verdict: {analysis_itm['verdict']}")
-    print(f"Combined Score: {analysis_itm['combined_score']}")
-    print(f"Weights: OTM={analysis_itm['weights']['otm']}, ATM={analysis_itm['weights']['atm']}, ITM={analysis_itm['weights']['itm']}")
-    print(f"OTM Score: {analysis_itm['otm_score']}, ITM Score: {analysis_itm['itm_score']}")
-    print(f"ITM Calls: {analysis_itm['itm_calls']}")
-    print(f"ITM Puts: {analysis_itm['itm_puts']}")
+    print(f"\nCombined Score: {analysis['combined_score']}")
+    print(f"Weights: Below={analysis['weights']['below_spot']:.0%}, Above={analysis['weights']['above_spot']:.0%}, Momentum={analysis['weights']['momentum']:.0%}")
 
-    # Test with both ATM and ITM
+    # Test with price history (adds momentum)
     print("\n" + "=" * 50)
-    print("TEST 4: OTM + ATM + ITM")
-    print("=" * 50)
-    analysis_all = analyze_tug_of_war(sample_strikes, spot, include_atm=True, include_itm=True)
-    print(f"Verdict: {analysis_all['verdict']}")
-    print(f"Combined Score: {analysis_all['combined_score']}")
-    print(f"Weights: OTM={analysis_all['weights']['otm']}, ATM={analysis_all['weights']['atm']}, ITM={analysis_all['weights']['itm']}")
-    print(f"Scores: OTM={analysis_all['otm_score']}, ATM={analysis_all['atm_score']}, ITM={analysis_all['itm_score']}")
-
-    # Test premium-based trade setup (OPTION BUYER)
-    print("\n" + "=" * 50)
-    print("TEST 5: Premium-Based Trade Setup (Option Buyer)")
+    print("TEST 2: With Price Momentum")
     print("=" * 50)
 
     price_history = [
@@ -1495,9 +1568,19 @@ if __name__ == "__main__":
 
     analysis_with_history = analyze_tug_of_war(
         sample_strikes, spot,
-        include_atm=True, include_itm=True,
         price_history=price_history
     )
+
+    print(f"Verdict: {analysis_with_history['verdict']}")
+    print(f"Combined Score: {analysis_with_history['combined_score']}")
+    print(f"Momentum Score: {analysis_with_history['momentum_score']}")
+    print(f"Price Change: {analysis_with_history['price_change_pct']:.2f}%")
+    print(f"Confirmation: {analysis_with_history['confirmation_status']} - {analysis_with_history['confirmation_message']}")
+
+    # Test trade setup
+    print("\n" + "=" * 50)
+    print("TEST 3: Trade Setup")
+    print("=" * 50)
 
     trade = analysis_with_history['trade_setup']
     if trade:
@@ -1509,17 +1592,12 @@ if __name__ == "__main__":
         print(f"  SL: {trade['sl_premium']} (-{trade['risk_pct']}%, {trade['risk_points']:.2f} pts risk)")
         print(f"  T1: {trade['target1_premium']} (1:{trade['risk_reward_t1']:.0f} R:R)")
         print(f"  T2: {trade['target2_premium']} (1:{trade['risk_reward_t2']:.0f} R:R)")
-        print(f"\nSpot Reference:")
-        print(f"  Current: {trade['spot_price']}")
-        print(f"  Support: {trade['support_ref']}")
-        print(f"  Resistance: {trade['resistance_ref']}")
-        print(f"  Max Pain: {trade['max_pain']}")
     else:
         print("No trade setup generated (missing LTP data)")
 
-    # Test bearish trade setup
+    # Test bearish scenario
     print("\n" + "=" * 50)
-    print("TEST 6: Bearish Trade Setup (Put Buyer)")
+    print("TEST 4: Bearish Scenario")
     print("=" * 50)
 
     # Modify data to make it bearish (more call OI change)
@@ -1542,19 +1620,18 @@ if __name__ == "__main__":
 
     analysis_bearish = analyze_tug_of_war(
         bearish_strikes, spot,
-        include_atm=True, include_itm=True,
         price_history=price_history
     )
 
+    print(f"Verdict: {analysis_bearish['verdict']} (Score: {analysis_bearish['combined_score']})")
+    print(f"Below Spot Score: {analysis_bearish['below_spot']['score']}")
+    print(f"Above Spot Score: {analysis_bearish['above_spot']['score']}")
+
     trade_bearish = analysis_bearish['trade_setup']
     if trade_bearish:
-        print(f"\nSpot: {spot}")
-        print(f"Verdict: {analysis_bearish['verdict']} (Score: {analysis_bearish['combined_score']})")
         print(f"\n{trade_bearish['direction']} Setup:")
         print(f"  Strike: {trade_bearish['strike']} {trade_bearish['option_type']} ({trade_bearish['moneyness']})")
         print(f"  Entry: {trade_bearish['entry_premium']} (current premium)")
         print(f"  SL: {trade_bearish['sl_premium']} (-{trade_bearish['risk_pct']}%, {trade_bearish['risk_points']:.2f} pts risk)")
-        print(f"  T1: {trade_bearish['target1_premium']} (1:{trade_bearish['risk_reward_t1']:.0f} R:R)")
-        print(f"  T2: {trade_bearish['target2_premium']} (1:{trade_bearish['risk_reward_t2']:.0f} R:R)")
     else:
         print("No trade setup generated")

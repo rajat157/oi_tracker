@@ -7,7 +7,11 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 
 from scheduler import OIScheduler
-from database import get_latest_analysis, get_analysis_history, get_latest_snapshot, get_recent_price_trend, get_active_trade_setup, get_trade_setup_stats, get_trade_history
+from database import (
+    get_latest_analysis, get_analysis_history, get_latest_snapshot,
+    get_recent_price_trend, get_active_trade_setup, get_trade_setup_stats,
+    get_trade_history
+)
 from oi_analyzer import analyze_tug_of_war
 
 
@@ -67,10 +71,6 @@ def dashboard():
 @app.route("/api/latest")
 def api_latest():
     """Get the latest OI analysis."""
-    # Get toggle parameters from query string
-    include_atm = request.args.get("include_atm", "false").lower() == "true"
-    include_itm = request.args.get("include_itm", "false").lower() == "true"
-
     # Get price history for momentum calculation
     price_history = get_recent_price_trend(lookback_minutes=9)
 
@@ -82,8 +82,6 @@ def api_latest():
         analysis = analyze_tug_of_war(
             snapshot["strikes"],
             snapshot["spot_price"],
-            include_atm=include_atm,
-            include_itm=include_itm,
             price_history=price_history
         )
         analysis["timestamp"] = snapshot["timestamp"]
@@ -97,33 +95,14 @@ def api_latest():
             analysis["active_trade"] = None
         analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
 
+        # Add chart history for frontend sync (last 30 data points)
+        analysis["chart_history"] = get_analysis_history(limit=30)
+
         return jsonify(analysis)
 
-    # Fall back to scheduler's cached analysis (re-analyze with toggle settings)
+    # Fall back to scheduler's cached analysis
     cached = oi_scheduler.get_last_analysis()
     if cached:
-        # If we have cached data but need different toggle settings, re-fetch snapshot
-        snapshot = get_latest_snapshot()
-        if snapshot and snapshot.get("strikes"):
-            analysis = analyze_tug_of_war(
-                snapshot["strikes"],
-                snapshot["spot_price"],
-                include_atm=include_atm,
-                include_itm=include_itm,
-                price_history=price_history
-            )
-            analysis["timestamp"] = snapshot.get("timestamp", cached.get("timestamp"))
-            analysis["expiry_date"] = snapshot.get("expiry_date", cached.get("expiry_date"))
-
-            # Add trade tracker data
-            active_setup = get_active_trade_setup()
-            if active_setup:
-                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
-            else:
-                analysis["active_trade"] = None
-            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
-
-            return jsonify(analysis)
         return jsonify(cached)
 
     # Last resort: database summary (without scores)
@@ -220,25 +199,20 @@ def handle_refresh_request():
     oi_scheduler.trigger_now()
 
 
-@socketio.on("update_toggles")
-def handle_toggle_update(data):
-    """Handle toggle state changes from client."""
+@socketio.on("request_latest")
+def handle_request_latest():
+    """Handle request for latest analysis from client."""
     from flask_socketio import emit
-
-    include_atm = data.get("include_atm", False)
-    include_itm = data.get("include_itm", False)
 
     # Get price history for momentum calculation
     price_history = get_recent_price_trend(lookback_minutes=9)
 
-    # Re-analyze with new settings and emit to this client only
+    # Get latest snapshot and re-analyze
     snapshot = get_latest_snapshot()
     if snapshot and snapshot.get("strikes"):
         analysis = analyze_tug_of_war(
             snapshot["strikes"],
             snapshot["spot_price"],
-            include_atm=include_atm,
-            include_itm=include_itm,
             price_history=price_history
         )
         analysis["timestamp"] = snapshot.get("timestamp")
@@ -251,6 +225,9 @@ def handle_toggle_update(data):
         else:
             analysis["active_trade"] = None
         analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+
+        # Add chart history for frontend sync (last 30 data points)
+        analysis["chart_history"] = get_analysis_history(limit=30)
 
         emit("oi_update", analysis)
 

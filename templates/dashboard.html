@@ -39,16 +39,6 @@
                         <span class="toggle-slider"></span>
                         <span class="toggle-label">Auto</span>
                     </label>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="atm-toggle">
-                        <span class="toggle-slider"></span>
-                        <span class="toggle-label">ATM</span>
-                    </label>
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="itm-toggle">
-                        <span class="toggle-slider"></span>
-                        <span class="toggle-label">ITM</span>
-                    </label>
                 </div>
             </div>
         </header>
@@ -91,23 +81,17 @@
                     <details class="verdict-details">
                         <summary>Score Breakdown</summary>
                         <div class="breakdown-grid">
-                            <!-- OTM Zone -->
+                            <!-- Below Spot Zone (Support) -->
                             <div class="breakdown-row">
-                                <span class="breakdown-zone-label">OTM Zone</span>
-                                <span class="breakdown-weight" id="otm-weight">100%</span>
-                                <span class="breakdown-value" id="otm-score-display">--</span>
+                                <span class="breakdown-zone-label">Below Spot</span>
+                                <span class="breakdown-weight" id="below-spot-weight">50%</span>
+                                <span class="breakdown-value" id="below-spot-score-display">--</span>
                             </div>
-                            <!-- ATM Zone (shown when enabled) -->
-                            <div class="breakdown-row" id="atm-breakdown" style="display: none;">
-                                <span class="breakdown-zone-label">ATM Zone</span>
-                                <span class="breakdown-weight" id="atm-weight">0%</span>
-                                <span class="breakdown-value" id="atm-score-display">--</span>
-                            </div>
-                            <!-- ITM Zone (shown when enabled) -->
-                            <div class="breakdown-row" id="itm-breakdown" style="display: none;">
-                                <span class="breakdown-zone-label">ITM Zone</span>
-                                <span class="breakdown-weight" id="itm-weight">0%</span>
-                                <span class="breakdown-value" id="itm-score-display">--</span>
+                            <!-- Above Spot Zone (Resistance) -->
+                            <div class="breakdown-row">
+                                <span class="breakdown-zone-label">Above Spot</span>
+                                <span class="breakdown-weight" id="above-spot-weight">50%</span>
+                                <span class="breakdown-value" id="above-spot-score-display">--</span>
                             </div>
                             <!-- Momentum Zone -->
                             <div class="breakdown-row" id="momentum-breakdown" style="display: none;">
@@ -280,212 +264,262 @@
 
             <!-- Right Column -->
             <div class="column-right">
-                <!-- OI Comparison -->
+                <!-- Zone Force Comparison -->
                 <div class="card oi-card">
-                    <h3 class="card-title">OI Comparison <span class="card-subtitle">(3 OTM Strikes)</span></h3>
+                    <h3 class="card-title">Zone Force Comparison <span class="card-subtitle">(3 Strikes Each Side)</span></h3>
 
                     <div class="oi-comparison">
-                        <!-- Calls Section -->
-                        <div class="oi-section oi-calls">
-                            <div class="oi-header">
-                                <span class="oi-label">Call OI</span>
-                                <span class="oi-tag tag-bearish">Bearish</span>
-                            </div>
-                            <div class="oi-value" id="call-oi-total">--</div>
-                            <div class="oi-bar">
-                                <div class="oi-bar-fill bar-bearish" id="call-oi-bar"></div>
-                            </div>
-                            <div class="oi-change negative" id="call-oi-change">--</div>
-                        </div>
-
-                        <!-- Puts Section -->
+                        <!-- Below Spot Section (Support Zone) -->
                         <div class="oi-section oi-puts">
                             <div class="oi-header">
-                                <span class="oi-label">Put OI</span>
-                                <span class="oi-tag tag-bullish">Bullish</span>
+                                <span class="oi-label">Below Spot</span>
+                                <span class="oi-tag tag-bullish">Support</span>
                             </div>
-                            <div class="oi-value" id="put-oi-total">--</div>
+                            <div class="oi-value" id="below-spot-net">--</div>
                             <div class="oi-bar">
-                                <div class="oi-bar-fill bar-bullish" id="put-oi-bar"></div>
+                                <div class="oi-bar-fill bar-bullish" id="below-spot-bar"></div>
                             </div>
-                            <div class="oi-change positive" id="put-oi-change">--</div>
+                            <div class="oi-change positive" id="below-spot-change">--</div>
+                        </div>
+
+                        <!-- Above Spot Section (Resistance Zone) -->
+                        <div class="oi-section oi-calls">
+                            <div class="oi-header">
+                                <span class="oi-label">Above Spot</span>
+                                <span class="oi-tag tag-bearish">Resistance</span>
+                            </div>
+                            <div class="oi-value" id="above-spot-net">--</div>
+                            <div class="oi-bar">
+                                <div class="oi-bar-fill bar-bearish" id="above-spot-bar"></div>
+                            </div>
+                            <div class="oi-change negative" id="above-spot-change">--</div>
                         </div>
                     </div>
 
                     <div class="net-change-box">
-                        <span class="net-label">Net OI Change</span>
+                        <span class="net-label">Net Force</span>
                         <span class="net-value" id="net-oi-change">--</span>
                     </div>
                 </div>
 
-                <!-- Strike Tables -->
+                <!-- Directional Force (Strength Analysis) -->
+                <div class="card strength-card">
+                    <h3 class="card-title">Directional Force Analysis</h3>
+                    <div class="strength-grid">
+                        <div class="strength-item support">
+                            <span class="strength-label">Put Strength (Support)</span>
+                            <div class="strength-values">
+                                <span class="strength-ratio" id="put-strength-ratio">--</span>
+                                <span class="strength-score" id="put-strength-score">--</span>
+                            </div>
+                            <span class="strength-formula">OTM Put / (ITM Call + OTM Call)</span>
+                        </div>
+                        <div class="strength-item resistance">
+                            <span class="strength-label">Call Strength (Resistance)</span>
+                            <div class="strength-values">
+                                <span class="strength-ratio" id="call-strength-ratio">--</span>
+                                <span class="strength-score" id="call-strength-score">--</span>
+                            </div>
+                            <span class="strength-formula">OTM Call / (ITM Put + OTM Put)</span>
+                        </div>
+                    </div>
+                    <div class="strength-result">
+                        <span class="result-label">Direction:</span>
+                        <span class="result-direction" id="strength-direction">--</span>
+                        <span class="result-net">Net: <strong id="net-strength">--</strong></span>
+                    </div>
+                </div>
+
+                <!-- Strike Tables - Old (Below/Above Spot) -->
                 <div class="tables-row">
                     <div class="card table-card">
-                        <h3 class="card-title table-title-bearish">OTM Calls</h3>
+                        <h3 class="card-title table-title-bullish">Below Spot <span class="card-subtitle">(Support Zone)</span></h3>
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Strike</th>
-                                    <th>OI</th>
-                                    <th>Change</th>
-                                    <th>Volume</th>
-                                    <th>Conviction</th>
+                                    <th>Bullish</th>
+                                    <th>Bearish</th>
+                                    <th>Net</th>
                                 </tr>
                             </thead>
-                            <tbody id="calls-tbody">
-                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
+                            <tbody id="below-spot-tbody">
+                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
-                                    <td id="calls-total-oi">--</td>
-                                    <td id="calls-total-change">--</td>
-                                    <td id="calls-total-volume">--</td>
-                                    <td id="calls-avg-conviction">--</td>
+                                    <td id="below-spot-total-bullish">--</td>
+                                    <td id="below-spot-total-bearish">--</td>
+                                    <td id="below-spot-total-net">--</td>
                                 </tr>
                             </tfoot>
                         </table>
                     </div>
 
                     <div class="card table-card">
-                        <h3 class="card-title table-title-bullish">OTM Puts</h3>
+                        <h3 class="card-title table-title-bearish">Above Spot <span class="card-subtitle">(Resistance Zone)</span></h3>
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Strike</th>
-                                    <th>OI</th>
-                                    <th>Change</th>
-                                    <th>Volume</th>
-                                    <th>Conviction</th>
+                                    <th>Bullish</th>
+                                    <th>Bearish</th>
+                                    <th>Net</th>
                                 </tr>
                             </thead>
-                            <tbody id="puts-tbody">
-                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
+                            <tbody id="above-spot-tbody">
+                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
-                                    <td id="puts-total-oi">--</td>
-                                    <td id="puts-total-change">--</td>
-                                    <td id="puts-total-volume">--</td>
-                                    <td id="puts-avg-conviction">--</td>
+                                    <td id="above-spot-total-bullish">--</td>
+                                    <td id="above-spot-total-bearish">--</td>
+                                    <td id="above-spot-total-net">--</td>
                                 </tr>
                             </tfoot>
                         </table>
                     </div>
                 </div>
 
-                <!-- ATM Section (hidden by default) -->
-                <div id="atm-section" class="card atm-card" style="display: none;">
-                    <h3 class="card-title">ATM Strike Analysis</h3>
-                    <div class="atm-grid">
-                        <div class="atm-item">
-                            <span class="atm-label">Strike</span>
-                            <span class="atm-value" id="atm-strike-value">--</span>
-                        </div>
-                        <div class="atm-item atm-call">
-                            <span class="atm-label">Call OI</span>
-                            <span class="atm-value" id="atm-call-oi">--</span>
-                            <span class="atm-change" id="atm-call-change">--</span>
-                        </div>
-                        <div class="atm-item atm-put">
-                            <span class="atm-label">Put OI</span>
-                            <span class="atm-value" id="atm-put-oi">--</span>
-                            <span class="atm-change" id="atm-put-change">--</span>
-                        </div>
-                    </div>
-                </div>
+                <!-- OTM/ITM Zone Tables -->
+                <h3 class="section-title">OTM/ITM Zone Breakdown</h3>
 
-                <!-- ITM Tables (hidden by default) -->
-                <div id="itm-section" class="tables-row" style="display: none;">
+                <!-- Below Spot: OTM Puts + ITM Calls -->
+                <div class="tables-row">
                     <div class="card table-card">
-                        <h3 class="card-title table-title-itm-call">ITM Calls <span class="card-subtitle">(Below Spot)</span></h3>
+                        <h3 class="card-title table-title-bullish">OTM Puts <span class="card-subtitle">(Below Spot - Support)</span></h3>
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Strike</th>
                                     <th>OI</th>
                                     <th>Change</th>
-                                    <th>Volume</th>
-                                    <th>Conviction</th>
+                                    <th>Force</th>
+                                </tr>
+                            </thead>
+                            <tbody id="otm-puts-tbody">
+                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td>Total</td>
+                                    <td id="otm-puts-total-oi">--</td>
+                                    <td id="otm-puts-total-change">--</td>
+                                    <td id="otm-puts-total-force">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <div class="card table-card">
+                        <h3 class="card-title table-title-bearish">ITM Calls <span class="card-subtitle">(Below Spot - Trapped Longs)</span></h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Strike</th>
+                                    <th>OI</th>
+                                    <th>Change</th>
+                                    <th>Force</th>
                                 </tr>
                             </thead>
                             <tbody id="itm-calls-tbody">
-                                <tr><td colspan="5" class="loading-cell">--</td></tr>
+                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
                                     <td id="itm-calls-total-oi">--</td>
                                     <td id="itm-calls-total-change">--</td>
-                                    <td id="itm-calls-total-volume">--</td>
-                                    <td id="itm-calls-avg-conviction">--</td>
+                                    <td id="itm-calls-total-force">--</td>
                                 </tr>
                             </tfoot>
                         </table>
                     </div>
+                </div>
 
+                <!-- Above Spot: OTM Calls + ITM Puts -->
+                <div class="tables-row">
                     <div class="card table-card">
-                        <h3 class="card-title table-title-itm-put">ITM Puts <span class="card-subtitle">(Above Spot)</span></h3>
+                        <h3 class="card-title table-title-bearish">OTM Calls <span class="card-subtitle">(Above Spot - Resistance)</span></h3>
                         <table class="data-table">
                             <thead>
                                 <tr>
                                     <th>Strike</th>
                                     <th>OI</th>
                                     <th>Change</th>
-                                    <th>Volume</th>
-                                    <th>Conviction</th>
+                                    <th>Force</th>
+                                </tr>
+                            </thead>
+                            <tbody id="otm-calls-tbody">
+                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
+                            </tbody>
+                            <tfoot>
+                                <tr>
+                                    <td>Total</td>
+                                    <td id="otm-calls-total-oi">--</td>
+                                    <td id="otm-calls-total-change">--</td>
+                                    <td id="otm-calls-total-force">--</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <div class="card table-card">
+                        <h3 class="card-title table-title-bullish">ITM Puts <span class="card-subtitle">(Above Spot - Trapped Shorts)</span></h3>
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>Strike</th>
+                                    <th>OI</th>
+                                    <th>Change</th>
+                                    <th>Force</th>
                                 </tr>
                             </thead>
                             <tbody id="itm-puts-tbody">
-                                <tr><td colspan="5" class="loading-cell">--</td></tr>
+                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
                                     <td>Total</td>
                                     <td id="itm-puts-total-oi">--</td>
                                     <td id="itm-puts-total-change">--</td>
-                                    <td id="itm-puts-total-volume">--</td>
-                                    <td id="itm-puts-avg-conviction">--</td>
+                                    <td id="itm-puts-total-force">--</td>
                                 </tr>
                             </tfoot>
                         </table>
                     </div>
                 </div>
+
             </div>
         </main>
 
         <!-- Chart Section -->
         <section class="chart-section">
             <div class="card chart-card">
-                <h3 class="card-title">OI Trend</h3>
+                <h3 class="card-title">OI Trend (Call vs Put OI Change)</h3>
                 <div class="chart-container">
                     <canvas id="oi-chart"></canvas>
                 </div>
             </div>
-        </section>
 
-        <!-- ATM Chart Section -->
-        <section id="atm-chart-section" class="chart-section" style="display: none;">
-            <div class="card chart-card">
-                <h3 class="card-title">ATM OI Change Trend</h3>
-                <p class="chart-subtitle">At-The-Money Call vs Put OI Changes (Last 30 Updates)</p>
-                <div class="chart-container">
-                    <canvas id="atm-chart"></canvas>
+            <div class="charts-row">
+                <div class="card chart-card chart-half">
+                    <h3 class="card-title">OTM Force Trend</h3>
+                    <div class="chart-container-small">
+                        <canvas id="otm-chart"></canvas>
+                    </div>
+                </div>
+                <div class="card chart-card chart-half">
+                    <h3 class="card-title">ITM Force Trend</h3>
+                    <div class="chart-container-small">
+                        <canvas id="itm-chart"></canvas>
+                    </div>
                 </div>
             </div>
         </section>
 
-        <!-- ITM Chart Section -->
-        <section id="itm-chart-section" class="chart-section" style="display: none;">
-            <div class="card chart-card">
-                <h3 class="card-title">ITM OI Change Trend</h3>
-                <p class="chart-subtitle">In-The-Money Call vs Put OI Changes (Last 30 Updates)</p>
-                <div class="chart-container">
-                    <canvas id="itm-chart"></canvas>
-                </div>
-            </div>
-        </section>
 
         <!-- Footer -->
         <footer class="footer">

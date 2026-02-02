@@ -13,7 +13,7 @@ from oi_analyzer import analyze_tug_of_war
 from database import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
     get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
-    get_previous_futures_oi
+    get_previous_futures_oi, get_analysis_history
 )
 from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
@@ -157,8 +157,6 @@ class OIScheduler:
             analysis = analyze_tug_of_war(
                 strikes_data,
                 spot_price,
-                include_atm=True,
-                include_itm=True,
                 price_history=price_history,
                 vix=vix,
                 futures_oi_change=futures_oi_change,
@@ -243,6 +241,10 @@ class OIScheduler:
 
             # Run daily learning update at market close
             self._check_daily_learning_update()
+
+            # Add chart history for frontend sync (last 30 data points)
+            chart_history = get_analysis_history(limit=30)
+            analysis["chart_history"] = chart_history
 
             # Broadcast to connected clients
             if self.socketio:

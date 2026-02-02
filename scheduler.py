@@ -10,7 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from nse_fetcher import NSEFetcher
-from oi_analyzer import analyze_tug_of_war
+from oi_analyzer import analyze_tug_of_war, calculate_market_trend
 from database import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
     get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
@@ -185,6 +185,11 @@ class OIScheduler:
                 "ema_accuracy": round(learning_result["ema_accuracy"] * 100, 1),
                 "consecutive_errors": learning_result["consecutive_errors"]
             }
+
+            # Calculate market trend from recent analysis history
+            trend_history = get_analysis_history(limit=15)
+            market_trend = calculate_market_trend(trend_history, lookback=10)
+            analysis["market_trend"] = market_trend
 
             # Serialize complete analysis to JSON for storage (now includes self_learning)
             analysis_json = json.dumps(analysis, default=str)

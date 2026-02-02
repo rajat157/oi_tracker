@@ -575,6 +575,32 @@ body {
     font-variant-numeric: tabular-nums;
 }
 
+/* Trend Indicator */
+.trend-indicator {
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+}
+
+.trend-indicator.trend-upward {
+    background: var(--bullish-light);
+    color: var(--bullish);
+}
+
+.trend-indicator.trend-downward {
+    background: var(--bearish-light);
+    color: var(--bearish);
+}
+
+.trend-indicator.trend-sideways {
+    background: var(--warning-light);
+    color: var(--warning);
+}
+
+.trend-indicator.strength-weak {
+    opacity: 0.85;
+}
+
 /* ===== OI Card ===== */
 .oi-comparison {
     display: grid;

@@ -373,6 +373,20 @@ function updateDashboard(data) {
         momentumElem.style.color = '#a1a1b5';
     }
 
+    // Update Market Trend
+    const trendElem = document.getElementById('market-trend');
+    if (trendElem && data.market_trend) {
+        const trend = data.market_trend;
+        trendElem.textContent = trend.display || '--';
+        trendElem.className = 'metric-value trend-indicator';
+        trendElem.classList.add(`trend-${trend.trend}`, `strength-${trend.strength}`);
+        trendElem.title = trend.description || '';
+    } else if (trendElem) {
+        trendElem.textContent = '--';
+        trendElem.className = 'metric-value trend-indicator';
+        trendElem.title = '';
+    }
+
     // Update volume metrics
     setText('volume-pcr', data.volume_pcr ?? '--');
 

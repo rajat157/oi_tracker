@@ -160,6 +160,181 @@ def detect_market_regime(price_history: List[dict], momentum_score: float) -> di
         }
 
 
+def calculate_market_trend(analysis_history: List[dict], lookback: int = 10) -> dict:
+    """
+    Calculate market trend based on recent analysis history.
+
+    Uses weighted combination of 4 signals:
+    - Score Slope (40%): Linear regression of combined_score over time
+    - Score Average (30%): Mean combined_score value
+    - Regime Consistency (20%): Majority regime type
+    - Momentum Direction (10%): Sign consistency of momentum scores
+
+    Args:
+        analysis_history: List of recent analysis dicts (newest first from DB)
+        lookback: Number of data points to consider (default 10 = 30 min)
+
+    Returns:
+        {
+            "trend": "upward" | "sideways" | "downward",
+            "strength": "strong" | "moderate" | "weak",
+            "display": "Upward ↑" | "Sideways →" | "Downward ↓",
+            "confidence": 0-100,
+            "description": "Human-readable explanation"
+        }
+    """
+    default_result = {
+        "trend": "sideways",
+        "strength": "weak",
+        "display": "Sideways →",
+        "confidence": 0,
+        "description": "Insufficient data for trend analysis"
+    }
+
+    if not analysis_history or len(analysis_history) < 3:
+        return default_result
+
+    # Take the most recent 'lookback' entries and reverse to chronological order (oldest first)
+    recent = analysis_history[:lookback][::-1]
+
+    # Extract combined_score values
+    scores = []
+    for entry in recent:
+        score = entry.get("combined_score")
+        if score is not None:
+            scores.append(float(score))
+
+    if len(scores) < 3:
+        return default_result
+
+    # === Signal 1: Score Slope (40% weight) ===
+    # Simple linear regression slope
+    n = len(scores)
+    x_mean = (n - 1) / 2
+    y_mean = sum(scores) / n
+
+    numerator = sum((i - x_mean) * (scores[i] - y_mean) for i in range(n))
+    denominator = sum((i - x_mean) ** 2 for i in range(n))
+
+    slope = numerator / denominator if denominator != 0 else 0
+
+    # Slope thresholds: > +2 = upward, < -2 = downward
+    if slope > 2:
+        slope_signal = 1  # Upward
+    elif slope < -2:
+        slope_signal = -1  # Downward
+    else:
+        slope_signal = 0  # Sideways
+
+    # === Signal 2: Score Average (30% weight) ===
+    avg_score = y_mean
+
+    # Average thresholds: > +15 = upward, < -15 = downward
+    if avg_score > 15:
+        avg_signal = 1
+    elif avg_score < -15:
+        avg_signal = -1
+    else:
+        avg_signal = 0
+
+    # === Signal 3: Regime Consistency (20% weight) ===
+    regime_counts = {"trending_up": 0, "trending_down": 0, "range_bound": 0}
+    for entry in recent:
+        regime_info = entry.get("market_regime", {})
+        regime = regime_info.get("regime", "range_bound") if isinstance(regime_info, dict) else "range_bound"
+        if regime in regime_counts:
+            regime_counts[regime] += 1
+
+    majority_regime = max(regime_counts, key=regime_counts.get)
+    if majority_regime == "trending_up":
+        regime_signal = 1
+    elif majority_regime == "trending_down":
+        regime_signal = -1
+    else:
+        regime_signal = 0
+
+    # === Signal 4: Momentum Direction (10% weight) ===
+    momentum_scores = []
+    for entry in recent:
+        m = entry.get("momentum_score")
+        if m is not None:
+            momentum_scores.append(float(m))
+
+    if momentum_scores:
+        positive_count = sum(1 for m in momentum_scores if m > 0)
+        negative_count = sum(1 for m in momentum_scores if m < 0)
+        total = len(momentum_scores)
+
+        # > 60% positive = upward, > 60% negative = downward
+        if positive_count / total > 0.6:
+            momentum_signal = 1
+        elif negative_count / total > 0.6:
+            momentum_signal = -1
+        else:
+            momentum_signal = 0
+    else:
+        momentum_signal = 0
+
+    # === Weighted Combination ===
+    weighted_score = (
+        slope_signal * 0.40 +
+        avg_signal * 0.30 +
+        regime_signal * 0.20 +
+        momentum_signal * 0.10
+    )
+
+    # Count how many signals agree
+    signals = [slope_signal, avg_signal, regime_signal, momentum_signal]
+    upward_count = sum(1 for s in signals if s == 1)
+    downward_count = sum(1 for s in signals if s == -1)
+
+    # Determine trend direction
+    if weighted_score > 0.25:
+        trend = "upward"
+        display = "Upward ↑"
+    elif weighted_score < -0.25:
+        trend = "downward"
+        display = "Downward ↓"
+    else:
+        trend = "sideways"
+        display = "Sideways →"
+
+    # Determine strength based on signal agreement
+    max_agreement = max(upward_count, downward_count)
+    if max_agreement >= 3:
+        strength = "strong"
+    elif max_agreement == 2:
+        strength = "moderate"
+    else:
+        strength = "weak"
+
+    # Calculate confidence (0-100)
+    confidence = abs(weighted_score) * 100
+    confidence = min(100, max(0, confidence))
+
+    # Build description
+    descriptions = []
+    if slope_signal != 0:
+        descriptions.append(f"score {'rising' if slope_signal > 0 else 'falling'}")
+    if avg_signal != 0:
+        descriptions.append(f"avg {'positive' if avg_signal > 0 else 'negative'}")
+    if momentum_signal != 0:
+        descriptions.append(f"{'positive' if momentum_signal > 0 else 'negative'} momentum")
+
+    if descriptions:
+        description = f"{strength.capitalize()} {trend} trend - {', '.join(descriptions)}"
+    else:
+        description = f"{strength.capitalize()} {trend} trend - mixed signals"
+
+    return {
+        "trend": trend,
+        "strength": strength,
+        "display": display,
+        "confidence": round(confidence, 1),
+        "description": description
+    }
+
+
 def calculate_conviction_multiplier(volume: int, oi_change: int) -> float:
     """
     Calculate conviction multiplier based on volume-to-OI turnover ratio.

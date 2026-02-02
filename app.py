@@ -44,7 +44,11 @@ def _get_setup_with_pnl(setup: dict, strikes_data: dict) -> dict:
         **setup,
         "current_premium": round(current_premium, 2),
         "live_pnl_pct": round(live_pnl_pct, 2),
-        "live_pnl_points": round(live_pnl_points, 2)
+        "live_pnl_points": round(live_pnl_points, 2),
+        # Map database field names to frontend expected names
+        "support_ref": setup.get("support_at_creation"),
+        "resistance_ref": setup.get("resistance_at_creation"),
+        "max_pain": setup.get("max_pain_at_creation"),
     }
 
 # Initialize SocketIO with threading (more reliable on Windows)

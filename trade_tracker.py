@@ -33,9 +33,9 @@ class TradeTracker:
     def __init__(self):
         """Initialize the trade tracker."""
         self.confidence_threshold = 60.0  # Minimum confidence to create setup
-        self.confidence_max = 85.0  # Maximum confidence (contrarian filter)
+        self.confidence_max = 70.0  # Maximum confidence (lowered - high confidence trades fail)
         self.entry_tolerance = 0.02  # 2% tolerance for entry activation
-        self.cooldown_minutes = 6  # Cooldown after trade resolution (2 fetch cycles)
+        self.cooldown_minutes = 12  # Cooldown after trade resolution (4 fetch cycles - quality over quantity)
         self.move_threshold_pct = 0.8  # Skip if spot moved 0.8%+ in direction (widened from 0.5%)
         self.bounce_threshold_pct = 0.3  # Skip PUT if bounced 0.3%+ from low
         self.self_learner = get_self_learner()
@@ -103,6 +103,39 @@ class TradeTracker:
         trade_setup = analysis.get("trade_setup")
         if not trade_setup:
             return False
+
+        # 8. VERDICT FILTER: Only take "Slightly" verdicts (weak signals perform better)
+        verdict = analysis.get("verdict", "").lower()
+        if "strongly" in verdict or "winning" in verdict:
+            print(f"[TradeTracker] Skipping: Strong verdict '{analysis.get('verdict')}' has poor win rate")
+            return False
+        if "slightly" not in verdict:
+            print(f"[TradeTracker] Skipping: Verdict '{analysis.get('verdict')}' not slightly bullish/bearish")
+            return False
+
+        # 9. MARKET REGIME FILTER: Adjust requirements based on market conditions
+        market_regime = analysis.get("market_regime", {})
+        regime = market_regime.get("regime", "range_bound")
+
+        if regime == "range_bound":
+            # In sideways markets, OTM options have poor performance - need higher delta
+            if trade_setup.get("moneyness") == "OTM":
+                print(f"[TradeTracker] Skipping: OTM trade in sideways market has poor win rate")
+                return False
+            # Tighter SL required in sideways (max 15%)
+            if trade_setup.get("risk_pct", 20) > 15:
+                print(f"[TradeTracker] Skipping: SL too wide ({trade_setup.get('risk_pct')}%) for sideways market")
+                return False
+
+        # 10. PUT trades need stronger confirmation (14.3% win rate vs 40% for CALL)
+        if trade_setup.get("direction") == "BUY_PUT":
+            confirmation_status = analysis.get("confirmation_status", "")
+            if confirmation_status != "CONFIRMED":
+                print(f"[TradeTracker] Skipping PUT: Needs CONFIRMED status, got '{confirmation_status}'")
+                return False
+            if regime != "trending_down":
+                print(f"[TradeTracker] Skipping PUT: Needs trending_down regime, got '{regime}'")
+                return False
 
         return True
 

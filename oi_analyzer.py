@@ -806,6 +806,13 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
         'ce_iv' if option_type == 'CE' else 'pe_iv', 0
     )
 
+    # Calculate rupee risk/reward (NIFTY lot size = 75 from Nov 2024)
+    NIFTY_LOT_SIZE = 75
+    entry_cost_rs = premium * NIFTY_LOT_SIZE
+    risk_amount_rs = risk * NIFTY_LOT_SIZE
+    potential_profit_t1_rs = risk * NIFTY_LOT_SIZE  # 1:1 R:R
+    potential_profit_t2_rs = risk * 2 * NIFTY_LOT_SIZE  # 1:2 R:R
+
     return {
         # Option buyer setup
         "direction": "BUY_CALL" if is_bullish else "BUY_PUT",
@@ -821,6 +828,12 @@ def calculate_trade_setup(strikes_data: dict, spot_price: float, verdict: str,
         "risk_reward_t1": 1.0,
         "risk_reward_t2": 2.0,
         "iv_at_strike": round(strike_iv, 2),
+        # Rupee risk/reward (for lot size display)
+        "lot_size": NIFTY_LOT_SIZE,
+        "entry_cost_rs": round(entry_cost_rs, 2),
+        "risk_amount_rs": round(risk_amount_rs, 2),
+        "potential_profit_t1_rs": round(potential_profit_t1_rs, 2),
+        "potential_profit_t2_rs": round(potential_profit_t2_rs, 2),
         # Spot reference (for context)
         "spot_price": round(spot_price, 2),
         "support_ref": support,

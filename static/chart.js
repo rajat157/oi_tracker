@@ -675,6 +675,13 @@ function updateTradeSetup(data) {
     setText('trade-support', setup.support_ref ? formatNumber(setup.support_ref) : '--');
     setText('trade-resistance', setup.resistance_ref ? formatNumber(setup.resistance_ref) : '--');
     setText('trade-max-pain', setup.max_pain ? formatNumber(setup.max_pain) : '--');
+
+    // Update rupee risk/reward display
+    setText('trade-lot-size', setup.lot_size || 75);
+    setText('trade-entry-cost-rs', setup.entry_cost_rs ? '₹' + formatNumber(setup.entry_cost_rs) : '--');
+    setText('trade-risk-rs', setup.risk_amount_rs ? '₹' + formatNumber(setup.risk_amount_rs) : '--');
+    setText('trade-profit-t1-rs', setup.potential_profit_t1_rs ? '₹' + formatNumber(setup.potential_profit_t1_rs) : '--');
+    setText('trade-profit-t2-rs', setup.potential_profit_t2_rs ? '₹' + formatNumber(setup.potential_profit_t2_rs) : '--');
 }
 
 function updateWinRate(tradeStats) {

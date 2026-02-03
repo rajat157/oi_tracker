@@ -42,6 +42,8 @@ class TradeTracker:
         self.direction_flip_cooldown_minutes = 15  # 5 fetch cycles
         self.last_suggested_direction = None
         self.last_suggestion_time = None
+        self.cancellation_cooldown_minutes = 30  # CRITICAL: No new trades for 30min after cancellation
+        self.last_cancelled_time = None
 
     def _count_confirmations(self, analysis: dict) -> int:
         """Count aligned confirmation signals."""
@@ -72,6 +74,32 @@ class TradeTracker:
             confirmations += 1
 
         return confirmations
+
+    def _is_in_cancellation_cooldown(self) -> bool:
+        """
+        Check if we're in cooldown after cancelling a trade.
+
+        CRITICAL: After cancelling a PENDING trade (due to verdict flip, self-learner pause, etc),
+        we must NOT immediately create a new one with different prices. This would be dangerous
+        for users who placed limit orders based on the cancelled trade.
+
+        Returns:
+            True if still in cooldown (should skip trade creation)
+        """
+        if not self.last_cancelled_time:
+            return False
+
+        time_since_cancellation = datetime.now() - self.last_cancelled_time
+        cooldown_seconds = self.cancellation_cooldown_minutes * 60
+
+        if time_since_cancellation.total_seconds() < cooldown_seconds:
+            minutes_since = int(time_since_cancellation.total_seconds() / 60)
+            minutes_remaining = self.cancellation_cooldown_minutes - minutes_since
+            print(f"[TradeTracker] Skipping: Cancellation cooldown "
+                  f"({minutes_since}m ago, {minutes_remaining}m remaining - prevents shifting trades)")
+            return True
+
+        return False
 
     def _is_direction_flip_cooldown(self, current_direction: str) -> bool:
         """Prevent rapid direction flips between CALL and PUT."""
@@ -136,7 +164,10 @@ class TradeTracker:
                     status="CANCELLED",
                     resolved_at=datetime.now()
                 )
-                print(f"[TradeTracker] Cancelled active setup (ID: {active_setup['id']}) - Self-learner paused")
+                # CRITICAL: Set cancellation cooldown
+                self.last_cancelled_time = datetime.now()
+                print(f"[TradeTracker] Cancelled active setup (ID: {active_setup['id']}) - "
+                      f"Self-learner paused (30min cooldown active)")
             else:
                 print("[TradeTracker] Skipping: Self-learner paused trading")
             return False
@@ -152,6 +183,12 @@ class TradeTracker:
         # 4. Check cooldown period after last resolved trade
         if self._is_in_cooldown():
             print("[TradeTracker] Skipping: In cooldown period after recent trade")
+            return False
+
+        # 4a. CRITICAL: Check cancellation cooldown (prevents shifting trades)
+        # After cancelling a trade, wait 30 minutes before creating new one
+        # This protects users who placed limit orders based on cancelled trade
+        if self._is_in_cancellation_cooldown():
             return False
 
         # 4b. Check direction flip cooldown (prevents rapid CALL↔PUT switching)
@@ -666,9 +703,13 @@ class TradeTracker:
                 resolved_at=timestamp
             )
 
+            # CRITICAL: Set cancellation cooldown to prevent immediate recreation with different prices
+            self.last_cancelled_time = timestamp
+
             print(f"[TradeTracker] Setup #{setup['id']} CANCELLED - Direction flipped from "
                   f"{'BULLISH' if setup_is_bullish else 'BEARISH'} to "
-                  f"{'BULLISH' if current_is_bullish else 'BEARISH'}")
+                  f"{'BULLISH' if current_is_bullish else 'BEARISH'} "
+                  f"(30min cooldown active)")
 
             return True
 

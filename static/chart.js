@@ -601,12 +601,14 @@ function updateTradeSetup(data) {
     const card = document.getElementById('trade-setup-card');
     if (!card) return;
 
-    // Use active_trade (persistent setup) if available, else fall back to trade_setup
+    // CRITICAL: ONLY show active_trade (trades being tracked in database)
+    // NEVER show trade_setup suggestions that were rejected by filters
+    // This prevents users from placing limit orders on non-tracked trades
     const activeTrade = data.active_trade;
-    const setup = activeTrade || data.trade_setup;
-    const confidence = activeTrade ? activeTrade.signal_confidence : (data.signal_confidence || 0);
+    const setup = activeTrade;  // NO FALLBACK to trade_setup!
+    const confidence = activeTrade ? activeTrade.signal_confidence : 0;
 
-    // Show if we have an active/pending trade OR a new setup
+    // Only show if we have an actual PENDING or ACTIVE trade
     if (!setup) {
         card.style.display = 'none';
         return;
@@ -664,6 +666,29 @@ function updateTradeSetup(data) {
 
     // Update premium-based levels
     setText('trade-entry', setup.entry_premium?.toFixed(2) || '--');
+
+    // Show current premium for both PENDING and ACTIVE trades
+    const currentPremium = setup.current_premium || 0;
+    const entryPremium = setup.entry_premium || 0;
+    setText('trade-current-pending', currentPremium > 0 ? currentPremium.toFixed(2) : '--');
+
+    // Show difference vs entry
+    if (currentPremium > 0 && entryPremium > 0) {
+        const diff = currentPremium - entryPremium;
+        const diffPct = (diff / entryPremium * 100);
+        const diffText = `${diff >= 0 ? '+' : ''}${diff.toFixed(2)} (${diffPct >= 0 ? '+' : ''}${diffPct.toFixed(1)}%)`;
+        setText('trade-current-vs-entry', diffText);
+
+        // Color code: green if at/below entry (good for activation), red if above
+        const detailElem = document.getElementById('trade-current-vs-entry');
+        if (detailElem) {
+            detailElem.classList.remove('positive', 'negative');
+            detailElem.classList.add(diff <= 0 ? 'positive' : 'negative');
+        }
+    } else {
+        setText('trade-current-vs-entry', '--');
+    }
+
     setText('trade-sl', setup.sl_premium?.toFixed(2) || '--');
     setText('trade-sl-detail', `-${setup.risk_pct}%`);
     setText('trade-target1', setup.target1_premium?.toFixed(2) || '--');

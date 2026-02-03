@@ -704,7 +704,7 @@ function updateTradeSetup(data) {
     // Update rupee risk/reward display
     // Calculate from premium values if not provided (for active trades from DB)
     const lotSize = setup.lot_size || 65;
-    const entryPremium = setup.entry_premium || 0;
+    // entryPremium already declared above at line 672
     const slPremium = setup.sl_premium || 0;
     const t1Premium = setup.target1_premium || 0;
     const t2Premium = setup.target2_premium || 0;

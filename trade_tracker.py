@@ -39,6 +39,60 @@ class TradeTracker:
         self.move_threshold_pct = 0.8  # Skip if spot moved 0.8%+ in direction (widened from 0.5%)
         self.bounce_threshold_pct = 0.3  # Skip PUT if bounced 0.3%+ from low
         self.self_learner = get_self_learner()
+        self.direction_flip_cooldown_minutes = 15  # 5 fetch cycles
+        self.last_suggested_direction = None
+        self.last_suggestion_time = None
+
+    def _count_confirmations(self, analysis: dict) -> int:
+        """Count aligned confirmation signals."""
+        confirmations = 0
+        verdict = analysis.get("verdict", "").lower()
+        is_bullish = "bull" in verdict
+
+        # 1. OI-Price alignment
+        if analysis.get("confirmation_status") == "CONFIRMED":
+            confirmations += 1
+
+        # 2. Market regime alignment
+        regime = analysis.get("market_regime", {}).get("regime", "range_bound")
+        if (is_bullish and regime == "trending_up") or \
+           (not is_bullish and regime == "trending_down"):
+            confirmations += 1
+
+        # 3. Premium momentum alignment
+        pm = analysis.get("premium_momentum", {})
+        pm_score = pm.get("premium_momentum_score", 0)
+        if (is_bullish and pm_score > 10) or (not is_bullish and pm_score < -10):
+            confirmations += 1
+
+        # 4. IV skew alignment
+        iv_skew = analysis.get("iv_skew", {})
+        skew_score = iv_skew.get("skew_score", 0) if isinstance(iv_skew, dict) else 0
+        if (is_bullish and skew_score < -5) or (not is_bullish and skew_score > 5):
+            confirmations += 1
+
+        return confirmations
+
+    def _is_direction_flip_cooldown(self, current_direction: str) -> bool:
+        """Prevent rapid direction flips between CALL and PUT."""
+        if not self.last_suggestion_time or not self.last_suggested_direction:
+            return False
+
+        # Same direction is always OK
+        if current_direction == self.last_suggested_direction:
+            return False
+
+        # Check cooldown for opposite direction
+        time_since_last = datetime.now() - self.last_suggestion_time
+        cooldown_seconds = self.direction_flip_cooldown_minutes * 60
+
+        if time_since_last.total_seconds() < cooldown_seconds:
+            minutes_since = int(time_since_last.total_seconds() / 60)
+            print(f"[TradeTracker] Skipping: Direction flip cooldown "
+                  f"({minutes_since}m ago, need {self.direction_flip_cooldown_minutes}m)")
+            return True
+
+        return False
 
     def should_create_new_setup(self, analysis: dict, price_history: List[dict] = None) -> bool:
         """
@@ -50,6 +104,7 @@ class TradeTracker:
         - Self-learner says trading is allowed
         - Signal confidence in optimal range (60-85%)
         - Not in cooldown period after last trade
+        - No direction flip cooldown (prevents CALL↔PUT oscillation)
         - Move hasn't already happened in signal direction
         - No bounce in progress (for PUT trades)
         - Trade setup exists in analysis
@@ -73,7 +128,17 @@ class TradeTracker:
 
         # 2. Check if self-learner says to pause trading
         if not self.self_learner.signal_tracker.ema_tracker.should_trade():
-            print("[TradeTracker] Skipping: Self-learner paused trading")
+            # Cancel any active trade setup since we're paused
+            active_setup = get_active_trade_setup()
+            if active_setup:
+                update_trade_setup_status(
+                    active_setup["id"],
+                    status="CANCELLED",
+                    resolved_at=datetime.now()
+                )
+                print(f"[TradeTracker] Cancelled active setup (ID: {active_setup['id']}) - Self-learner paused")
+            else:
+                print("[TradeTracker] Skipping: Self-learner paused trading")
             return False
 
         # 3. Check confidence - reject too low OR too high (contrarian)
@@ -88,6 +153,13 @@ class TradeTracker:
         if self._is_in_cooldown():
             print("[TradeTracker] Skipping: In cooldown period after recent trade")
             return False
+
+        # 4b. Check direction flip cooldown (prevents rapid CALL↔PUT switching)
+        trade_setup = analysis.get("trade_setup")
+        if trade_setup:
+            current_direction = trade_setup.get("direction")
+            if self._is_direction_flip_cooldown(current_direction):
+                return False
 
         # 5. Check if move already happened in signal direction
         if price_history and self._is_move_already_happened(analysis, price_history):
@@ -127,15 +199,29 @@ class TradeTracker:
                 print(f"[TradeTracker] Skipping: SL too wide ({trade_setup.get('risk_pct')}%) for sideways market")
                 return False
 
-        # 10. PUT trades need stronger confirmation (14.3% win rate vs 40% for CALL)
-        if trade_setup.get("direction") == "BUY_PUT":
-            confirmation_status = analysis.get("confirmation_status", "")
-            if confirmation_status != "CONFIRMED":
-                print(f"[TradeTracker] Skipping PUT: Needs CONFIRMED status, got '{confirmation_status}'")
-                return False
-            if regime != "trending_down":
-                print(f"[TradeTracker] Skipping PUT: Needs trending_down regime, got '{regime}'")
-                return False
+        # 10. SYMMETRIC CONFIRMATION FOR BOTH DIRECTIONS
+        direction = trade_setup.get("direction")
+        confirmation_status = analysis.get("confirmation_status", "")
+
+        # Both CALL and PUT need CONFIRMED status
+        if confirmation_status not in ["CONFIRMED", "REVERSAL_ALERT"]:
+            print(f"[TradeTracker] Skipping: Needs confirmation, got '{confirmation_status}'")
+            return False
+
+        # Both need regime alignment
+        if direction == "BUY_CALL" and regime != "trending_up":
+            print(f"[TradeTracker] Skipping CALL: Needs trending_up, got '{regime}'")
+            return False
+        elif direction == "BUY_PUT" and regime != "trending_down":
+            print(f"[TradeTracker] Skipping PUT: Needs trending_down, got '{regime}'")
+            return False
+
+        # 11. MULTI-FACTOR CONFIRMATION (require 3 out of 4 aligned signals)
+        REQUIRED_CONFIRMATIONS = 3
+        confirmations = self._count_confirmations(analysis)
+        if confirmations < REQUIRED_CONFIRMATIONS:
+            print(f"[TradeTracker] Skipping: Only {confirmations}/{REQUIRED_CONFIRMATIONS} confirmations")
+            return False
 
         return True
 
@@ -344,6 +430,10 @@ class TradeTracker:
         print(f"[TradeTracker] Created PENDING setup #{setup_id}: "
               f"{trade_setup['direction']} {trade_setup['strike']} {trade_setup['option_type']} "
               f"@ {trade_setup['entry_premium']}")
+
+        # Update tracking for direction flip cooldown
+        self.last_suggested_direction = trade_setup["direction"]
+        self.last_suggestion_time = timestamp
 
         return setup_id
 

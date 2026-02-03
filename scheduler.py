@@ -14,7 +14,7 @@ from oi_analyzer import analyze_tug_of_war, calculate_market_trend
 from database import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
     get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
-    get_previous_futures_oi, get_analysis_history
+    get_previous_futures_oi, get_analysis_history, get_previous_verdict
 )
 from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
@@ -154,6 +154,9 @@ class OIScheduler:
             if futures_oi > 0:
                 print(f"Futures OI Change: {futures_oi_change:+,} (prev: {prev_futures_oi:,}, curr: {futures_oi:,})")
 
+            # Get previous verdict for hysteresis
+            prev_verdict = get_previous_verdict()
+
             # Perform analysis with all enhanced data
             analysis = analyze_tug_of_war(
                 strikes_data,
@@ -162,7 +165,8 @@ class OIScheduler:
                 vix=vix,
                 futures_oi_change=futures_oi_change,
                 prev_oi_changes=prev_oi_changes,
-                prev_strikes_data=prev_strikes_data
+                prev_strikes_data=prev_strikes_data,
+                prev_verdict=prev_verdict
             )
             analysis["timestamp"] = timestamp.isoformat()
             analysis["expiry_date"] = current_expiry
@@ -216,7 +220,8 @@ class OIScheduler:
                 futures_oi=futures_oi,
                 futures_oi_change=futures_oi_change,
                 futures_basis=futures_basis,
-                analysis_json=analysis_json  # Store complete analysis
+                analysis_json=analysis_json,  # Store complete analysis
+                prev_verdict=prev_verdict  # Store previous verdict for hysteresis analysis
             )
 
             self.last_analysis = analysis

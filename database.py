@@ -54,6 +54,7 @@ def init_db():
                 call_oi_change INTEGER DEFAULT 0,
                 put_oi_change INTEGER DEFAULT 0,
                 verdict TEXT NOT NULL,
+                prev_verdict TEXT,
                 expiry_date TEXT NOT NULL
             )
         """)
@@ -180,6 +181,44 @@ def init_db():
             ON trade_setups(created_at)
         """)
 
+        # Table for tracking all trade suggestions (for analysis)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trade_suggestions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+
+                -- Suggested trade details
+                direction TEXT NOT NULL,
+                strike INTEGER NOT NULL,
+                entry_premium REAL NOT NULL,
+
+                -- Market context
+                spot_price REAL NOT NULL,
+                verdict TEXT NOT NULL,
+                prev_verdict TEXT,
+                combined_score REAL NOT NULL,
+                confirmation_status TEXT NOT NULL,
+                signal_confidence REAL NOT NULL,
+                market_regime TEXT NOT NULL,
+
+                -- Decision outcome
+                was_created BOOLEAN NOT NULL,
+                rejection_reason TEXT,
+                trade_setup_id INTEGER,
+
+                -- Flip tracking
+                direction_changed BOOLEAN,
+                time_since_last_sec REAL,
+
+                FOREIGN KEY (trade_setup_id) REFERENCES trade_setups(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_suggestions_timestamp
+            ON trade_suggestions(timestamp)
+        """)
+
         # Add migration for technical analysis context columns in trade_setups
         trade_setup_columns_to_add = [
             ("call_oi_change_at_creation", "REAL DEFAULT 0"),
@@ -271,6 +310,15 @@ def init_db():
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN analysis_json TEXT")
             print("Added analysis_json column to analysis_history table")
 
+        # Add migration for prev_verdict column for hysteresis
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pragma_table_info('analysis_history')
+            WHERE name='prev_verdict'
+        """)
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN prev_verdict TEXT")
+            print("Added prev_verdict column to analysis_history table")
+
         conn.commit()
 
 
@@ -324,18 +372,19 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
                   vix: float = 0.0, iv_skew: float = 0.0, max_pain: int = 0,
                   signal_confidence: float = 0.0,
                   futures_oi: int = 0, futures_oi_change: int = 0, futures_basis: float = 0.0,
-                  analysis_json: str = None):
+                  analysis_json: str = None,
+                  prev_verdict: str = None):
     """Save analysis result to history including full JSON blob."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO analysis_history
             (timestamp, spot_price, atm_strike, total_call_oi, total_put_oi,
-             call_oi_change, put_oi_change, verdict, expiry_date,
+             call_oi_change, put_oi_change, verdict, prev_verdict, expiry_date,
              atm_call_oi_change, atm_put_oi_change, itm_call_oi_change, itm_put_oi_change,
              vix, iv_skew, max_pain, signal_confidence,
              futures_oi, futures_oi_change, futures_basis, analysis_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             timestamp.isoformat(),
             spot_price,
@@ -345,6 +394,7 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
             call_oi_change,
             put_oi_change,
             verdict,
+            prev_verdict,
             expiry_date,
             atm_call_oi_change,
             atm_put_oi_change,
@@ -360,6 +410,19 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
             analysis_json
         ))
         conn.commit()
+
+
+def get_previous_verdict() -> Optional[str]:
+    """Get the previous verdict from the most recent analysis."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT verdict FROM analysis_history
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        row = cursor.fetchone()
+        return row["verdict"] if row else None
 
 
 def get_latest_snapshot() -> Optional[dict]:
@@ -1183,6 +1246,81 @@ def get_last_resolved_trade() -> Optional[dict]:
         if row:
             return dict(row)
         return None
+
+
+def save_trade_suggestion(
+    timestamp: datetime,
+    direction: str,
+    strike: int,
+    entry_premium: float,
+    spot_price: float,
+    verdict: str,
+    prev_verdict: Optional[str],
+    combined_score: float,
+    confirmation_status: str,
+    signal_confidence: float,
+    market_regime: str,
+    was_created: bool,
+    rejection_reason: Optional[str] = None,
+    trade_setup_id: Optional[int] = None,
+    direction_changed: bool = False,
+    time_since_last_sec: Optional[float] = None
+):
+    """Log every trade suggestion attempt."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO trade_suggestions (
+                timestamp, direction, strike, entry_premium, spot_price,
+                verdict, prev_verdict, combined_score, confirmation_status,
+                signal_confidence, market_regime, was_created, rejection_reason,
+                trade_setup_id, direction_changed, time_since_last_sec
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            timestamp.isoformat(),
+            direction,
+            strike,
+            entry_premium,
+            spot_price,
+            verdict,
+            prev_verdict,
+            combined_score,
+            confirmation_status,
+            signal_confidence,
+            market_regime,
+            was_created,
+            rejection_reason,
+            trade_setup_id,
+            direction_changed,
+            time_since_last_sec
+        ))
+        conn.commit()
+
+
+def get_suggestion_stats(days: int = 7) -> dict:
+    """Get suggestion→creation conversion stats."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=days)
+
+        cursor.execute('''
+            SELECT
+                COUNT(*) as total_suggestions,
+                SUM(CASE WHEN was_created THEN 1 ELSE 0 END) as created,
+                SUM(CASE WHEN direction_changed THEN 1 ELSE 0 END) as direction_changes,
+                AVG(time_since_last_sec) as avg_time_between
+            FROM trade_suggestions
+            WHERE timestamp > ?
+        ''', (cutoff.isoformat(),))
+
+        row = cursor.fetchone()
+        return {
+            "total_suggestions": row[0] or 0,
+            "created_count": row[1] or 0,
+            "direction_changes": row[2] or 0,
+            "avg_time_between_sec": row[3] or 0,
+            "creation_rate_pct": (row[1] / row[0] * 100) if row[0] and row[0] > 0 else 0
+        }
 
 
 # Initialize database on import

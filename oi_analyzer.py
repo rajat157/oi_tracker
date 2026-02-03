@@ -1040,6 +1040,128 @@ def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) ->
     return itm_calls, itm_puts
 
 
+def determine_verdict_with_hysteresis(
+    combined_score: float,
+    prev_verdict: Optional[str] = None
+) -> tuple[str, str]:
+    """
+    Determine verdict with hysteresis to prevent flip-flopping.
+
+    Uses widened threshold bands and hysteresis mechanism:
+    - Dead zone (-10 to +10): maintains previous verdict
+    - Flip requires 50% larger threshold than staying
+    - Widened bands: ±25 for slightly, ±50 for winning
+
+    Args:
+        combined_score: Combined OI + momentum score
+        prev_verdict: Previous verdict for hysteresis
+
+    Returns:
+        Tuple of (verdict, strength)
+    """
+    # Constants
+    DEAD_ZONE = 10  # No verdict changes in -10 to +10 range
+    FLIP_MULTIPLIER = 1.5  # Need 50% larger move to flip direction
+
+    # Widen threshold bands (was 15/40, now 25/50)
+    SLIGHTLY_THRESHOLD = 25
+    WINNING_THRESHOLD = 50
+
+    # Dead zone: keep previous verdict if in neutral zone
+    if prev_verdict and abs(combined_score) < DEAD_ZONE:
+        # Determine strength from previous verdict
+        prev_lower = prev_verdict.lower()
+        if "strongly" in prev_lower:
+            strength = "strong"
+        elif "winning" in prev_lower:
+            strength = "moderate"
+        elif "slightly" in prev_lower:
+            strength = "weak"
+        else:
+            strength = "none"
+        return prev_verdict, strength
+
+    # Apply hysteresis: harder to flip than to stay
+    is_currently_bullish = prev_verdict and "bull" in prev_verdict.lower()
+    is_currently_bearish = prev_verdict and "bear" in prev_verdict.lower()
+
+    if is_currently_bullish:
+        # Need larger negative score to flip bearish
+        bearish_flip_threshold = -SLIGHTLY_THRESHOLD * FLIP_MULTIPLIER  # -37.5
+        if combined_score < bearish_flip_threshold:
+            pass  # Will flip to bearish below
+        elif combined_score > 0:
+            # Still bullish
+            if combined_score > WINNING_THRESHOLD:
+                return "Bulls Strongly Winning", "strong"
+            elif combined_score > SLIGHTLY_THRESHOLD:
+                return "Bulls Winning", "moderate"
+            else:
+                return "Slightly Bullish", "weak"
+        else:
+            # In flip zone but not enough to flip - keep previous
+            prev_lower = prev_verdict.lower()
+            if "strongly" in prev_lower:
+                strength = "strong"
+            elif "winning" in prev_lower:
+                strength = "moderate"
+            else:
+                strength = "weak"
+            return prev_verdict, strength
+
+    elif is_currently_bearish:
+        # Need larger positive score to flip bullish
+        bullish_flip_threshold = SLIGHTLY_THRESHOLD * FLIP_MULTIPLIER  # +37.5
+        if combined_score > bullish_flip_threshold:
+            pass  # Will flip to bullish below
+        elif combined_score < 0:
+            # Still bearish
+            if combined_score < -WINNING_THRESHOLD:
+                return "Bears Strongly Winning", "strong"
+            elif combined_score < -SLIGHTLY_THRESHOLD:
+                return "Bears Winning", "moderate"
+            else:
+                return "Slightly Bearish", "weak"
+        else:
+            # In flip zone but not enough to flip - keep previous
+            prev_lower = prev_verdict.lower()
+            if "strongly" in prev_lower:
+                strength = "strong"
+            elif "winning" in prev_lower:
+                strength = "moderate"
+            else:
+                strength = "weak"
+            return prev_verdict, strength
+
+    # First time or strong enough to flip - use standard thresholds
+    if combined_score > WINNING_THRESHOLD:
+        return "Bulls Strongly Winning", "strong"
+    elif combined_score > SLIGHTLY_THRESHOLD:
+        return "Bulls Winning", "moderate"
+    elif combined_score > 0:
+        return "Slightly Bullish", "weak"
+    elif combined_score < -WINNING_THRESHOLD:
+        return "Bears Strongly Winning", "strong"
+    elif combined_score < -SLIGHTLY_THRESHOLD:
+        return "Bears Winning", "moderate"
+    elif combined_score < 0:
+        return "Slightly Bearish", "weak"
+    else:
+        # Exactly zero or first time with no verdict
+        if prev_verdict:
+            prev_lower = prev_verdict.lower()
+            if "strongly" in prev_lower:
+                strength = "strong"
+            elif "winning" in prev_lower:
+                strength = "moderate"
+            elif "slightly" in prev_lower:
+                strength = "weak"
+            else:
+                strength = "none"
+            return prev_verdict, strength
+        return "Neutral", "none"
+
+
 def analyze_tug_of_war(strikes_data: dict, spot_price: float,
                         num_strikes: int = 3,
                         momentum_score: Optional[float] = None,
@@ -1048,7 +1170,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
                         futures_oi_change: float = 0.0,
                         prev_oi_changes: Optional[List[tuple]] = None,
                         prev_strikes_data: Optional[dict] = None,
-                        total_oi_weight: float = 0.15) -> dict:
+                        total_oi_weight: float = 0.15,
+                        prev_verdict: Optional[str] = None) -> dict:
     """
     Perform enhanced tug-of-war analysis with OTM/ITM zone separation.
 
@@ -1461,29 +1584,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         premium_momentum["score_adjustment"] = "0 (aligned)"
 
     # ========================================
-    # VERDICT DETERMINATION
+    # VERDICT DETERMINATION (WITH HYSTERESIS)
     # ========================================
-    if combined_score > 40:
-        verdict = "Bulls Strongly Winning"
-        strength = "strong"
-    elif combined_score > 15:
-        verdict = "Bulls Winning"
-        strength = "moderate"
-    elif combined_score > 0:
-        verdict = "Slightly Bullish"
-        strength = "weak"
-    elif combined_score < -40:
-        verdict = "Bears Strongly Winning"
-        strength = "strong"
-    elif combined_score < -15:
-        verdict = "Bears Winning"
-        strength = "moderate"
-    elif combined_score < 0:
-        verdict = "Slightly Bearish"
-        strength = "weak"
-    else:
-        verdict = "Neutral"
-        strength = "none"
+    verdict, strength = determine_verdict_with_hysteresis(combined_score, prev_verdict)
 
     # ========================================
     # ADDITIONAL METRICS

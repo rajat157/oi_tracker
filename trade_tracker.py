@@ -213,8 +213,15 @@ class TradeTracker:
         if not trade_setup:
             return False
 
-        # 8. VERDICT FILTER: Only take "Slightly" verdicts (weak signals perform better)
+        # 8. CRITICAL FIX: DISABLE ALL PUT TRADES (14% win rate - system loses money)
+        # PUT trades have 14.3% win rate vs CALL trades at 40% win rate
+        # Self-learner paused system due to PUT losses. Disable until PUT signals are fixed.
         verdict = analysis.get("verdict", "").lower()
+        if "bearish" in verdict:
+            print(f"[TradeTracker] DISABLED: PUT trades have 14% win rate (bearish verdict rejected)")
+            return False
+
+        # 8b. VERDICT FILTER: Only take "Slightly" verdicts (weak signals perform better)
         if "strongly" in verdict or "winning" in verdict:
             print(f"[TradeTracker] Skipping: Strong verdict '{analysis.get('verdict')}' has poor win rate")
             return False

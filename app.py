@@ -74,6 +74,8 @@ def api_latest():
 
     if analysis:
         # Add self_learning if missing (for old data stored without it)
+        # IMPORTANT: Old analyses load stale data from learned_weights table
+        # Always prefer live self-learner status to show current state
         if "self_learning" not in analysis:
             from self_learner import get_self_learner
             learner = get_self_learner()
@@ -82,8 +84,12 @@ def api_latest():
                 "should_trade": status["signal_tracker"]["should_trade"],
                 "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
                 "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
-                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"]
+                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"],
+                "is_stale": True  # Mark as potentially stale from learned_weights table
             }
+        else:
+            # Analysis has embedded self_learning - this is fresh data
+            analysis["self_learning"]["is_stale"] = False
 
         # Add live trade tracker data (needs current snapshot for live P/L)
         snapshot = get_latest_snapshot()
@@ -178,6 +184,8 @@ def handle_connect():
 
     if analysis:
         # Add self_learning if missing (for old data stored without it)
+        # IMPORTANT: Old analyses load stale data from learned_weights table
+        # Always prefer live self-learner status to show current state
         if "self_learning" not in analysis:
             from self_learner import get_self_learner
             learner = get_self_learner()
@@ -186,8 +194,12 @@ def handle_connect():
                 "should_trade": status["signal_tracker"]["should_trade"],
                 "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
                 "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
-                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"]
+                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"],
+                "is_stale": True  # Mark as potentially stale from learned_weights table
             }
+        else:
+            # Analysis has embedded self_learning - this is fresh data
+            analysis["self_learning"]["is_stale"] = False
 
         # Add live trade tracker data
         snapshot = get_latest_snapshot()
@@ -231,6 +243,8 @@ def handle_request_latest():
 
     if analysis:
         # Add self_learning if missing (for old data stored without it)
+        # IMPORTANT: Old analyses load stale data from learned_weights table
+        # Always prefer live self-learner status to show current state
         if "self_learning" not in analysis:
             from self_learner import get_self_learner
             learner = get_self_learner()
@@ -239,8 +253,12 @@ def handle_request_latest():
                 "should_trade": status["signal_tracker"]["should_trade"],
                 "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
                 "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
-                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"]
+                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"],
+                "is_stale": True  # Mark as potentially stale from learned_weights table
             }
+        else:
+            # Analysis has embedded self_learning - this is fresh data
+            analysis["self_learning"]["is_stale"] = False
 
         # Add live trade tracker data (needs current snapshot for live P/L)
         snapshot = get_latest_snapshot()

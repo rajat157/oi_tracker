@@ -98,6 +98,63 @@ class TradeTracker:
 
         return confirmations
 
+    def _calculate_quality_score(self, analysis: dict) -> int:
+        """
+        Calculate quality score for trade setup.
+
+        Scoring criteria (max 9 points):
+        - CONFIRMED status: +2 points
+        - Optimal confidence (60-85%): +2 points
+        - Good confidence (50-60% or 85-95%): +1 point
+        - Strong verdict ("Winning"): +1 point
+        - ITM option: +1 point
+        - Low risk (<=15%): +1 point
+        - Premium momentum aligned: +1 point
+
+        Args:
+            analysis: Current analysis dict from OI analyzer
+
+        Returns:
+            Quality score (0-9, higher is better)
+        """
+        score = 0
+
+        # 1. Confirmation status (+2 for CONFIRMED)
+        if analysis.get("confirmation_status") == "CONFIRMED":
+            score += 2
+
+        # 2. Confidence range
+        conf = analysis.get("signal_confidence", 0)
+        if 60 <= conf <= 85:
+            score += 2  # Optimal range
+        elif 50 <= conf < 60 or 85 < conf <= 95:
+            score += 1  # Good range
+
+        # 3. Verdict strength
+        verdict = analysis.get("verdict", "")
+        if "Winning" in verdict:
+            score += 1
+
+        # 4. Trade setup details
+        setup = analysis.get("trade_setup", {})
+        if setup:
+            # Moneyness - ITM options have higher delta
+            if setup.get("moneyness") == "ITM":
+                score += 1
+
+            # Risk - tighter SL is better
+            if setup.get("risk_pct", 20) <= 15:
+                score += 1
+
+        # 5. Premium momentum alignment
+        pm = analysis.get("premium_momentum", {})
+        pm_score = pm.get("premium_momentum_score", 0) if isinstance(pm, dict) else 0
+        is_bullish = "bull" in verdict.lower()
+        if (is_bullish and pm_score > 10) or (not is_bullish and pm_score < -10):
+            score += 1
+
+        return score
+
     def _is_in_cancellation_cooldown(self) -> bool:
         """
         Check if we're in cooldown after cancelling a trade.
@@ -270,7 +327,16 @@ class TradeTracker:
         # If PUT trades are bad, VerdictAnalyzer will learn this and skip them
         # If "strongly" verdicts are bad, VerdictAnalyzer will learn this too
 
-        # 9. MARKET REGIME FILTER: Adjust requirements based on market conditions
+        # 9. QUALITY SCORE CALCULATION
+        # High-quality trades (Score >= 7) can bypass strict regime requirements
+        MIN_QUALITY_SCORE = 7
+        quality_score = self._calculate_quality_score(analysis)
+        is_high_quality = quality_score >= MIN_QUALITY_SCORE
+
+        log.info("Quality score calculated", quality_score=quality_score,
+                 min_required=MIN_QUALITY_SCORE, is_high_quality=is_high_quality)
+
+        # 10. MARKET REGIME FILTER: Adjust requirements based on market conditions
         market_regime = analysis.get("market_regime", {})
         regime = market_regime.get("regime", "range_bound")
 
@@ -285,7 +351,7 @@ class TradeTracker:
                             risk_pct=f"{trade_setup.get('risk_pct')}%", max_allowed="15%")
                 return False
 
-        # 10. SYMMETRIC CONFIRMATION FOR BOTH DIRECTIONS
+        # 11. SYMMETRIC CONFIRMATION FOR BOTH DIRECTIONS
         direction = trade_setup.get("direction")
         confirmation_status = analysis.get("confirmation_status", "")
 
@@ -294,20 +360,43 @@ class TradeTracker:
             log.warning("Skipping: Needs confirmation", current_status=confirmation_status)
             return False
 
-        # Both need regime alignment
-        if direction == "BUY_CALL" and regime != "trending_up":
-            log.warning("Skipping CALL: Needs trending_up", current_regime=regime)
-            return False
-        elif direction == "BUY_PUT" and regime != "trending_down":
-            log.warning("Skipping PUT: Needs trending_down", current_regime=regime)
-            return False
+        # 12. REGIME ALIGNMENT WITH QUALITY OVERRIDE
+        # High-quality trades (Score >= 7) can trade in range_bound markets
+        # This allows exceptional setups to bypass strict regime requirements
+        if is_high_quality:
+            # High quality: Only block if regime is COUNTER to direction
+            # (e.g., BUY_CALL in trending_down is always bad)
+            if direction == "BUY_CALL" and regime == "trending_down":
+                log.warning("Skipping CALL: Counter-trend even with high quality",
+                            quality_score=quality_score, current_regime=regime)
+                return False
+            elif direction == "BUY_PUT" and regime == "trending_up":
+                log.warning("Skipping PUT: Counter-trend even with high quality",
+                            quality_score=quality_score, current_regime=regime)
+                return False
+            # range_bound is allowed for high-quality trades
+            if regime == "range_bound":
+                log.info("HIGH QUALITY OVERRIDE: Allowing trade in range_bound market",
+                         quality_score=quality_score, direction=direction)
+        else:
+            # Standard quality: Require strict regime alignment
+            if direction == "BUY_CALL" and regime != "trending_up":
+                log.warning("Skipping CALL: Needs trending_up (or quality >= 7)",
+                            quality_score=quality_score, current_regime=regime)
+                return False
+            elif direction == "BUY_PUT" and regime != "trending_down":
+                log.warning("Skipping PUT: Needs trending_down (or quality >= 7)",
+                            quality_score=quality_score, current_regime=regime)
+                return False
 
-        # 11. MULTI-FACTOR CONFIRMATION (require 3 out of 4 aligned signals)
-        REQUIRED_CONFIRMATIONS = 3
+        # 13. MULTI-FACTOR CONFIRMATION
+        # Reduce required confirmations for high-quality trades
+        REQUIRED_CONFIRMATIONS = 2 if is_high_quality else 3
         confirmations = self._count_confirmations(analysis)
         if confirmations < REQUIRED_CONFIRMATIONS:
             log.warning("Skipping: Insufficient confirmations",
-                        confirmations=confirmations, required=REQUIRED_CONFIRMATIONS)
+                        confirmations=confirmations, required=REQUIRED_CONFIRMATIONS,
+                        quality_score=quality_score)
             return False
 
         return True
@@ -446,6 +535,9 @@ class TradeTracker:
         risk = trade_setup["risk_pct"]
         iv = trade_setup.get("iv_at_strike", 0)
 
+        # Calculate quality score
+        quality_score = self._calculate_quality_score(analysis)
+
         # Format OI changes (in lakhs for readability)
         call_change_lakh = call_change / 100000
         put_change_lakh = put_change / 100000
@@ -455,6 +547,7 @@ class TradeTracker:
 
         reasoning = (
             f"{direction}: {verdict} ({confidence:.0f}% confidence). "
+            f"Quality Score: {quality_score}/9. "
             f"Call OI {call_change_lakh:+.1f}L vs Put OI {put_change_lakh:+.1f}L. "
             f"Spot {spot:.0f} {spot_vs_mp} max pain {max_pain}. "
             f"Selected {strike} {trade_setup['option_type']} ({moneyness}) with {risk:.0f}% risk."
@@ -514,9 +607,10 @@ class TradeTracker:
             trade_reasoning=trade_reasoning
         )
 
+        quality_score = self._calculate_quality_score(analysis)
         log.info("Created PENDING setup", setup_id=setup_id, direction=trade_setup['direction'],
                  strike=trade_setup['strike'], option_type=trade_setup['option_type'],
-                 entry_premium=trade_setup['entry_premium'])
+                 entry_premium=trade_setup['entry_premium'], quality_score=quality_score)
 
         # Update tracking for direction flip cooldown
         self.last_suggested_direction = trade_setup["direction"]

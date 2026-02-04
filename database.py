@@ -265,6 +265,33 @@ def init_db():
             ON verdict_accuracy(date)
         """)
 
+        # Table for system logs (centralized logging)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS system_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                level TEXT NOT NULL,
+                component TEXT NOT NULL,
+                message TEXT NOT NULL,
+                details TEXT,
+                session_id TEXT
+            )
+        """)
+
+        # Indexes for system_logs
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_system_logs_timestamp
+            ON system_logs(timestamp)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_system_logs_level
+            ON system_logs(level)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_system_logs_component
+            ON system_logs(component)
+        """)
+
         # Add migration for technical analysis context columns in trade_setups
         trade_setup_columns_to_add = [
             ("call_oi_change_at_creation", "REAL DEFAULT 0"),
@@ -278,7 +305,7 @@ def init_db():
         for col_name, col_def in trade_setup_columns_to_add:
             try:
                 cursor.execute(f"ALTER TABLE trade_setups ADD COLUMN {col_name} {col_def}")
-                print(f"Added {col_name} column to trade_setups table")
+                # Log migration (using print since logger may not be available during init)
             except:
                 pass  # Column already exists
 
@@ -292,7 +319,6 @@ def init_db():
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN atm_put_oi_change INTEGER DEFAULT 0")
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN itm_call_oi_change INTEGER DEFAULT 0")
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN itm_put_oi_change INTEGER DEFAULT 0")
-            print("Added ATM/ITM columns to analysis_history table")
 
         # Add migration for volume columns if they don't exist
         cursor.execute("""
@@ -302,7 +328,6 @@ def init_db():
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN ce_volume INTEGER DEFAULT 0")
             cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_volume INTEGER DEFAULT 0")
-            print("Added volume columns to oi_snapshots table")
 
         # Add migration for IV columns if they don't exist
         cursor.execute("""
@@ -312,7 +337,6 @@ def init_db():
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN ce_iv REAL DEFAULT 0.0")
             cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_iv REAL DEFAULT 0.0")
-            print("Added IV columns to oi_snapshots table")
 
         # Add migration for VIX and other analysis columns if they don't exist
         cursor.execute("""
@@ -324,7 +348,6 @@ def init_db():
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN iv_skew REAL DEFAULT 0.0")
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN max_pain INTEGER DEFAULT 0")
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN signal_confidence REAL DEFAULT 0.0")
-            print("Added VIX, IV skew, max pain, and confidence columns to analysis_history table")
 
         # Add migration for futures OI columns if they don't exist
         cursor.execute("""
@@ -335,7 +358,6 @@ def init_db():
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN futures_oi INTEGER DEFAULT 0")
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN futures_oi_change INTEGER DEFAULT 0")
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN futures_basis REAL DEFAULT 0.0")
-            print("Added futures OI columns to analysis_history table")
 
         # Add migration for LTP columns if they don't exist
         cursor.execute("""
@@ -345,7 +367,6 @@ def init_db():
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN ce_ltp REAL DEFAULT 0.0")
             cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_ltp REAL DEFAULT 0.0")
-            print("Added LTP columns to oi_snapshots table")
 
         # Add migration for analysis_json column to store complete analysis
         cursor.execute("""
@@ -354,7 +375,6 @@ def init_db():
         """)
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN analysis_json TEXT")
-            print("Added analysis_json column to analysis_history table")
 
         # Add migration for prev_verdict column for hysteresis
         cursor.execute("""
@@ -363,7 +383,6 @@ def init_db():
         """)
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN prev_verdict TEXT")
-            print("Added prev_verdict column to analysis_history table")
 
         conn.commit()
 
@@ -815,7 +834,13 @@ def purge_old_data(keep_from_date):
 
         conn.commit()
 
-        print(f"Purged {snapshots_deleted} snapshot records and {analysis_deleted} analysis records")
+        # Use lazy import to avoid circular dependency during module init
+        try:
+            from logger import get_logger
+            log = get_logger("database")
+            log.info("Purged old data", snapshots=snapshots_deleted, analysis=analysis_deleted)
+        except ImportError:
+            pass
         return snapshots_deleted, analysis_deleted
 
 
@@ -826,7 +851,12 @@ def purge_all_data():
         cursor.execute("DELETE FROM oi_snapshots")
         cursor.execute("DELETE FROM analysis_history")
         conn.commit()
-        print("All data purged from database")
+        try:
+            from logger import get_logger
+            log = get_logger("database")
+            log.info("All data purged from database")
+        except ImportError:
+            pass
 
 
 def save_signal_outcome(signal_timestamp: datetime, verdict: str, strength: str,
@@ -1488,7 +1518,12 @@ def update_confidence_accuracy(lookback_days: int = 14):
             ))
 
         conn.commit()
-        print(f"[DB] Updated confidence_accuracy for {len(bucket_stats)} buckets")
+        try:
+            from logger import get_logger
+            log = get_logger("database")
+            log.debug("Updated confidence_accuracy", buckets=len(bucket_stats))
+        except ImportError:
+            pass
 
 
 def get_confidence_performance(lookback_days: int = 14) -> dict:
@@ -1636,7 +1671,12 @@ def update_verdict_accuracy(lookback_days: int = 14):
             ))
 
         conn.commit()
-        print(f"[DB] Updated verdict_accuracy for {len(verdict_stats)} verdicts")
+        try:
+            from logger import get_logger
+            log = get_logger("database")
+            log.debug("Updated verdict_accuracy", verdicts=len(verdict_stats))
+        except ImportError:
+            pass
 
 
 def get_verdict_performance(lookback_days: int = 14) -> dict:
@@ -1835,13 +1875,143 @@ def get_raw_verdict_stats(lookback_days: int = 14) -> dict:
         return results
 
 
+# ===== System Logging Functions =====
+
+def save_log(timestamp: datetime, level: str, component: str, message: str,
+             details: str = None, session_id: str = None):
+    """
+    Save a log entry to the database.
+
+    Args:
+        timestamp: When the log was created
+        level: Log level (DEBUG, INFO, WARNING, ERROR)
+        component: Component name (e.g., scheduler, trade_tracker)
+        message: Log message
+        details: Optional JSON string with extra context
+        session_id: Optional session ID to group logs
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO system_logs (timestamp, level, component, message, details, session_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (
+            timestamp.isoformat(),
+            level,
+            component,
+            message,
+            details,
+            session_id
+        ))
+        conn.commit()
+
+
+def get_logs(level: str = None, component: str = None, hours: int = 24,
+             limit: int = 100, offset: int = 0) -> tuple:
+    """
+    Get logs with optional filters.
+
+    Args:
+        level: Filter by log level (DEBUG, INFO, WARNING, ERROR)
+        component: Filter by component name
+        hours: Hours to look back (default 24)
+        limit: Maximum records to return (default 100)
+        offset: Number of records to skip for pagination
+
+    Returns:
+        Tuple of (logs_list, total_count)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Build query with filters
+        conditions = []
+        params = []
+
+        # Time filter
+        cutoff = datetime.now() - timedelta(hours=hours)
+        conditions.append("timestamp >= ?")
+        params.append(cutoff.isoformat())
+
+        # Level filter
+        if level:
+            conditions.append("level = ?")
+            params.append(level.upper())
+
+        # Component filter
+        if component:
+            conditions.append("component = ?")
+            params.append(component)
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+
+        # Get total count
+        cursor.execute(f"""
+            SELECT COUNT(*) as total FROM system_logs
+            WHERE {where_clause}
+        """, params)
+        total = cursor.fetchone()["total"]
+
+        # Get logs
+        params.extend([limit, offset])
+        cursor.execute(f"""
+            SELECT id, timestamp, level, component, message, details, session_id
+            FROM system_logs
+            WHERE {where_clause}
+            ORDER BY timestamp DESC
+            LIMIT ? OFFSET ?
+        """, params)
+
+        logs = []
+        for row in cursor.fetchall():
+            log_entry = {
+                "id": row["id"],
+                "timestamp": row["timestamp"],
+                "level": row["level"],
+                "component": row["component"],
+                "message": row["message"],
+            }
+            if row["details"]:
+                log_entry["details"] = row["details"]
+            if row["session_id"]:
+                log_entry["session_id"] = row["session_id"]
+            logs.append(log_entry)
+
+        return logs, total
+
+
+def purge_old_logs(days: int = 7):
+    """
+    Delete logs older than specified days.
+
+    Args:
+        days: Delete logs older than this many days (default 7)
+
+    Returns:
+        Number of logs deleted
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=days)
+        cursor.execute("""
+            DELETE FROM system_logs
+            WHERE timestamp < ?
+        """, (cutoff.isoformat(),))
+        deleted = cursor.rowcount
+        conn.commit()
+        return deleted
+
+
 # Initialize database on import
 init_db()
 
 
 if __name__ == "__main__":
+    from logger import get_logger
+    log = get_logger("database")
+
     # Test database operations
-    print("Testing database...")
+    log.info("Testing database")
 
     # Test save
     test_strikes = {
@@ -1855,10 +2025,10 @@ if __name__ == "__main__":
 
     # Test retrieve
     latest = get_latest_snapshot()
-    print(f"Latest snapshot: {latest}")
+    log.info("Latest snapshot", data=latest)
 
     analysis = get_latest_analysis()
-    print(f"Latest analysis: {analysis}")
+    log.info("Latest analysis", data=analysis)
 
     history = get_analysis_history(10)
-    print(f"History count: {len(history)}")
+    log.info("History retrieved", count=len(history))

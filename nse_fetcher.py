@@ -13,6 +13,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
+from logger import get_logger
+
+log = get_logger("nse_fetcher")
 
 
 class NSEFetcher:
@@ -70,7 +73,7 @@ class NSEFetcher:
         try:
             self._init_driver()
 
-            print("Loading NSE option chain page...")
+            log.info("Loading NSE option chain page")
             self.driver.get(self.OPTION_CHAIN_URL)
 
             # Wait for the table to load
@@ -92,7 +95,7 @@ class NSEFetcher:
             strikes_data = self._extract_table_data()
 
             if not strikes_data:
-                print("No strike data found")
+                log.error("No strike data found")
                 return None
 
             return {
@@ -104,7 +107,7 @@ class NSEFetcher:
             }
 
         except Exception as e:
-            print(f"Error fetching option chain: {e}")
+            log.error("Error fetching option chain", error=str(e))
             import traceback
             traceback.print_exc()
             return None
@@ -120,11 +123,11 @@ class NSEFetcher:
             numbers = re.findall(r'[\d,]+\.?\d*', spot_text)
             if numbers:
                 spot_price = float(numbers[-1].replace(",", ""))
-                print(f"Spot price: {spot_price}")
+                log.debug("Spot price extracted", spot_price=spot_price)
                 return spot_price
             return None
         except Exception as e:
-            print(f"Error extracting spot price: {e}")
+            log.debug("Error extracting spot price from primary element", error=str(e))
             # Try alternative method
             try:
                 spot_elem = self.driver.find_element(By.CSS_SELECTOR, "#equity_underlyingVal")
@@ -144,7 +147,7 @@ class NSEFetcher:
             expiry_date = expiry_elem.get_attribute("value")
             return expiry_date
         except Exception as e:
-            print(f"Error extracting expiry date: {e}")
+            log.debug("Error extracting expiry date", error=str(e))
             return None
 
     def _extract_atm_strike(self) -> Optional[int]:
@@ -173,7 +176,7 @@ class NSEFetcher:
             table = self.driver.find_element(By.ID, "optionChainTable-indices")
             rows = table.find_elements(By.CSS_SELECTOR, "tbody tr")
 
-            print(f"Found {len(rows)} rows in table")
+            log.debug("Found table rows", count=len(rows))
 
 
             for row in rows:
@@ -243,10 +246,10 @@ class NSEFetcher:
                 except Exception as e:
                     continue
 
-            print(f"Extracted {len(strikes_data)} strikes")
+            log.debug("Extracted strikes", count=len(strikes_data))
 
         except Exception as e:
-            print(f"Error extracting table data: {e}")
+            log.error("Error extracting table data", error=str(e))
             import traceback
             traceback.print_exc()
 
@@ -282,7 +285,7 @@ class NSEFetcher:
         try:
             self._init_driver()
 
-            print("Loading NSE homepage for VIX...")
+            log.debug("Loading NSE homepage for VIX")
             self.driver.get("https://www.nseindia.com")
 
             # Wait for page to load
@@ -306,7 +309,7 @@ class NSEFetcher:
                 numbers = re.findall(r'[\d,]+\.?\d*', vix_text)
                 if numbers:
                     vix_value = float(numbers[0].replace(",", ""))
-                    print(f"India VIX: {vix_value}")
+                    log.debug("India VIX extracted", vix=vix_value)
                     return vix_value
             except Exception:
                 pass
@@ -323,15 +326,15 @@ class NSEFetcher:
                 for index in data.get("data", []):
                     if "INDIA VIX" in index.get("index", "").upper():
                         vix_value = float(index.get("last", 0))
-                        print(f"India VIX (from API): {vix_value}")
+                        log.debug("India VIX from API", vix=vix_value)
                         return vix_value
             except Exception as e:
-                print(f"Error fetching VIX from API: {e}")
+                log.debug("Error fetching VIX from API", error=str(e))
 
             return None
 
         except Exception as e:
-            print(f"Error fetching India VIX: {e}")
+            log.error("Error fetching India VIX", error=str(e))
             return None
 
     def fetch_futures_data(self) -> Optional[dict]:
@@ -350,7 +353,7 @@ class NSEFetcher:
         try:
             self._init_driver()
 
-            print("Loading NSE derivatives page for futures...")
+            log.debug("Loading NSE derivatives page for futures")
             self.driver.get("https://www.nseindia.com/api/liveEquity-derivatives?index=nse50_fut")
 
             time.sleep(2)
@@ -375,8 +378,8 @@ class NSEFetcher:
                     basis = future_price - underlying_value if underlying_value > 0 else 0
                     basis_pct = (basis / underlying_value * 100) if underlying_value > 0 else 0
 
-                    print(f"Futures: Price={future_price:.2f}, OI={future_oi:,}, "
-                          f"Basis={basis:.2f} ({basis_pct:.3f}%)")
+                    log.debug("Futures data", price=f"{future_price:.2f}", oi=f"{future_oi:,}",
+                              basis=f"{basis:.2f}", basis_pct=f"{basis_pct:.3f}%")
 
                     return {
                         "future_price": future_price,
@@ -394,15 +397,15 @@ class NSEFetcher:
             data = json.loads(body_text)
 
             # This endpoint may have different structure
-            print("Futures data not found in primary endpoint, checking alternatives...")
+            log.debug("Futures data not found in primary endpoint")
             return None
 
         except json.JSONDecodeError as e:
             # API may return HTML instead of JSON - try scraping the derivatives page
-            print(f"JSON decode error for futures API: {e}")
+            log.debug("JSON decode error for futures API", error=str(e))
             return self._fetch_futures_from_page()
         except Exception as e:
-            print(f"Error fetching futures data: {e}")
+            log.error("Error fetching futures data", error=str(e))
             return None
 
     def _fetch_futures_from_page(self) -> Optional[dict]:
@@ -417,11 +420,11 @@ class NSEFetcher:
 
             # Try to find futures data in the page
             # This is a fallback - structure may vary
-            print("Attempting to scrape futures from page (fallback method)")
+            log.debug("Attempting to scrape futures from page (fallback method)")
             return None
 
         except Exception as e:
-            print(f"Error in futures fallback: {e}")
+            log.error("Error in futures fallback", error=str(e))
             return None
 
     def parse_option_data(self, data: dict) -> Optional[dict]:
@@ -481,15 +484,16 @@ if __name__ == "__main__":
     fetcher = NSEFetcher(headless=True)
 
     try:
-        print("Fetching NIFTY option chain data...")
+        log.info("Fetching NIFTY option chain data")
         raw_data = fetcher.fetch_option_chain()
 
         if raw_data:
             parsed = fetcher.parse_option_data(raw_data)
             if parsed:
-                print(f"\nSpot Price: {parsed['spot_price']}")
-                print(f"Current Expiry: {parsed['current_expiry']}")
-                print(f"Number of strikes: {len(parsed['strikes'])}")
+                log.info("Data parsed successfully",
+                         spot_price=parsed['spot_price'],
+                         expiry=parsed['current_expiry'],
+                         strikes_count=len(parsed['strikes']))
 
                 spot = parsed['spot_price']
                 sorted_strikes = sorted(parsed['strikes'].keys())
@@ -498,15 +502,18 @@ if __name__ == "__main__":
                     atm_idx = min(range(len(sorted_strikes)),
                                  key=lambda i: abs(sorted_strikes[i] - spot))
 
-                    print(f"\nStrikes around ATM ({sorted_strikes[atm_idx]}):")
+                    log.info(f"ATM strike: {sorted_strikes[atm_idx]}")
                     for i in range(max(0, atm_idx-3), min(len(sorted_strikes), atm_idx+4)):
                         strike = sorted_strikes[i]
                         data = parsed['strikes'][strike]
-                        print(f"  {strike}: CE OI={data['ce_oi']:,} ({data['ce_oi_change']:+,}) LTP={data['ce_ltp']:.2f} | "
-                              f"PE OI={data['pe_oi']:,} ({data['pe_oi_change']:+,}) LTP={data['pe_ltp']:.2f}")
+                        log.debug(f"Strike {strike}",
+                                  ce_oi=f"{data['ce_oi']:,}", ce_change=f"{data['ce_oi_change']:+,}",
+                                  ce_ltp=f"{data['ce_ltp']:.2f}",
+                                  pe_oi=f"{data['pe_oi']:,}", pe_change=f"{data['pe_oi_change']:+,}",
+                                  pe_ltp=f"{data['pe_ltp']:.2f}")
             else:
-                print("Failed to parse data")
+                log.error("Failed to parse data")
         else:
-            print("Failed to fetch data")
+            log.error("Failed to fetch data")
     finally:
         fetcher.close()

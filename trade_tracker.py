@@ -18,6 +18,9 @@ from database import (
     get_last_resolved_trade,
 )
 from self_learner import get_self_learner
+from logger import get_logger
+
+log = get_logger("trade_tracker")
 
 
 # Market timing constants
@@ -115,8 +118,8 @@ class TradeTracker:
         if time_since_cancellation.total_seconds() < cooldown_seconds:
             minutes_since = int(time_since_cancellation.total_seconds() / 60)
             minutes_remaining = self.cancellation_cooldown_minutes - minutes_since
-            print(f"[TradeTracker] Skipping: Cancellation cooldown "
-                  f"({minutes_since}m ago, {minutes_remaining}m remaining - prevents shifting trades)")
+            log.warning("Skipping: Cancellation cooldown", minutes_since=minutes_since,
+                        minutes_remaining=minutes_remaining, reason="prevents_shifting_trades")
             return True
 
         return False
@@ -136,8 +139,8 @@ class TradeTracker:
 
         if time_since_last.total_seconds() < cooldown_seconds:
             minutes_since = int(time_since_last.total_seconds() / 60)
-            print(f"[TradeTracker] Skipping: Direction flip cooldown "
-                  f"({minutes_since}m ago, need {self.direction_flip_cooldown_minutes}m)")
+            log.warning("Skipping: Direction flip cooldown", minutes_since=minutes_since,
+                        required_minutes=self.direction_flip_cooldown_minutes)
             return True
 
         return False
@@ -186,10 +189,10 @@ class TradeTracker:
                 )
                 # CRITICAL: Set cancellation cooldown
                 self.last_cancelled_time = datetime.now()
-                print(f"[TradeTracker] Cancelled active setup (ID: {active_setup['id']}) - "
-                      f"Self-learner paused (30min cooldown active)")
+                log.warning("Cancelled active setup due to self-learner pause",
+                            setup_id=active_setup['id'], cooldown_minutes=30)
             else:
-                print("[TradeTracker] Skipping: Self-learner paused trading")
+                log.warning("Skipping: Self-learner paused trading")
             return False
 
         # 3. Check confidence using LEARNED thresholds (dynamic, not hardcoded)
@@ -199,26 +202,29 @@ class TradeTracker:
         # Use unified self-learner check (confidence range + verdict filter)
         should_trade, reason = self.self_learner.should_trade(confidence, verdict)
         if not should_trade:
-            print(f"[TradeTracker] Skipping: {reason}")
+            log.warning("Skipping trade", reason=reason)
             return False
 
         # Additional explicit confidence checks as fallback
         if confidence < self.confidence_threshold:
-            print(f"[TradeTracker] Skipping: Confidence {confidence:.0f}% below learned min {self.confidence_threshold:.0f}%")
+            log.warning("Skipping: Confidence below min threshold",
+                        confidence=f"{confidence:.0f}%", min_threshold=f"{self.confidence_threshold:.0f}%")
             return False
         if confidence > self.confidence_max:
-            print(f"[TradeTracker] Skipping: Confidence {confidence:.0f}% above learned max {self.confidence_max:.0f}%")
+            log.warning("Skipping: Confidence above max threshold",
+                        confidence=f"{confidence:.0f}%", max_threshold=f"{self.confidence_max:.0f}%")
             return False
 
         # Check learned exclusion zones
         for low, high in self.confidence_exclude_ranges:
             if low <= confidence < high:
-                print(f"[TradeTracker] Skipping: Confidence {confidence:.0f}% in learned exclude zone [{low:.0f}-{high:.0f}%]")
+                log.warning("Skipping: Confidence in exclude zone",
+                            confidence=f"{confidence:.0f}%", exclude_zone=f"[{low:.0f}-{high:.0f}%]")
                 return False
 
         # 4. Check cooldown period after last resolved trade
         if self._is_in_cooldown():
-            print("[TradeTracker] Skipping: In cooldown period after recent trade")
+            log.warning("Skipping: In cooldown period after recent trade")
             return False
 
         # 4a. CRITICAL: Check cancellation cooldown (prevents shifting trades)
@@ -236,12 +242,12 @@ class TradeTracker:
 
         # 5. Check if move already happened in signal direction
         if price_history and self._is_move_already_happened(analysis, price_history):
-            print("[TradeTracker] Skipping: Move already happened in signal direction")
+            log.warning("Skipping: Move already happened in signal direction")
             return False
 
         # 6. Check for bounce in progress (bad for PUT trades)
         if price_history and self._is_bounce_in_progress(analysis, price_history):
-            print("[TradeTracker] Skipping: Bounce in progress - bad for PUT entry")
+            log.warning("Skipping: Bounce in progress - bad for PUT entry")
             return False
 
         # 7. Check if trade setup was generated
@@ -256,7 +262,7 @@ class TradeTracker:
         # Check if this specific verdict should be skipped based on learned performance
         skip_verdict, verdict_reason = self.self_learner.verdict_analyzer.should_skip_verdict(verdict)
         if skip_verdict:
-            print(f"[TradeTracker] Skipping: {verdict_reason}")
+            log.warning("Skipping trade", reason=verdict_reason)
             return False
 
         # NOTE: The hardcoded PUT disable and "slightly" filters have been REMOVED
@@ -271,11 +277,12 @@ class TradeTracker:
         if regime == "range_bound":
             # In sideways markets, OTM options have poor performance - need higher delta
             if trade_setup.get("moneyness") == "OTM":
-                print(f"[TradeTracker] Skipping: OTM trade in sideways market has poor win rate")
+                log.warning("Skipping: OTM trade in sideways market has poor win rate")
                 return False
             # Tighter SL required in sideways (max 15%)
             if trade_setup.get("risk_pct", 20) > 15:
-                print(f"[TradeTracker] Skipping: SL too wide ({trade_setup.get('risk_pct')}%) for sideways market")
+                log.warning("Skipping: SL too wide for sideways market",
+                            risk_pct=f"{trade_setup.get('risk_pct')}%", max_allowed="15%")
                 return False
 
         # 10. SYMMETRIC CONFIRMATION FOR BOTH DIRECTIONS
@@ -284,22 +291,23 @@ class TradeTracker:
 
         # Both CALL and PUT need CONFIRMED status
         if confirmation_status not in ["CONFIRMED", "REVERSAL_ALERT"]:
-            print(f"[TradeTracker] Skipping: Needs confirmation, got '{confirmation_status}'")
+            log.warning("Skipping: Needs confirmation", current_status=confirmation_status)
             return False
 
         # Both need regime alignment
         if direction == "BUY_CALL" and regime != "trending_up":
-            print(f"[TradeTracker] Skipping CALL: Needs trending_up, got '{regime}'")
+            log.warning("Skipping CALL: Needs trending_up", current_regime=regime)
             return False
         elif direction == "BUY_PUT" and regime != "trending_down":
-            print(f"[TradeTracker] Skipping PUT: Needs trending_down, got '{regime}'")
+            log.warning("Skipping PUT: Needs trending_down", current_regime=regime)
             return False
 
         # 11. MULTI-FACTOR CONFIRMATION (require 3 out of 4 aligned signals)
         REQUIRED_CONFIRMATIONS = 3
         confirmations = self._count_confirmations(analysis)
         if confirmations < REQUIRED_CONFIRMATIONS:
-            print(f"[TradeTracker] Skipping: Only {confirmations}/{REQUIRED_CONFIRMATIONS} confirmations")
+            log.warning("Skipping: Insufficient confirmations",
+                        confirmations=confirmations, required=REQUIRED_CONFIRMATIONS)
             return False
 
         return True
@@ -506,9 +514,9 @@ class TradeTracker:
             trade_reasoning=trade_reasoning
         )
 
-        print(f"[TradeTracker] Created PENDING setup #{setup_id}: "
-              f"{trade_setup['direction']} {trade_setup['strike']} {trade_setup['option_type']} "
-              f"@ {trade_setup['entry_premium']}")
+        log.info("Created PENDING setup", setup_id=setup_id, direction=trade_setup['direction'],
+                 strike=trade_setup['strike'], option_type=trade_setup['option_type'],
+                 entry_premium=trade_setup['entry_premium'])
 
         # Update tracking for direction flip cooldown
         self.last_suggested_direction = trade_setup["direction"]
@@ -593,8 +601,8 @@ class TradeTracker:
             )
 
             slippage_pct = ((current_premium - entry_premium) / entry_premium) * 100
-            print(f"[TradeTracker] Setup #{setup['id']} ACTIVATED at {current_premium:.2f} "
-                  f"(entry was {entry_premium:.2f}, slippage {slippage_pct:+.1f}%)")
+            log.info("Setup ACTIVATED", setup_id=setup['id'], current_premium=f"{current_premium:.2f}",
+                     entry_premium=f"{entry_premium:.2f}", slippage=f"{slippage_pct:+.1f}%")
 
             return {
                 "setup_id": setup["id"],
@@ -605,8 +613,9 @@ class TradeTracker:
 
         # Premium moved too far above entry - don't chase
         move_pct = ((current_premium - entry_premium) / entry_premium) * 100
-        print(f"[TradeTracker] Setup #{setup['id']} NOT activated - premium {current_premium:.2f} "
-              f"moved {move_pct:+.1f}% from entry {entry_premium:.2f} (max allowed: +10%)")
+        log.debug("Setup NOT activated - premium moved too far", setup_id=setup['id'],
+                  current_premium=f"{current_premium:.2f}", entry_premium=f"{entry_premium:.2f}",
+                  move=f"{move_pct:+.1f}%", max_allowed="+10%")
 
         # Update tracking even if not activated
         update_trade_setup_status(
@@ -654,8 +663,8 @@ class TradeTracker:
                 last_premium=current_premium
             )
 
-            print(f"[TradeTracker] Setup #{setup['id']} LOST - SL hit at {current_premium:.2f} "
-                  f"({profit_loss_pct:.1f}%)")
+            log.warning("Setup LOST - SL hit", setup_id=setup['id'],
+                        exit_premium=f"{current_premium:.2f}", pnl=f"{profit_loss_pct:.1f}%")
 
             return {
                 "setup_id": setup["id"],
@@ -685,8 +694,8 @@ class TradeTracker:
                 last_premium=current_premium
             )
 
-            print(f"[TradeTracker] Setup #{setup['id']} WON - Target hit at {current_premium:.2f} "
-                  f"({profit_loss_pct:.1f}%)")
+            log.info("Setup WON - Target hit", setup_id=setup['id'],
+                     exit_premium=f"{current_premium:.2f}", pnl=f"{profit_loss_pct:.1f}%")
 
             return {
                 "setup_id": setup["id"],
@@ -748,10 +757,10 @@ class TradeTracker:
             # CRITICAL: Set cancellation cooldown to prevent immediate recreation with different prices
             self.last_cancelled_time = timestamp
 
-            print(f"[TradeTracker] Setup #{setup['id']} CANCELLED - Direction flipped from "
-                  f"{'BULLISH' if setup_is_bullish else 'BEARISH'} to "
-                  f"{'BULLISH' if current_is_bullish else 'BEARISH'} "
-                  f"(30min cooldown active)")
+            log.warning("Setup CANCELLED - Direction flipped", setup_id=setup['id'],
+                        from_direction='BULLISH' if setup_is_bullish else 'BEARISH',
+                        to_direction='BULLISH' if current_is_bullish else 'BEARISH',
+                        cooldown_minutes=30)
 
             return True
 
@@ -782,7 +791,7 @@ class TradeTracker:
             resolved_at=timestamp
         )
 
-        print(f"[TradeTracker] Setup #{setup['id']} EXPIRED at market close")
+        log.info("Setup EXPIRED at market close", setup_id=setup['id'])
 
         return True
 
@@ -828,8 +837,8 @@ class TradeTracker:
             profit_loss_points=profit_loss_points
         )
 
-        print(f"[TradeTracker] Setup #{setup['id']} FORCE CLOSED at market end: "
-              f"{status} ({profit_loss_pct:+.2f}%)")
+        log.info("Setup FORCE CLOSED at market end", setup_id=setup['id'],
+                 status=status, pnl=f"{profit_loss_pct:+.2f}%")
 
         return True
 
@@ -918,14 +927,14 @@ def get_trade_tracker() -> TradeTracker:
 
 if __name__ == "__main__":
     # Test the trade tracker
-    print("Testing Trade Tracker...")
+    log.info("Testing Trade Tracker")
 
     tracker = get_trade_tracker()
 
     # Check stats
     stats = tracker.get_stats()
-    print(f"Current stats: {stats}")
+    log.info("Current stats", stats=stats)
 
     # Check for active setup
     active = get_active_trade_setup()
-    print(f"Active setup: {active}")
+    log.info("Active setup", setup=active)

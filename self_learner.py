@@ -18,6 +18,9 @@ from database import (
     update_verdict_accuracy, get_verdict_performance,
     get_raw_confidence_stats, get_raw_verdict_stats
 )
+from logger import get_logger
+
+log = get_logger("self_learner")
 
 
 class EMAAccuracyTracker:
@@ -75,10 +78,10 @@ class EMAAccuracyTracker:
         """Check if signals should be paused."""
         if self.consecutive_errors >= self.max_consecutive_errors:
             self.is_paused = True
-            print(f"[SelfLearner] PAUSED: {self.consecutive_errors} consecutive errors")
+            log.warning("PAUSED due to consecutive errors", consecutive_errors=self.consecutive_errors)
         elif self.ema_accuracy < self.pause_threshold:
             self.is_paused = True
-            print(f"[SelfLearner] PAUSED: Accuracy {self.ema_accuracy:.1%} below threshold")
+            log.warning("PAUSED due to low accuracy", accuracy=f"{self.ema_accuracy:.1%}", threshold=f"{self.pause_threshold:.1%}")
         else:
             self.is_paused = False
 
@@ -104,7 +107,7 @@ class EMAAccuracyTracker:
         """Manually reset the pause state (e.g., at start of new day)."""
         self.is_paused = False
         self.consecutive_errors = 0
-        print("[SelfLearner] Pause reset")
+        log.info("Pause reset for new trading day")
 
 
 class ConfidenceOptimizer:
@@ -231,8 +234,7 @@ class ConfidenceOptimizer:
 
         self._last_analysis_time = datetime.now()
 
-        print(f"[ConfidenceOptimizer] Updated thresholds: "
-              f"min={min_t:.0f}%, max={max_t:.0f}%, exclude={exclude}")
+        log.info("Updated confidence thresholds", min=f"{min_t:.0f}%", max=f"{max_t:.0f}%", exclude=str(exclude))
 
     def should_trade_at_confidence(self, confidence: float) -> Tuple[bool, str]:
         """
@@ -361,8 +363,8 @@ class VerdictAnalyzer:
 
         self._last_analysis_time = datetime.now()
 
-        print(f"[VerdictAnalyzer] Skip verdicts: {self.skip_verdicts}")
-        print(f"[VerdictAnalyzer] Best verdicts: {[v[0] for v in self.best_verdicts[:3]]}")
+        log.info("Verdict analysis updated", skip_verdicts=self.skip_verdicts,
+                 best_verdicts=[v[0] for v in self.best_verdicts[:3]])
 
     def get_verdict_ranking(self) -> List[Tuple[str, float]]:
         """Get verdicts ranked by accuracy."""
@@ -443,7 +445,7 @@ class AdaptiveWeights:
             if total_squared > 0:
                 self.weights = {k: v / total_squared for k, v in squared_acc.items()}
 
-        print(f"[SelfLearner] Updated weights: {self.weights}")
+        log.debug("Updated component weights", weights=self.weights)
 
     def update_thresholds(self) -> None:
         """
@@ -466,7 +468,7 @@ class AdaptiveWeights:
                 adjustment = (acc - 0.5) * 20  # -10 to +10 range
                 self.thresholds[strength] = base - adjustment  # Lower if accurate
 
-        print(f"[SelfLearner] Updated thresholds: {self.thresholds}")
+        log.debug("Updated strength thresholds", thresholds=self.thresholds)
 
     def get_adjusted_weights(self, include_atm: bool, include_itm: bool,
                              has_momentum: bool) -> dict:
@@ -758,13 +760,13 @@ class SelfLearner:
         try:
             update_confidence_accuracy(lookback_days=14)
         except Exception as e:
-            print(f"[SelfLearner] Error updating confidence accuracy: {e}")
+            log.error("Error updating confidence accuracy", error=str(e))
 
         # NEW: Update verdict accuracy in database
         try:
             update_verdict_accuracy(lookback_days=14)
         except Exception as e:
-            print(f"[SelfLearner] Error updating verdict accuracy: {e}")
+            log.error("Error updating verdict accuracy", error=str(e))
 
         # NEW: Update confidence optimizer thresholds
         self.confidence_optimizer.update_thresholds()
@@ -777,9 +779,9 @@ class SelfLearner:
 
         # Generate and log learning report
         report = self.generate_learning_report()
-        print("[SelfLearner] Learning update complete")
-        print(f"[SelfLearner] Report: Best confidence range: {report['confidence_analysis']['best_range']}")
-        print(f"[SelfLearner] Report: Best verdict: {report['verdict_analysis']['best_verdict']}")
+        log.info("Learning update complete",
+                 best_confidence_range=report['confidence_analysis']['best_range'],
+                 best_verdict=report['verdict_analysis']['best_verdict'])
 
     def _save_state(self) -> None:
         """Save current learned state to database."""
@@ -943,38 +945,38 @@ def get_self_learner() -> SelfLearner:
 
 if __name__ == "__main__":
     # Test the self-learner
-    print("Testing Self-Learner...")
+    log.info("Testing Self-Learner")
 
     learner = get_self_learner()
 
     # Show initial status
-    print(f"\nInitial Status:")
-    print(f"  EMA Accuracy: {learner.signal_tracker.ema_tracker.ema_accuracy:.1%}")
-    print(f"  Should Trade: {learner.signal_tracker.ema_tracker.should_trade()}")
-    print(f"  Weights: {learner.adaptive_weights.weights}")
-    print(f"  Thresholds: {learner.adaptive_weights.thresholds}")
+    log.info("Initial Status",
+             ema_accuracy=f"{learner.signal_tracker.ema_tracker.ema_accuracy:.1%}",
+             should_trade=learner.signal_tracker.ema_tracker.should_trade(),
+             weights=learner.adaptive_weights.weights,
+             thresholds=learner.adaptive_weights.thresholds)
 
     # Simulate some outcomes
-    print("\nSimulating outcomes...")
+    log.info("Simulating outcomes: 2 correct, 1 wrong")
     learner.signal_tracker.ema_tracker.update(True)  # Correct
     learner.signal_tracker.ema_tracker.update(True)  # Correct
     learner.signal_tracker.ema_tracker.update(False) # Wrong
 
-    print(f"\nAfter 2 correct, 1 wrong:")
-    print(f"  EMA Accuracy: {learner.signal_tracker.ema_tracker.ema_accuracy:.1%}")
-    print(f"  Consecutive Errors: {learner.signal_tracker.ema_tracker.consecutive_errors}")
-    print(f"  Should Trade: {learner.signal_tracker.ema_tracker.should_trade()}")
+    log.info("After 2 correct, 1 wrong",
+             ema_accuracy=f"{learner.signal_tracker.ema_tracker.ema_accuracy:.1%}",
+             consecutive_errors=learner.signal_tracker.ema_tracker.consecutive_errors,
+             should_trade=learner.signal_tracker.ema_tracker.should_trade())
 
     # Simulate consecutive errors
-    print("\nSimulating 3 consecutive errors...")
+    log.info("Simulating 3 consecutive errors")
     learner.signal_tracker.ema_tracker.update(False)
     learner.signal_tracker.ema_tracker.update(False)
     learner.signal_tracker.ema_tracker.update(False)
 
-    print(f"\nAfter 3 consecutive errors:")
-    print(f"  EMA Accuracy: {learner.signal_tracker.ema_tracker.ema_accuracy:.1%}")
-    print(f"  Consecutive Errors: {learner.signal_tracker.ema_tracker.consecutive_errors}")
-    print(f"  Is Paused: {learner.signal_tracker.ema_tracker.is_paused}")
-    print(f"  Should Trade: {learner.signal_tracker.ema_tracker.should_trade()}")
+    log.info("After 3 consecutive errors",
+             ema_accuracy=f"{learner.signal_tracker.ema_tracker.ema_accuracy:.1%}",
+             consecutive_errors=learner.signal_tracker.ema_tracker.consecutive_errors,
+             is_paused=learner.signal_tracker.ema_tracker.is_paused,
+             should_trade=learner.signal_tracker.ema_tracker.should_trade())
 
-    print("\nTest complete.")
+    log.info("Test complete")

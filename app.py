@@ -9,8 +9,12 @@ from flask_socketio import SocketIO
 from scheduler import OIScheduler
 from database import (
     get_latest_analysis, get_analysis_history, get_latest_snapshot,
-    get_active_trade_setup, get_trade_setup_stats, get_trade_history
+    get_active_trade_setup, get_trade_setup_stats, get_trade_history,
+    get_logs
 )
+from logger import get_logger
+
+log = get_logger("app")
 
 
 app = Flask(__name__)
@@ -215,10 +219,47 @@ def api_trades():
     })
 
 
+@app.route("/api/logs")
+def api_logs():
+    """
+    Get system logs with filtering.
+
+    Query params:
+        level: Filter by log level (DEBUG, INFO, WARNING, ERROR)
+        component: Filter by component name
+        hours: Hours to look back (default 24)
+        limit: Max records to return (default 100)
+    """
+    level = request.args.get("level")
+    component = request.args.get("component")
+    hours = request.args.get("hours", 24, type=int)
+    limit = request.args.get("limit", 100, type=int)
+
+    logs_list, total = get_logs(
+        level=level,
+        component=component,
+        hours=hours,
+        limit=limit
+    )
+
+    filters_applied = {}
+    if level:
+        filters_applied["level"] = level
+    if component:
+        filters_applied["component"] = component
+    filters_applied["hours"] = hours
+
+    return jsonify({
+        "logs": logs_list,
+        "total": total,
+        "filters_applied": filters_applied
+    })
+
+
 @socketio.on("connect")
 def handle_connect():
     """Handle client connection."""
-    print("Client connected")
+    log.info("Client connected")
     # Send latest data from database (single source of truth)
     analysis = get_latest_analysis()
 
@@ -263,13 +304,13 @@ def handle_connect():
 @socketio.on("disconnect")
 def handle_disconnect():
     """Handle client disconnection."""
-    print("Client disconnected")
+    log.info("Client disconnected")
 
 
 @socketio.on("request_refresh")
 def handle_refresh_request():
     """Handle manual refresh request from client."""
-    print("Client requested refresh")
+    log.info("Client requested refresh")
     oi_scheduler.trigger_now()
 
 
@@ -324,24 +365,23 @@ def handle_set_force_fetch(data):
     """Handle force fetch toggle from client."""
     enabled = data.get("enabled", False)
     oi_scheduler.set_force_enabled(enabled)
-    print(f"Force auto-fetch: {'enabled' if enabled else 'disabled'}")
+    log.info("Force auto-fetch toggled", enabled=enabled)
 
 
 def start_app(debug: bool = False, port: int = 5000):
     """Start the application."""
     import threading
 
-    print("=" * 50)
-    print("  NIFTY OI Tracker Dashboard")
-    print("=" * 50)
-    print(f"\n  Server starting on http://localhost:{port}")
-    print("  Press Ctrl+C to stop\n")
+    log.info("=" * 50)
+    log.info("NIFTY OI Tracker Dashboard")
+    log.info("=" * 50)
+    log.info(f"Server starting on http://localhost:{port}")
 
     # Start the scheduler in a separate thread after a short delay
     def start_scheduler():
         import time
         time.sleep(2)  # Wait for server to be ready
-        print("\n  Starting data fetcher (first fetch may take 30-60 seconds)...")
+        log.info("Starting data fetcher (first fetch may take 30-60 seconds)")
         oi_scheduler.start(interval_minutes=3)
 
     scheduler_thread = threading.Thread(target=start_scheduler, daemon=True)

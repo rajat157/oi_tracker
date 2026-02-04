@@ -18,6 +18,9 @@ from database import (
 )
 from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
+from logger import get_logger
+
+log = get_logger("scheduler")
 
 
 # Market timing constants (IST)
@@ -78,9 +81,9 @@ class OIScheduler:
         # Check if there's old data to purge
         last_data_date = get_last_data_date()
         if last_data_date and last_data_date < cutoff_date:
-            print(f"[{datetime.now()}] Purging data older than {cutoff_date} (90-day retention)...")
+            log.info("Purging old data", cutoff=str(cutoff_date), retention_days=90)
             purge_old_data(cutoff_date)
-            print(f"[{datetime.now()}] Old data purged. Keeping data from {cutoff_date} onwards.")
+            log.info("Old data purged", keep_from=str(cutoff_date))
 
         self.last_purge_date = today
 
@@ -96,10 +99,10 @@ class OIScheduler:
 
         # Check if market is open OR force is enabled
         if not force and not self.force_enabled and not self.is_market_open():
-            print(f"[{datetime.now()}] Market is closed. Skipping fetch.")
+            log.debug("Market is closed, skipping fetch")
             return
 
-        print(f"[{datetime.now()}] Fetching OI data...")
+        log.info("Fetching OI data")
 
         fetcher = None
         try:
@@ -109,13 +112,13 @@ class OIScheduler:
             # Fetch raw data
             raw_data = fetcher.fetch_option_chain()
             if not raw_data:
-                print("Failed to fetch data from NSE")
+                log.error("Failed to fetch data from NSE")
                 return
 
             # Parse the data
             parsed = fetcher.parse_option_data(raw_data)
             if not parsed:
-                print("Failed to parse option chain data")
+                log.error("Failed to parse option chain data")
                 return
 
             timestamp = datetime.now()
@@ -137,7 +140,10 @@ class OIScheduler:
 
             # Fetch India VIX for volatility context
             vix = fetcher.fetch_india_vix() or 0.0
-            print(f"India VIX: {vix:.2f}" if vix > 0 else "VIX: Not available")
+            if vix > 0:
+                log.info("India VIX fetched", vix=f"{vix:.2f}")
+            else:
+                log.debug("VIX not available")
 
             # Fetch futures data for cross-validation
             futures_data = fetcher.fetch_futures_data() or {}
@@ -152,7 +158,7 @@ class OIScheduler:
                 futures_oi_change = 0
 
             if futures_oi > 0:
-                print(f"Futures OI Change: {futures_oi_change:+,} (prev: {prev_futures_oi:,}, curr: {futures_oi:,})")
+                log.info("Futures OI", change=f"{futures_oi_change:+,}", prev=f"{prev_futures_oi:,}", curr=f"{futures_oi:,}")
 
             # Get previous verdict for hysteresis
             prev_verdict = get_previous_verdict()
@@ -175,12 +181,12 @@ class OIScheduler:
             resolved = self.self_learner.check_outcomes(spot_price, timestamp)
             for r in resolved:
                 status = "CORRECT" if r["was_correct"] else "WRONG"
-                print(f"[SelfLearner] Signal resolved: {r['verdict']} -> {status} ({r['profit_loss_pct']:+.2f}%)")
+                log.info("Signal resolved", verdict=r['verdict'], status=status, pnl=f"{r['profit_loss_pct']:+.2f}%")
 
             # Self-learning: record new signal and get status
             learning_result = self.self_learner.process_new_signal(timestamp, analysis)
             if learning_result["signal_id"]:
-                print(f"[SelfLearner] Recorded signal #{learning_result['signal_id']} (confidence: {learning_result['confidence']:.0f}%)")
+                log.info("Recorded signal", signal_id=learning_result['signal_id'], confidence=f"{learning_result['confidence']:.0f}%")
 
             # Add self_learning to analysis BEFORE serialization so it's stored in DB
             analysis["self_learning"] = {
@@ -226,14 +232,14 @@ class OIScheduler:
 
             self.last_analysis = analysis
 
-            print(f"[{datetime.now()}] Analysis complete: {analysis['verdict']}")
+            log.info("Analysis complete", verdict=analysis['verdict'])
 
             # Trade Tracker: manage persistent trade setups
             # 1. Check and update existing setup status (activation/resolution)
             trade_update = self.trade_tracker.check_and_update_setup(strikes_data, timestamp)
             if trade_update:
-                print(f"[TradeTracker] Setup #{trade_update['setup_id']}: "
-                      f"{trade_update['previous_status']} -> {trade_update['new_status']}")
+                log.info("Trade setup updated", setup_id=trade_update['setup_id'],
+                         prev_status=trade_update['previous_status'], new_status=trade_update['new_status'])
 
             # 2. Cancel PENDING setup if OI direction flipped
             self.trade_tracker.cancel_on_direction_change(analysis["verdict"], timestamp)
@@ -264,10 +270,10 @@ class OIScheduler:
             # Broadcast to connected clients
             if self.socketio:
                 self.socketio.emit("oi_update", analysis)
-                print("Emitted update to clients")
+                log.debug("Emitted update to clients")
 
         except Exception as e:
-            print(f"Error in fetch_and_analyze: {e}")
+            log.error("Error in fetch_and_analyze", error=str(e))
             import traceback
             traceback.print_exc()
         finally:
@@ -283,7 +289,7 @@ class OIScheduler:
             interval_minutes: How often to fetch data (default 3 mins)
         """
         if self.is_running:
-            print("Scheduler already running")
+            log.warning("Scheduler already running")
             return
 
         # Add the job
@@ -298,7 +304,7 @@ class OIScheduler:
         # Start scheduler
         self.scheduler.start()
         self.is_running = True
-        print(f"Scheduler started - fetching every {interval_minutes} minutes")
+        log.info("Scheduler started", interval_minutes=interval_minutes)
 
         # Run immediately on start
         self.fetch_and_analyze()
@@ -308,7 +314,7 @@ class OIScheduler:
         if self.is_running:
             self.scheduler.shutdown()
             self.is_running = False
-            print("Scheduler stopped")
+            log.info("Scheduler stopped")
 
     def get_last_analysis(self):
         """Get the most recent analysis result."""
@@ -334,7 +340,7 @@ class OIScheduler:
 
         # Run after market close (3:30 PM)
         if now.time() >= time(15, 30):
-            print(f"[{now}] Running daily learning update...")
+            log.info("Running daily learning update")
 
             # Run full learning update (includes confidence & verdict analysis)
             self.self_learner.update_learning()
@@ -343,19 +349,19 @@ class OIScheduler:
             # Generate and log learning report for visibility
             try:
                 report = self.self_learner.generate_learning_report()
-                print(f"[{now}] Learning Report:")
-                print(f"  Confidence: Best={report['confidence_analysis']['best_range']}, "
-                      f"Worst={report['confidence_analysis']['worst_range']}")
-                print(f"  Verdict: Best={report['verdict_analysis']['best_verdict']}, "
-                      f"Worst={report['verdict_analysis']['worst_verdict']}")
-                print(f"  Health: {report['overall_health']['status']}, "
-                      f"EMA={report['overall_health']['ema_accuracy']}")
+                log.info("Learning report generated",
+                         best_confidence=report['confidence_analysis']['best_range'],
+                         worst_confidence=report['confidence_analysis']['worst_range'],
+                         best_verdict=report['verdict_analysis']['best_verdict'],
+                         worst_verdict=report['verdict_analysis']['worst_verdict'],
+                         health_status=report['overall_health']['status'],
+                         ema_accuracy=report['overall_health']['ema_accuracy'])
 
                 # Store report in last_analysis for dashboard access
                 if self.last_analysis:
                     self.last_analysis["learning_report"] = report
             except Exception as e:
-                print(f"[{now}] Error generating learning report: {e}")
+                log.error("Error generating learning report", error=str(e))
 
             # Reset pause state for next day
             if now.time() >= time(15, 45):
@@ -386,10 +392,10 @@ class OIScheduler:
 
 if __name__ == "__main__":
     # Test scheduler standalone
-    print("Starting OI Scheduler test...")
+    log.info("Starting OI Scheduler test")
     scheduler = OIScheduler()
 
     # Just run once for testing
     scheduler.fetch_and_analyze()
 
-    print("\nTest complete.")
+    log.info("Test complete")

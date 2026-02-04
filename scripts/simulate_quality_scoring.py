@@ -36,6 +36,9 @@ COOLDOWN_MINUTES = 12
 # Max high-quality trades per day
 MAX_TRADES_PER_DAY = 3
 
+# NIFTY option lot size
+LOT_SIZE = 65
+
 
 def get_connection():
     """Get database connection."""
@@ -311,28 +314,28 @@ def get_snapshots_for_premium_tracking(start_time: str, end_time: str, strike: i
 
 
 def simulate_trade_outcome(analysis: dict, option_type: str, entry_premium: float,
-                           sl_premium: float, target_premium: float) -> Tuple[str, float, str]:
+                           sl_premium: float, target_premium: float) -> Tuple[str, float, str, str]:
     """
     Simulate trade outcome by looking ahead in price data.
 
     Returns:
-        Tuple of (outcome: 'WON'/'LOST'/'EXPIRED', exit_premium, exit_reason)
+        Tuple of (outcome: 'WON'/'LOST'/'EXPIRED', exit_premium, exit_reason, exit_timestamp)
     """
     trade_setup = analysis.get("trade_setup", {})
     if not trade_setup:
-        return "EXPIRED", entry_premium, "No trade setup"
+        return "EXPIRED", entry_premium, "No trade setup", ""
 
     strike = trade_setup.get("strike", 0)
     timestamp = analysis.get("_db_timestamp", "")
 
     if not strike or not timestamp:
-        return "EXPIRED", entry_premium, "Missing data"
+        return "EXPIRED", entry_premium, "Missing data", ""
 
     # Look ahead 2 hours (or until end of day)
     try:
         start_dt = datetime.fromisoformat(timestamp)
     except ValueError:
-        return "EXPIRED", entry_premium, "Invalid timestamp"
+        return "EXPIRED", entry_premium, "Invalid timestamp", ""
 
     end_dt = start_dt + timedelta(hours=2)
 
@@ -344,34 +347,37 @@ def simulate_trade_outcome(analysis: dict, option_type: str, entry_premium: floa
     )
 
     if not snapshots:
-        return "EXPIRED", entry_premium, "No future data"
+        return "EXPIRED", entry_premium, "No future data", ""
 
     # Check each snapshot for SL/Target hits
     ltp_key = "ce_ltp" if option_type == "CE" else "pe_ltp"
 
     for snap in snapshots[1:]:  # Skip first (entry point)
         current_premium = snap.get(ltp_key, 0)
+        exit_ts = snap.get("timestamp", "")
         if current_premium <= 0:
             continue
 
         # Check target hit
         if current_premium >= target_premium:
-            return "WON", current_premium, "Target hit"
+            return "WON", current_premium, "Target hit", exit_ts
 
         # Check SL hit
         if current_premium <= sl_premium:
-            return "LOST", current_premium, "SL hit"
+            return "LOST", current_premium, "SL hit", exit_ts
 
     # Trade expired without hitting SL or target
-    last_premium = snapshots[-1].get(ltp_key, entry_premium) if snapshots else entry_premium
+    last_snap = snapshots[-1] if snapshots else {}
+    last_premium = last_snap.get(ltp_key, entry_premium)
+    last_ts = last_snap.get("timestamp", "")
     if last_premium > entry_premium:
-        return "WON", last_premium, "Expired in profit"
+        return "WON", last_premium, "Expired in profit", last_ts
     else:
-        return "LOST", last_premium, "Expired in loss"
+        return "LOST", last_premium, "Expired in loss", last_ts
 
 
-def run_simulation(days: int = 7) -> dict:
-    """Main simulation loop with cooldown logic."""
+def run_simulation(days: int = 7, lots: int = 1, rr: float = 1.0) -> dict:
+    """Main simulation loop matching production behavior (one trade at a time)."""
     print(f"Loading historical analyses for last {days} days...")
     analyses = get_historical_analyses(days)
     print(f"Found {len(analyses)} analysis records with JSON data")
@@ -396,10 +402,12 @@ def run_simulation(days: int = 7) -> dict:
         "new_rules_trades": [],
         "high_quality_setups": [],
         "regime_override_trades": [],
+        "lots": lots,  # Store for report
+        "rr": rr,  # Store for report
     }
 
-    # Simulation state
-    last_trade_time = None
+    # Lot size for INR calculation
+    total_lot_size = LOT_SIZE * lots
 
     print(f"\nSimulating across {len(daily_analyses)} trading days...")
     print("-" * 80)
@@ -418,7 +426,8 @@ def run_simulation(days: int = 7) -> dict:
         }
 
         trades_today = 0
-        last_trade_time = None
+        # Track when active trade exits (match production: one trade at a time)
+        active_trade_exit_time = None
 
         for analysis in day_analyses:
             ts = analysis.get("_db_timestamp", "")
@@ -465,11 +474,20 @@ def run_simulation(days: int = 7) -> dict:
             passes_new, new_reason = would_pass_new_rules(analysis, quality_score)
 
             if passes_new and is_high_quality:
-                # Check cooldown
-                if last_trade_time:
-                    time_since_last = (dt - last_trade_time).total_seconds() / 60
-                    if time_since_last < COOLDOWN_MINUTES:
-                        continue
+                # Match production: Only one trade at a time
+                # Check if previous trade is still active (not yet exited)
+                if active_trade_exit_time:
+                    try:
+                        exit_dt = datetime.fromisoformat(active_trade_exit_time)
+                        if dt < exit_dt:
+                            # Previous trade still active, skip
+                            continue
+                        # Previous trade exited, check cooldown from exit time
+                        time_since_exit = (dt - exit_dt).total_seconds() / 60
+                        if time_since_exit < COOLDOWN_MINUTES:
+                            continue
+                    except ValueError:
+                        pass
 
                 # Check daily limit
                 if trades_today >= MAX_TRADES_PER_DAY:
@@ -481,10 +499,14 @@ def run_simulation(days: int = 7) -> dict:
                 # Simulate outcome
                 entry_premium = trade_setup.get("entry_premium", 0)
                 sl_premium = trade_setup.get("sl_premium", 0)
-                target_premium = trade_setup.get("target1_premium", 0)
                 option_type = trade_setup.get("option_type", "CE")
 
-                outcome, exit_premium, exit_reason = simulate_trade_outcome(
+                # Calculate target based on RR ratio
+                # Risk = entry - SL, Target = entry + (risk * RR)
+                risk = entry_premium - sl_premium
+                target_premium = entry_premium + (risk * rr)
+
+                outcome, exit_premium, exit_reason, exit_timestamp = simulate_trade_outcome(
                     analysis, option_type, entry_premium, sl_premium, target_premium
                 )
 
@@ -493,8 +515,12 @@ def run_simulation(days: int = 7) -> dict:
                 else:
                     pnl_pct = 0
 
+                pnl_inr = (exit_premium - entry_premium) * total_lot_size
+
                 trade_result = {
                     "timestamp": ts,
+                    "entry_time": ts[11:19] if len(ts) >= 19 else "N/A",
+                    "exit_time": exit_timestamp[11:19] if len(exit_timestamp) >= 19 else "N/A",
                     "quality_score": quality_score,
                     "verdict": analysis.get("verdict", ""),
                     "direction": trade_setup.get("direction", ""),
@@ -504,6 +530,7 @@ def run_simulation(days: int = 7) -> dict:
                     "outcome": outcome,
                     "exit_reason": exit_reason,
                     "pnl_pct": pnl_pct,
+                    "pnl_inr": pnl_inr,
                     "regime": analysis.get("market_regime", {}).get("regime", "unknown"),
                 }
 
@@ -528,8 +555,8 @@ def run_simulation(days: int = 7) -> dict:
                 if regime == "range_bound":
                     results["regime_override_trades"].append(trade_result)
 
-                # Update state
-                last_trade_time = dt
+                # Update state - track exit time (match production: one trade at a time)
+                active_trade_exit_time = exit_timestamp
                 trades_today += 1
 
         results["daily_summary"].append(day_stats)
@@ -640,34 +667,45 @@ def generate_report(results: dict, days: int):
 
         print(f"{score:>5} | {count:>8} | {would_trade:>11} | {win_rate_str:>10} | {avg_pnl_str:>10}")
 
-    # 4. High-Quality Trade Analysis
-    print("\n" + "-" * 80)
-    print("HIGH-QUALITY TRADE ANALYSIS (Score >= 7)")
-    print("-" * 80)
+    # 4. Detailed Trade Log
+    lots = results.get("lots", 1)
+    rr = results.get("rr", 1.0)
+    total_qty = LOT_SIZE * lots
+    print("\n" + "-" * 100)
+    print(f"DETAILED TRADE LOG (Score >= 7) | Lots: {lots} | Qty: {total_qty} | RR: 1:{rr}")
+    print("-" * 100)
 
     hq_setups = results.get("high_quality_setups", [])
     if hq_setups:
-        for trade in hq_setups[:15]:  # Show first 15
-            status = "WON" if trade["outcome"] == "WON" else "LOST"
-            print(f"  [{status:>4}] {trade['timestamp'][11:19]} | "
-                  f"Score: {trade['quality_score']} | "
-                  f"{trade['direction']:<10} | "
-                  f"Strike: {trade['strike']} | "
-                  f"P&L: {trade['pnl_pct']:+.1f}% | "
-                  f"{trade['exit_reason']}")
+        print(f"{'#':>3} | {'Entry Time':<10} | {'Entry':>8} | {'Exit Time':<10} | "
+              f"{'Exit':>8} | {'P&L INR':>10} | {'P&L %':>7} | {'Result':<20}")
+        print("-" * 100)
 
-        if len(hq_setups) > 15:
-            print(f"  ... and {len(hq_setups) - 15} more trades")
+        for i, trade in enumerate(hq_setups, 1):
+            pnl_inr = trade.get("pnl_inr", 0)
+            pnl_sign = "+" if pnl_inr >= 0 else ""
+            result = f"{trade['outcome']} ({trade['exit_reason']})"
+
+            print(f"{i:>3} | {trade.get('entry_time', 'N/A'):<10} | "
+                  f"{trade['entry_premium']:>8.2f} | "
+                  f"{trade.get('exit_time', 'N/A'):<10} | "
+                  f"{trade['exit_premium']:>8.2f} | "
+                  f"{pnl_sign}{pnl_inr:>9,.0f} | "
+                  f"{trade['pnl_pct']:>+6.1f}% | {result:<20}")
+
+        print("-" * 100)
 
         hq_wins = sum(1 for t in hq_setups if t["outcome"] == "WON")
-        hq_total_pnl = sum(t["pnl_pct"] for t in hq_setups)
+        hq_losses = len(hq_setups) - hq_wins
+        hq_total_pnl_pct = sum(t["pnl_pct"] for t in hq_setups)
+        hq_total_pnl_inr = sum(t.get("pnl_inr", 0) for t in hq_setups)
         hq_win_rate = (hq_wins / len(hq_setups) * 100) if hq_setups else 0
-        hq_avg_pnl = (hq_total_pnl / len(hq_setups)) if hq_setups else 0
 
-        print(f"\n  Summary: {len(hq_setups)} trades, "
-              f"Win Rate: {hq_win_rate:.1f}%, "
-              f"Total P&L: {hq_total_pnl:+.1f}%, "
-              f"Avg P&L: {hq_avg_pnl:+.1f}%")
+        pnl_inr_sign = "+" if hq_total_pnl_inr >= 0 else ""
+        print(f"TOTAL: {len(hq_setups)} trades | Wins: {hq_wins} | Losses: {hq_losses} | "
+              f"Win Rate: {hq_win_rate:.1f}%")
+        print(f"Total P&L: {pnl_inr_sign}{hq_total_pnl_inr:,.0f} INR ({hq_total_pnl_pct:+.1f}%)")
+        print("-" * 100)
     else:
         print("  No high-quality trades found in the simulation period")
 
@@ -733,20 +771,36 @@ def main():
         default=7,
         help="Number of days to simulate (default: 7)"
     )
+    parser.add_argument(
+        "--lots",
+        type=int,
+        default=1,
+        help="Number of lots to trade (default: 1, lot size = 65)"
+    )
+    parser.add_argument(
+        "--rr",
+        type=float,
+        default=1.0,
+        help="Risk-Reward ratio (default: 1.0 for 1:1, use 2 for 1:2, 3 for 1:3)"
+    )
     args = parser.parse_args()
+
+    total_qty = LOT_SIZE * args.lots
 
     print("=" * 80)
     print("  QUALITY SCORE BACKTEST SIMULATION")
     print("=" * 80)
     print(f"\nSimulation Parameters:")
     print(f"  - Days to simulate: {args.days}")
+    print(f"  - Lots: {args.lots} (qty: {total_qty})")
+    print(f"  - Risk-Reward: 1:{args.rr}")
     print(f"  - Min quality score for trade: {MIN_QUALITY_SCORE}")
     print(f"  - Cooldown between trades: {COOLDOWN_MINUTES} minutes")
     print(f"  - Max trades per day: {MAX_TRADES_PER_DAY}")
     print()
 
     # Run simulation
-    results = run_simulation(days=args.days)
+    results = run_simulation(days=args.days, lots=args.lots, rr=args.rr)
 
     # Generate report
     generate_report(results, days=args.days)

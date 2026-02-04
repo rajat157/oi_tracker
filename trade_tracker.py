@@ -18,6 +18,7 @@ from database import (
     get_last_resolved_trade,
 )
 from self_learner import get_self_learner
+from pattern_tracker import log_failed_entry
 from logger import get_logger
 
 log = get_logger("trade_tracker")
@@ -759,6 +760,21 @@ class TradeTracker:
 
             log.warning("Setup LOST - SL hit", setup_id=setup['id'],
                         exit_premium=f"{current_premium:.2f}", pnl=f"{profit_loss_pct:.1f}%")
+
+            # Log failed entry for recovery tracking
+            try:
+                log_failed_entry(
+                    entry_timestamp=setup.get("created_at", ""),
+                    sl_hit_timestamp=timestamp.isoformat(),
+                    strike=setup["strike"],
+                    option_type=setup["option_type"],
+                    entry_premium=setup["entry_premium"],
+                    sl_premium=sl_premium,
+                    premium_at_sl=current_premium,
+                    target_premium=target1_premium
+                )
+            except Exception as e:
+                log.error("Error logging failed entry", error=str(e))
 
             return {
                 "setup_id": setup["id"],

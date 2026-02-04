@@ -18,6 +18,7 @@ from database import (
 )
 from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
+from pattern_tracker import check_patterns, log_failed_entry
 from logger import get_logger
 
 log = get_logger("scheduler")
@@ -233,6 +234,12 @@ class OIScheduler:
             self.last_analysis = analysis
 
             log.info("Analysis complete", verdict=analysis['verdict'])
+
+            # Pattern Tracker: detect PM reversals and other entry timing patterns
+            try:
+                check_patterns(analysis)
+            except Exception as e:
+                log.error("Error in pattern tracking", error=str(e))
 
             # Trade Tracker: manage persistent trade setups
             # 1. Check and update existing setup status (activation/resolution)

@@ -32,8 +32,10 @@ class TradeTracker:
 
     def __init__(self):
         """Initialize the trade tracker."""
-        self.confidence_threshold = 60.0  # Minimum confidence to create setup
-        self.confidence_max = 70.0  # Maximum confidence (lowered - high confidence trades fail)
+        # Default thresholds (will be overridden by learned values)
+        self._default_confidence_min = 50.0
+        self._default_confidence_max = 90.0
+
         self.entry_tolerance = 0.02  # 2% tolerance for entry activation
         self.cooldown_minutes = 12  # Cooldown after trade resolution (4 fetch cycles - quality over quantity)
         self.move_threshold_pct = 0.8  # Skip if spot moved 0.8%+ in direction (widened from 0.5%)
@@ -44,6 +46,24 @@ class TradeTracker:
         self.last_suggestion_time = None
         self.cancellation_cooldown_minutes = 30  # CRITICAL: No new trades for 30min after cancellation
         self.last_cancelled_time = None
+
+    @property
+    def confidence_threshold(self) -> float:
+        """Get minimum confidence threshold (learned or default)."""
+        learned = self.self_learner.get_learned_confidence_thresholds()
+        return learned.get("min_threshold", self._default_confidence_min)
+
+    @property
+    def confidence_max(self) -> float:
+        """Get maximum confidence threshold (learned or default)."""
+        learned = self.self_learner.get_learned_confidence_thresholds()
+        return learned.get("max_threshold", self._default_confidence_max)
+
+    @property
+    def confidence_exclude_ranges(self) -> list:
+        """Get confidence ranges to exclude (learned)."""
+        learned = self.self_learner.get_learned_confidence_thresholds()
+        return learned.get("exclude_ranges", [])
 
     def _count_confirmations(self, analysis: dict) -> int:
         """Count aligned confirmation signals."""
@@ -172,13 +192,29 @@ class TradeTracker:
                 print("[TradeTracker] Skipping: Self-learner paused trading")
             return False
 
-        # 3. Check confidence - reject too low OR too high (contrarian)
+        # 3. Check confidence using LEARNED thresholds (dynamic, not hardcoded)
         confidence = analysis.get("signal_confidence", 0)
+        verdict = analysis.get("verdict", "")
+
+        # Use unified self-learner check (confidence range + verdict filter)
+        should_trade, reason = self.self_learner.should_trade(confidence, verdict)
+        if not should_trade:
+            print(f"[TradeTracker] Skipping: {reason}")
+            return False
+
+        # Additional explicit confidence checks as fallback
         if confidence < self.confidence_threshold:
+            print(f"[TradeTracker] Skipping: Confidence {confidence:.0f}% below learned min {self.confidence_threshold:.0f}%")
             return False
         if confidence > self.confidence_max:
-            print(f"[TradeTracker] Skipping: High confidence ({confidence:.0f}%) is contrarian indicator")
+            print(f"[TradeTracker] Skipping: Confidence {confidence:.0f}% above learned max {self.confidence_max:.0f}%")
             return False
+
+        # Check learned exclusion zones
+        for low, high in self.confidence_exclude_ranges:
+            if low <= confidence < high:
+                print(f"[TradeTracker] Skipping: Confidence {confidence:.0f}% in learned exclude zone [{low:.0f}-{high:.0f}%]")
+                return False
 
         # 4. Check cooldown period after last resolved trade
         if self._is_in_cooldown():
@@ -213,21 +249,20 @@ class TradeTracker:
         if not trade_setup:
             return False
 
-        # 8. CRITICAL FIX: DISABLE ALL PUT TRADES (14% win rate - system loses money)
-        # PUT trades have 14.3% win rate vs CALL trades at 40% win rate
-        # Self-learner paused system due to PUT losses. Disable until PUT signals are fixed.
-        verdict = analysis.get("verdict", "").lower()
-        if "bearish" in verdict:
-            print(f"[TradeTracker] DISABLED: PUT trades have 14% win rate (bearish verdict rejected)")
+        # 8. VERDICT FILTER: Use LEARNED verdict accuracy (dynamic, not hardcoded)
+        # The self-learner's should_trade() already checked verdict via VerdictAnalyzer
+        # This section provides additional granular control
+
+        # Check if this specific verdict should be skipped based on learned performance
+        skip_verdict, verdict_reason = self.self_learner.verdict_analyzer.should_skip_verdict(verdict)
+        if skip_verdict:
+            print(f"[TradeTracker] Skipping: {verdict_reason}")
             return False
 
-        # 8b. VERDICT FILTER: Only take "Slightly" verdicts (weak signals perform better)
-        if "strongly" in verdict or "winning" in verdict:
-            print(f"[TradeTracker] Skipping: Strong verdict '{analysis.get('verdict')}' has poor win rate")
-            return False
-        if "slightly" not in verdict:
-            print(f"[TradeTracker] Skipping: Verdict '{analysis.get('verdict')}' not slightly bullish/bearish")
-            return False
+        # NOTE: The hardcoded PUT disable and "slightly" filters have been REMOVED
+        # The system now LEARNS which verdicts work and which don't
+        # If PUT trades are bad, VerdictAnalyzer will learn this and skip them
+        # If "strongly" verdicts are bad, VerdictAnalyzer will learn this too
 
         # 9. MARKET REGIME FILTER: Adjust requirements based on market conditions
         market_regime = analysis.get("market_regime", {})

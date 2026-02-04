@@ -9,11 +9,14 @@ This module implements:
 """
 
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from database import (
     save_signal_outcome, update_signal_outcome, get_pending_signals,
     get_signal_accuracy, save_learned_weights, get_latest_learned_weights,
-    save_component_accuracy, get_component_accuracy, get_analysis_history
+    save_component_accuracy, get_component_accuracy, get_analysis_history,
+    update_confidence_accuracy, get_confidence_performance,
+    update_verdict_accuracy, get_verdict_performance,
+    get_raw_confidence_stats, get_raw_verdict_stats
 )
 
 
@@ -102,6 +105,286 @@ class EMAAccuracyTracker:
         self.is_paused = False
         self.consecutive_errors = 0
         print("[SelfLearner] Pause reset")
+
+
+class ConfidenceOptimizer:
+    """
+    Analyzes confidence-to-outcome patterns and recommends optimal confidence ranges.
+
+    Key insight: The system should LEARN which confidence ranges perform best
+    rather than using hardcoded thresholds. This class discovers patterns like
+    "70-80% confidence has 36% accuracy (worst)" and adjusts accordingly.
+    """
+
+    # Default thresholds (used until enough data is collected)
+    DEFAULT_MIN_CONFIDENCE = 50.0
+    DEFAULT_MAX_CONFIDENCE = 90.0
+    MIN_SAMPLES_FOR_LEARNING = 10  # Need at least this many samples per bucket
+
+    def __init__(self):
+        """Initialize with default thresholds."""
+        self.min_threshold = self.DEFAULT_MIN_CONFIDENCE
+        self.max_threshold = self.DEFAULT_MAX_CONFIDENCE
+        self.exclude_ranges: List[Tuple[float, float]] = []  # Bad zones to avoid
+        self.best_ranges: List[Tuple[float, float]] = []     # Good zones to prefer
+        self._last_analysis_time: Optional[datetime] = None
+
+    def analyze_confidence_performance(self, lookback_days: int = 14) -> Dict:
+        """
+        Analyze which confidence ranges perform best/worst.
+
+        Returns:
+            Dict with bucket -> performance metrics
+        """
+        # Try cached performance data first
+        performance = get_confidence_performance(lookback_days)
+
+        # If empty, compute from raw data
+        if not performance:
+            performance = get_raw_confidence_stats(lookback_days)
+
+        return performance
+
+    def get_optimal_confidence_range(self, min_accuracy: float = 0.40) -> Tuple[float, float, List[Tuple[float, float]]]:
+        """
+        Determine optimal confidence range based on historical performance.
+
+        Args:
+            min_accuracy: Minimum acceptable signal accuracy (default 40%)
+
+        Returns:
+            Tuple of (min_threshold, max_threshold, exclude_ranges)
+        """
+        performance = self.analyze_confidence_performance()
+
+        if not performance:
+            # No data yet - use defaults
+            return (self.DEFAULT_MIN_CONFIDENCE, self.DEFAULT_MAX_CONFIDENCE, [])
+
+        # Find buckets with good performance (above min_accuracy)
+        good_buckets = []
+        bad_buckets = []
+
+        for bucket, stats in performance.items():
+            # Need enough samples to be statistically meaningful
+            if stats["signal_count"] < self.MIN_SAMPLES_FOR_LEARNING:
+                continue
+
+            signal_acc = stats["signal_accuracy"]
+
+            if signal_acc >= min_accuracy:
+                good_buckets.append((bucket, signal_acc))
+            else:
+                bad_buckets.append((bucket, signal_acc))
+
+        # Parse bucket ranges
+        def parse_bucket(bucket: str) -> Tuple[float, float]:
+            parts = bucket.split("-")
+            return (float(parts[0]), float(parts[1]))
+
+        # Build exclude ranges from bad buckets
+        exclude_ranges = []
+        for bucket, _ in bad_buckets:
+            low, high = parse_bucket(bucket)
+            exclude_ranges.append((low, high))
+
+        # Build best ranges from good buckets
+        best_ranges = []
+        for bucket, acc in sorted(good_buckets, key=lambda x: x[1], reverse=True):
+            low, high = parse_bucket(bucket)
+            best_ranges.append((low, high))
+
+        # Determine overall min/max from good buckets
+        if good_buckets:
+            all_ranges = [parse_bucket(b[0]) for b in good_buckets]
+            min_threshold = min(r[0] for r in all_ranges)
+            max_threshold = max(r[1] for r in all_ranges)
+        else:
+            # No good buckets found - use conservative defaults
+            min_threshold = self.DEFAULT_MIN_CONFIDENCE
+            max_threshold = self.DEFAULT_MAX_CONFIDENCE
+
+        return (min_threshold, max_threshold, exclude_ranges)
+
+    def update_thresholds(self):
+        """
+        Update confidence thresholds based on learned performance.
+
+        Should be called daily (e.g., at market close).
+        """
+        min_t, max_t, exclude = self.get_optimal_confidence_range()
+
+        self.min_threshold = min_t
+        self.max_threshold = max_t
+        self.exclude_ranges = exclude
+
+        # Also determine best ranges for logging
+        performance = self.analyze_confidence_performance()
+        if performance:
+            sorted_by_acc = sorted(
+                [(b, s["signal_accuracy"]) for b, s in performance.items()
+                 if s["signal_count"] >= self.MIN_SAMPLES_FOR_LEARNING],
+                key=lambda x: x[1],
+                reverse=True
+            )
+            self.best_ranges = [(b, a) for b, a in sorted_by_acc[:3]]
+
+        self._last_analysis_time = datetime.now()
+
+        print(f"[ConfidenceOptimizer] Updated thresholds: "
+              f"min={min_t:.0f}%, max={max_t:.0f}%, exclude={exclude}")
+
+    def should_trade_at_confidence(self, confidence: float) -> Tuple[bool, str]:
+        """
+        Check if a given confidence level is acceptable for trading.
+
+        Args:
+            confidence: Signal confidence percentage
+
+        Returns:
+            Tuple of (should_trade, reason)
+        """
+        # Check basic thresholds
+        if confidence < self.min_threshold:
+            return (False, f"Confidence {confidence:.0f}% below min threshold {self.min_threshold:.0f}%")
+
+        if confidence > self.max_threshold:
+            return (False, f"Confidence {confidence:.0f}% above max threshold {self.max_threshold:.0f}%")
+
+        # Check exclude ranges
+        for low, high in self.exclude_ranges:
+            if low <= confidence < high:
+                return (False, f"Confidence {confidence:.0f}% in exclude zone [{low:.0f}-{high:.0f}%]")
+
+        return (True, "Confidence acceptable")
+
+    def get_status(self) -> Dict:
+        """Get current optimizer status."""
+        return {
+            "min_threshold": self.min_threshold,
+            "max_threshold": self.max_threshold,
+            "exclude_ranges": self.exclude_ranges,
+            "best_ranges": self.best_ranges,
+            "last_analysis": self._last_analysis_time.isoformat() if self._last_analysis_time else None
+        }
+
+
+class VerdictAnalyzer:
+    """
+    Analyzes verdict-to-outcome patterns and recommends which verdicts to trust.
+
+    Key insight: Different verdicts have different accuracy rates.
+    E.g., "Slightly Bearish" may have 61% accuracy while "Slightly Bullish" has 38%.
+    """
+
+    MIN_SAMPLES_FOR_LEARNING = 5  # Need at least this many samples per verdict
+    MIN_ACCURACY_THRESHOLD = 0.35  # Skip verdicts with accuracy below 35%
+
+    def __init__(self):
+        """Initialize verdict analyzer."""
+        self.verdict_performance: Dict = {}
+        self.skip_verdicts: List[str] = []
+        self.best_verdicts: List[Tuple[str, float]] = []
+        self._last_analysis_time: Optional[datetime] = None
+
+    def analyze_verdict_performance(self, lookback_days: int = 14) -> Dict:
+        """
+        Analyze which verdicts perform best/worst.
+
+        Returns:
+            Dict with verdict -> performance metrics
+        """
+        # Try cached performance data first
+        performance = get_verdict_performance(lookback_days)
+
+        # If empty, compute from raw data
+        if not performance:
+            performance = get_raw_verdict_stats(lookback_days)
+
+        self.verdict_performance = performance
+        return performance
+
+    def should_skip_verdict(self, verdict: str) -> Tuple[bool, str]:
+        """
+        Check if a verdict should be skipped based on historical accuracy.
+
+        Args:
+            verdict: The verdict string
+
+        Returns:
+            Tuple of (should_skip, reason)
+        """
+        if not self.verdict_performance:
+            self.analyze_verdict_performance()
+
+        if verdict not in self.verdict_performance:
+            return (False, "Verdict not in historical data - allowing")
+
+        stats = self.verdict_performance[verdict]
+
+        # Need enough samples
+        if stats["signal_count"] < self.MIN_SAMPLES_FOR_LEARNING:
+            return (False, f"Insufficient samples ({stats['signal_count']})")
+
+        signal_acc = stats["signal_accuracy"]
+
+        if signal_acc < self.MIN_ACCURACY_THRESHOLD:
+            return (True, f"Verdict '{verdict}' has {signal_acc:.1%} accuracy (below {self.MIN_ACCURACY_THRESHOLD:.0%} threshold)")
+
+        return (False, f"Verdict '{verdict}' has acceptable accuracy ({signal_acc:.1%})")
+
+    def update_analysis(self):
+        """
+        Update verdict analysis based on recent performance.
+
+        Should be called daily (e.g., at market close).
+        """
+        performance = self.analyze_verdict_performance()
+
+        # Identify verdicts to skip
+        self.skip_verdicts = []
+        self.best_verdicts = []
+
+        for verdict, stats in performance.items():
+            if stats["signal_count"] < self.MIN_SAMPLES_FOR_LEARNING:
+                continue
+
+            acc = stats["signal_accuracy"]
+
+            if acc < self.MIN_ACCURACY_THRESHOLD:
+                self.skip_verdicts.append(verdict)
+            else:
+                self.best_verdicts.append((verdict, acc))
+
+        # Sort best verdicts by accuracy
+        self.best_verdicts = sorted(self.best_verdicts, key=lambda x: x[1], reverse=True)
+
+        self._last_analysis_time = datetime.now()
+
+        print(f"[VerdictAnalyzer] Skip verdicts: {self.skip_verdicts}")
+        print(f"[VerdictAnalyzer] Best verdicts: {[v[0] for v in self.best_verdicts[:3]]}")
+
+    def get_verdict_ranking(self) -> List[Tuple[str, float]]:
+        """Get verdicts ranked by accuracy."""
+        if not self.verdict_performance:
+            self.analyze_verdict_performance()
+
+        ranked = [
+            (v, s["signal_accuracy"])
+            for v, s in self.verdict_performance.items()
+            if s["signal_count"] >= self.MIN_SAMPLES_FOR_LEARNING
+        ]
+
+        return sorted(ranked, key=lambda x: x[1], reverse=True)
+
+    def get_status(self) -> Dict:
+        """Get current analyzer status."""
+        return {
+            "verdict_performance": self.verdict_performance,
+            "skip_verdicts": self.skip_verdicts,
+            "best_verdicts": self.best_verdicts,
+            "last_analysis": self._last_analysis_time.isoformat() if self._last_analysis_time else None
+        }
 
 
 class AdaptiveWeights:
@@ -397,12 +680,19 @@ class SelfLearner:
     Main self-learning orchestrator.
 
     Coordinates all learning components and provides unified interface.
+
+    New capabilities:
+    - Confidence-bucket learning: Discovers which confidence ranges work best
+    - Verdict-specific learning: Identifies which verdicts to trust/skip
+    - Dynamic threshold adjustment: Updates thresholds based on data
     """
 
     def __init__(self):
         """Initialize all learning components."""
         self.signal_tracker = SignalTracker()
         self.adaptive_weights = AdaptiveWeights()
+        self.confidence_optimizer = ConfidenceOptimizer()
+        self.verdict_analyzer = VerdictAnalyzer()
 
     def process_new_signal(self, timestamp: datetime, analysis: dict) -> dict:
         """
@@ -464,10 +754,32 @@ class SelfLearner:
         # Update thresholds based on accuracy by strength
         self.adaptive_weights.update_thresholds()
 
+        # NEW: Update confidence bucket accuracy in database
+        try:
+            update_confidence_accuracy(lookback_days=14)
+        except Exception as e:
+            print(f"[SelfLearner] Error updating confidence accuracy: {e}")
+
+        # NEW: Update verdict accuracy in database
+        try:
+            update_verdict_accuracy(lookback_days=14)
+        except Exception as e:
+            print(f"[SelfLearner] Error updating verdict accuracy: {e}")
+
+        # NEW: Update confidence optimizer thresholds
+        self.confidence_optimizer.update_thresholds()
+
+        # NEW: Update verdict analyzer
+        self.verdict_analyzer.update_analysis()
+
         # Save current state
         self._save_state()
 
+        # Generate and log learning report
+        report = self.generate_learning_report()
         print("[SelfLearner] Learning update complete")
+        print(f"[SelfLearner] Report: Best confidence range: {report['confidence_analysis']['best_range']}")
+        print(f"[SelfLearner] Report: Best verdict: {report['verdict_analysis']['best_verdict']}")
 
     def _save_state(self) -> None:
         """Save current learned state to database."""
@@ -500,7 +812,117 @@ class SelfLearner:
         return {
             "signal_tracker": self.signal_tracker.get_status(),
             "weights": self.adaptive_weights.weights,
-            "thresholds": self.adaptive_weights.thresholds
+            "thresholds": self.adaptive_weights.thresholds,
+            "confidence_optimizer": self.confidence_optimizer.get_status(),
+            "verdict_analyzer": self.verdict_analyzer.get_status()
+        }
+
+    def should_trade(self, confidence: float, verdict: str) -> Tuple[bool, str]:
+        """
+        Unified check for whether to trade based on all learning components.
+
+        Args:
+            confidence: Signal confidence percentage
+            verdict: Signal verdict string
+
+        Returns:
+            Tuple of (should_trade, reason)
+        """
+        # 1. Check EMA accuracy tracker (existing logic)
+        if not self.signal_tracker.ema_tracker.should_trade():
+            return (False, "EMA accuracy tracker paused trading")
+
+        # 2. Check confidence range (NEW)
+        conf_ok, conf_reason = self.confidence_optimizer.should_trade_at_confidence(confidence)
+        if not conf_ok:
+            return (False, conf_reason)
+
+        # 3. Check verdict performance (NEW)
+        skip_verdict, verdict_reason = self.verdict_analyzer.should_skip_verdict(verdict)
+        if skip_verdict:
+            return (False, verdict_reason)
+
+        return (True, "All checks passed")
+
+    def get_learned_confidence_thresholds(self) -> Dict:
+        """
+        Get learned confidence thresholds for use by TradeTracker.
+
+        Returns:
+            Dict with min_threshold, max_threshold, exclude_ranges
+        """
+        return {
+            "min_threshold": self.confidence_optimizer.min_threshold,
+            "max_threshold": self.confidence_optimizer.max_threshold,
+            "exclude_ranges": self.confidence_optimizer.exclude_ranges
+        }
+
+    def generate_learning_report(self) -> Dict:
+        """
+        Generate human-readable analysis of what the system has learned.
+
+        Returns:
+            Dict with confidence_analysis, verdict_analysis, overall_health
+        """
+        # Analyze confidence buckets
+        conf_perf = self.confidence_optimizer.analyze_confidence_performance()
+
+        best_bucket = None
+        worst_bucket = None
+        best_acc = 0
+        worst_acc = 1
+
+        for bucket, stats in conf_perf.items():
+            if stats["signal_count"] >= self.confidence_optimizer.MIN_SAMPLES_FOR_LEARNING:
+                acc = stats["signal_accuracy"]
+                if acc > best_acc:
+                    best_acc = acc
+                    best_bucket = bucket
+                if acc < worst_acc:
+                    worst_acc = acc
+                    worst_bucket = bucket
+
+        confidence_analysis = {
+            "best_range": f"{best_bucket} ({best_acc:.1%})" if best_bucket else "Unknown",
+            "worst_range": f"{worst_bucket} ({worst_acc:.1%})" if worst_bucket else "Unknown",
+            "learned_min_threshold": self.confidence_optimizer.min_threshold,
+            "learned_max_threshold": self.confidence_optimizer.max_threshold,
+            "exclude_zones": self.confidence_optimizer.exclude_ranges,
+            "recommendation": f"Exclude {worst_bucket} range from trading" if worst_bucket else "Collecting data"
+        }
+
+        # Analyze verdicts
+        verdict_perf = self.verdict_analyzer.analyze_verdict_performance()
+        verdict_ranking = self.verdict_analyzer.get_verdict_ranking()
+
+        best_verdict = verdict_ranking[0] if verdict_ranking else None
+        worst_verdict = verdict_ranking[-1] if verdict_ranking else None
+
+        verdict_analysis = {
+            "best_verdict": f"{best_verdict[0]} ({best_verdict[1]:.1%})" if best_verdict else "Unknown",
+            "worst_verdict": f"{worst_verdict[0]} ({worst_verdict[1]:.1%})" if worst_verdict else "Unknown",
+            "skip_verdicts": self.verdict_analyzer.skip_verdicts,
+            "recommendation": f"Skip verdicts: {', '.join(self.verdict_analyzer.skip_verdicts)}" if self.verdict_analyzer.skip_verdicts else "No verdicts to skip"
+        }
+
+        # Overall health metrics
+        ema_status = self.signal_tracker.ema_tracker.get_status()
+        signal_accuracy_data = get_signal_accuracy(lookback_days=14)
+        overall_acc = signal_accuracy_data.get("overall", {}).get("accuracy", 0)
+
+        overall_health = {
+            "ema_accuracy": f"{ema_status['ema_accuracy']:.1%}",
+            "signal_accuracy_14d": f"{overall_acc:.1%}",
+            "is_paused": ema_status["is_paused"],
+            "consecutive_errors": ema_status["consecutive_errors"],
+            "status": "HEALTHY" if not ema_status["is_paused"] and overall_acc > 0.4 else "NEEDS_ATTENTION"
+        }
+
+        return {
+            "confidence_analysis": confidence_analysis,
+            "verdict_analysis": verdict_analysis,
+            "overall_health": overall_health,
+            "generated_at": datetime.now().isoformat()
         }
 
     def reset_for_new_day(self) -> None:

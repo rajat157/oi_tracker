@@ -219,6 +219,52 @@ def init_db():
             ON trade_suggestions(timestamp)
         """)
 
+        # Table for confidence bucket accuracy tracking (self-learning)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS confidence_accuracy (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE NOT NULL,
+                confidence_bucket TEXT NOT NULL,
+                signal_count INTEGER DEFAULT 0,
+                correct_count INTEGER DEFAULT 0,
+                accuracy REAL DEFAULT 0.0,
+                trade_count INTEGER DEFAULT 0,
+                trade_wins INTEGER DEFAULT 0,
+                trade_accuracy REAL DEFAULT 0.0,
+                avg_profit_loss REAL DEFAULT 0.0,
+                UNIQUE(date, confidence_bucket)
+            )
+        """)
+
+        # Table for verdict accuracy tracking (self-learning)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS verdict_accuracy (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date DATE NOT NULL,
+                verdict TEXT NOT NULL,
+                signal_count INTEGER DEFAULT 0,
+                correct_count INTEGER DEFAULT 0,
+                accuracy REAL DEFAULT 0.0,
+                trade_count INTEGER DEFAULT 0,
+                trade_wins INTEGER DEFAULT 0,
+                trade_accuracy REAL DEFAULT 0.0,
+                avg_profit_loss REAL DEFAULT 0.0,
+                UNIQUE(date, verdict)
+            )
+        """)
+
+        # Index for confidence accuracy
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_confidence_accuracy_date
+            ON confidence_accuracy(date)
+        """)
+
+        # Index for verdict accuracy
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_verdict_accuracy_date
+            ON verdict_accuracy(date)
+        """)
+
         # Add migration for technical analysis context columns in trade_setups
         trade_setup_columns_to_add = [
             ("call_oi_change_at_creation", "REAL DEFAULT 0"),
@@ -1321,6 +1367,472 @@ def get_suggestion_stats(days: int = 7) -> dict:
             "avg_time_between_sec": row[3] or 0,
             "creation_rate_pct": (row[1] / row[0] * 100) if row[0] and row[0] > 0 else 0
         }
+
+
+# ===== Confidence & Verdict Accuracy Functions (Self-Learning) =====
+
+def _get_confidence_bucket(confidence: float) -> str:
+    """Map confidence value to bucket string."""
+    if confidence < 50:
+        return "0-50"
+    elif confidence < 60:
+        return "50-60"
+    elif confidence < 70:
+        return "60-70"
+    elif confidence < 80:
+        return "70-80"
+    elif confidence < 90:
+        return "80-90"
+    else:
+        return "90-100"
+
+
+def update_confidence_accuracy(lookback_days: int = 14):
+    """
+    Analyze signal_outcomes and trade_setups to update confidence_accuracy table.
+
+    Groups signals and trades by confidence bucket and calculates accuracy for each.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+        today = datetime.now().date().isoformat()
+
+        # Get signal accuracy by confidence bucket
+        cursor.execute("""
+            SELECT
+                signal_confidence,
+                was_correct
+            FROM signal_outcomes
+            WHERE outcome_timestamp IS NOT NULL
+              AND signal_timestamp >= ?
+        """, (cutoff.isoformat(),))
+
+        signal_rows = cursor.fetchall()
+
+        # Group by bucket
+        bucket_stats = {}
+        for row in signal_rows:
+            confidence = row["signal_confidence"] or 0
+            bucket = _get_confidence_bucket(confidence)
+
+            if bucket not in bucket_stats:
+                bucket_stats[bucket] = {
+                    "signal_count": 0,
+                    "correct_count": 0,
+                    "trade_count": 0,
+                    "trade_wins": 0,
+                    "profit_loss_sum": 0.0
+                }
+
+            bucket_stats[bucket]["signal_count"] += 1
+            if row["was_correct"]:
+                bucket_stats[bucket]["correct_count"] += 1
+
+        # Get trade accuracy by confidence bucket
+        cursor.execute("""
+            SELECT
+                signal_confidence,
+                status,
+                profit_loss_pct
+            FROM trade_setups
+            WHERE status IN ('WON', 'LOST')
+              AND resolved_at IS NOT NULL
+              AND created_at >= ?
+        """, (cutoff.isoformat(),))
+
+        trade_rows = cursor.fetchall()
+
+        for row in trade_rows:
+            confidence = row["signal_confidence"] or 0
+            bucket = _get_confidence_bucket(confidence)
+
+            if bucket not in bucket_stats:
+                bucket_stats[bucket] = {
+                    "signal_count": 0,
+                    "correct_count": 0,
+                    "trade_count": 0,
+                    "trade_wins": 0,
+                    "profit_loss_sum": 0.0
+                }
+
+            bucket_stats[bucket]["trade_count"] += 1
+            if row["status"] == "WON":
+                bucket_stats[bucket]["trade_wins"] += 1
+            bucket_stats[bucket]["profit_loss_sum"] += row["profit_loss_pct"] or 0
+
+        # Save to confidence_accuracy table
+        for bucket, stats in bucket_stats.items():
+            signal_accuracy = (stats["correct_count"] / stats["signal_count"]
+                              if stats["signal_count"] > 0 else 0.0)
+            trade_accuracy = (stats["trade_wins"] / stats["trade_count"]
+                             if stats["trade_count"] > 0 else 0.0)
+            avg_profit_loss = (stats["profit_loss_sum"] / stats["trade_count"]
+                              if stats["trade_count"] > 0 else 0.0)
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO confidence_accuracy
+                (date, confidence_bucket, signal_count, correct_count, accuracy,
+                 trade_count, trade_wins, trade_accuracy, avg_profit_loss)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                today,
+                bucket,
+                stats["signal_count"],
+                stats["correct_count"],
+                signal_accuracy,
+                stats["trade_count"],
+                stats["trade_wins"],
+                trade_accuracy,
+                avg_profit_loss
+            ))
+
+        conn.commit()
+        print(f"[DB] Updated confidence_accuracy for {len(bucket_stats)} buckets")
+
+
+def get_confidence_performance(lookback_days: int = 14) -> dict:
+    """
+    Get confidence bucket performance data.
+
+    Returns:
+        Dict mapping bucket -> {signal_accuracy, trade_accuracy, avg_profit_loss, ...}
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now().date() - timedelta(days=lookback_days)
+
+        cursor.execute("""
+            SELECT
+                confidence_bucket,
+                SUM(signal_count) as total_signals,
+                SUM(correct_count) as total_correct,
+                SUM(trade_count) as total_trades,
+                SUM(trade_wins) as total_wins,
+                AVG(avg_profit_loss) as avg_pnl
+            FROM confidence_accuracy
+            WHERE date >= ?
+            GROUP BY confidence_bucket
+            ORDER BY confidence_bucket
+        """, (cutoff.isoformat(),))
+
+        results = {}
+        for row in cursor.fetchall():
+            bucket = row["confidence_bucket"]
+            total_signals = row["total_signals"] or 0
+            total_trades = row["total_trades"] or 0
+
+            results[bucket] = {
+                "signal_count": total_signals,
+                "correct_count": row["total_correct"] or 0,
+                "signal_accuracy": (row["total_correct"] / total_signals
+                                   if total_signals > 0 else 0.0),
+                "trade_count": total_trades,
+                "trade_wins": row["total_wins"] or 0,
+                "trade_accuracy": (row["total_wins"] / total_trades
+                                  if total_trades > 0 else 0.0),
+                "avg_profit_loss": row["avg_pnl"] or 0.0
+            }
+
+        return results
+
+
+def update_verdict_accuracy(lookback_days: int = 14):
+    """
+    Analyze signal_outcomes and trade_setups to update verdict_accuracy table.
+
+    Groups signals and trades by verdict type and calculates accuracy for each.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+        today = datetime.now().date().isoformat()
+
+        # Get signal accuracy by verdict
+        cursor.execute("""
+            SELECT
+                verdict,
+                was_correct
+            FROM signal_outcomes
+            WHERE outcome_timestamp IS NOT NULL
+              AND signal_timestamp >= ?
+        """, (cutoff.isoformat(),))
+
+        signal_rows = cursor.fetchall()
+
+        # Group by verdict
+        verdict_stats = {}
+        for row in signal_rows:
+            verdict = row["verdict"]
+
+            if verdict not in verdict_stats:
+                verdict_stats[verdict] = {
+                    "signal_count": 0,
+                    "correct_count": 0,
+                    "trade_count": 0,
+                    "trade_wins": 0,
+                    "profit_loss_sum": 0.0
+                }
+
+            verdict_stats[verdict]["signal_count"] += 1
+            if row["was_correct"]:
+                verdict_stats[verdict]["correct_count"] += 1
+
+        # Get trade accuracy by verdict
+        cursor.execute("""
+            SELECT
+                verdict_at_creation as verdict,
+                status,
+                profit_loss_pct
+            FROM trade_setups
+            WHERE status IN ('WON', 'LOST')
+              AND resolved_at IS NOT NULL
+              AND created_at >= ?
+        """, (cutoff.isoformat(),))
+
+        trade_rows = cursor.fetchall()
+
+        for row in trade_rows:
+            verdict = row["verdict"]
+
+            if verdict not in verdict_stats:
+                verdict_stats[verdict] = {
+                    "signal_count": 0,
+                    "correct_count": 0,
+                    "trade_count": 0,
+                    "trade_wins": 0,
+                    "profit_loss_sum": 0.0
+                }
+
+            verdict_stats[verdict]["trade_count"] += 1
+            if row["status"] == "WON":
+                verdict_stats[verdict]["trade_wins"] += 1
+            verdict_stats[verdict]["profit_loss_sum"] += row["profit_loss_pct"] or 0
+
+        # Save to verdict_accuracy table
+        for verdict, stats in verdict_stats.items():
+            signal_accuracy = (stats["correct_count"] / stats["signal_count"]
+                              if stats["signal_count"] > 0 else 0.0)
+            trade_accuracy = (stats["trade_wins"] / stats["trade_count"]
+                             if stats["trade_count"] > 0 else 0.0)
+            avg_profit_loss = (stats["profit_loss_sum"] / stats["trade_count"]
+                              if stats["trade_count"] > 0 else 0.0)
+
+            cursor.execute("""
+                INSERT OR REPLACE INTO verdict_accuracy
+                (date, verdict, signal_count, correct_count, accuracy,
+                 trade_count, trade_wins, trade_accuracy, avg_profit_loss)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                today,
+                verdict,
+                stats["signal_count"],
+                stats["correct_count"],
+                signal_accuracy,
+                stats["trade_count"],
+                stats["trade_wins"],
+                trade_accuracy,
+                avg_profit_loss
+            ))
+
+        conn.commit()
+        print(f"[DB] Updated verdict_accuracy for {len(verdict_stats)} verdicts")
+
+
+def get_verdict_performance(lookback_days: int = 14) -> dict:
+    """
+    Get verdict performance data.
+
+    Returns:
+        Dict mapping verdict -> {signal_accuracy, trade_accuracy, avg_profit_loss, ...}
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now().date() - timedelta(days=lookback_days)
+
+        cursor.execute("""
+            SELECT
+                verdict,
+                SUM(signal_count) as total_signals,
+                SUM(correct_count) as total_correct,
+                SUM(trade_count) as total_trades,
+                SUM(trade_wins) as total_wins,
+                AVG(avg_profit_loss) as avg_pnl
+            FROM verdict_accuracy
+            WHERE date >= ?
+            GROUP BY verdict
+            ORDER BY verdict
+        """, (cutoff.isoformat(),))
+
+        results = {}
+        for row in cursor.fetchall():
+            verdict = row["verdict"]
+            total_signals = row["total_signals"] or 0
+            total_trades = row["total_trades"] or 0
+
+            results[verdict] = {
+                "signal_count": total_signals,
+                "correct_count": row["total_correct"] or 0,
+                "signal_accuracy": (row["total_correct"] / total_signals
+                                   if total_signals > 0 else 0.0),
+                "trade_count": total_trades,
+                "trade_wins": row["total_wins"] or 0,
+                "trade_accuracy": (row["total_wins"] / total_trades
+                                  if total_trades > 0 else 0.0),
+                "avg_profit_loss": row["avg_pnl"] or 0.0
+            }
+
+        return results
+
+
+def get_raw_confidence_stats(lookback_days: int = 14) -> dict:
+    """
+    Get raw confidence statistics directly from signal_outcomes and trade_setups.
+
+    This is used when confidence_accuracy table hasn't been populated yet.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+
+        # Get signal stats
+        cursor.execute("""
+            SELECT
+                signal_confidence,
+                was_correct
+            FROM signal_outcomes
+            WHERE outcome_timestamp IS NOT NULL
+              AND signal_timestamp >= ?
+        """, (cutoff.isoformat(),))
+
+        signal_rows = cursor.fetchall()
+        bucket_stats = {}
+
+        for row in signal_rows:
+            confidence = row["signal_confidence"] or 0
+            bucket = _get_confidence_bucket(confidence)
+
+            if bucket not in bucket_stats:
+                bucket_stats[bucket] = {"signals": 0, "correct": 0, "trades": 0, "wins": 0, "pnl_sum": 0}
+
+            bucket_stats[bucket]["signals"] += 1
+            if row["was_correct"]:
+                bucket_stats[bucket]["correct"] += 1
+
+        # Get trade stats
+        cursor.execute("""
+            SELECT
+                signal_confidence,
+                status,
+                profit_loss_pct
+            FROM trade_setups
+            WHERE status IN ('WON', 'LOST')
+              AND resolved_at IS NOT NULL
+              AND created_at >= ?
+        """, (cutoff.isoformat(),))
+
+        trade_rows = cursor.fetchall()
+
+        for row in trade_rows:
+            confidence = row["signal_confidence"] or 0
+            bucket = _get_confidence_bucket(confidence)
+
+            if bucket not in bucket_stats:
+                bucket_stats[bucket] = {"signals": 0, "correct": 0, "trades": 0, "wins": 0, "pnl_sum": 0}
+
+            bucket_stats[bucket]["trades"] += 1
+            if row["status"] == "WON":
+                bucket_stats[bucket]["wins"] += 1
+            bucket_stats[bucket]["pnl_sum"] += row["profit_loss_pct"] or 0
+
+        # Convert to performance dict
+        results = {}
+        for bucket, stats in bucket_stats.items():
+            results[bucket] = {
+                "signal_count": stats["signals"],
+                "correct_count": stats["correct"],
+                "signal_accuracy": stats["correct"] / stats["signals"] if stats["signals"] > 0 else 0.0,
+                "trade_count": stats["trades"],
+                "trade_wins": stats["wins"],
+                "trade_accuracy": stats["wins"] / stats["trades"] if stats["trades"] > 0 else 0.0,
+                "avg_profit_loss": stats["pnl_sum"] / stats["trades"] if stats["trades"] > 0 else 0.0
+            }
+
+        return results
+
+
+def get_raw_verdict_stats(lookback_days: int = 14) -> dict:
+    """
+    Get raw verdict statistics directly from signal_outcomes and trade_setups.
+
+    This is used when verdict_accuracy table hasn't been populated yet.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+
+        # Get signal stats
+        cursor.execute("""
+            SELECT
+                verdict,
+                was_correct
+            FROM signal_outcomes
+            WHERE outcome_timestamp IS NOT NULL
+              AND signal_timestamp >= ?
+        """, (cutoff.isoformat(),))
+
+        signal_rows = cursor.fetchall()
+        verdict_stats = {}
+
+        for row in signal_rows:
+            verdict = row["verdict"]
+
+            if verdict not in verdict_stats:
+                verdict_stats[verdict] = {"signals": 0, "correct": 0, "trades": 0, "wins": 0, "pnl_sum": 0}
+
+            verdict_stats[verdict]["signals"] += 1
+            if row["was_correct"]:
+                verdict_stats[verdict]["correct"] += 1
+
+        # Get trade stats
+        cursor.execute("""
+            SELECT
+                verdict_at_creation as verdict,
+                status,
+                profit_loss_pct
+            FROM trade_setups
+            WHERE status IN ('WON', 'LOST')
+              AND resolved_at IS NOT NULL
+              AND created_at >= ?
+        """, (cutoff.isoformat(),))
+
+        trade_rows = cursor.fetchall()
+
+        for row in trade_rows:
+            verdict = row["verdict"]
+
+            if verdict not in verdict_stats:
+                verdict_stats[verdict] = {"signals": 0, "correct": 0, "trades": 0, "wins": 0, "pnl_sum": 0}
+
+            verdict_stats[verdict]["trades"] += 1
+            if row["status"] == "WON":
+                verdict_stats[verdict]["wins"] += 1
+            verdict_stats[verdict]["pnl_sum"] += row["profit_loss_pct"] or 0
+
+        # Convert to performance dict
+        results = {}
+        for verdict, stats in verdict_stats.items():
+            results[verdict] = {
+                "signal_count": stats["signals"],
+                "correct_count": stats["correct"],
+                "signal_accuracy": stats["correct"] / stats["signals"] if stats["signals"] > 0 else 0.0,
+                "trade_count": stats["trades"],
+                "trade_wins": stats["wins"],
+                "trade_accuracy": stats["wins"] / stats["trades"] if stats["trades"] > 0 else 0.0,
+                "avg_profit_loss": stats["pnl_sum"] / stats["trades"] if stats["trades"] > 0 else 0.0
+            }
+
+        return results
 
 
 # Initialize database on import

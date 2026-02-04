@@ -135,6 +135,46 @@ def api_market_status():
     return jsonify(oi_scheduler.get_market_status())
 
 
+@app.route("/api/learning-report")
+def api_learning_report():
+    """
+    Get the self-learning system's analysis report.
+
+    Returns insights on:
+    - Which confidence ranges perform best/worst
+    - Which verdicts to trust/skip
+    - Overall system health
+    """
+    from self_learner import get_self_learner
+    learner = get_self_learner()
+
+    try:
+        report = learner.generate_learning_report()
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/learning-status")
+def api_learning_status():
+    """
+    Get detailed self-learning system status.
+
+    Includes:
+    - Confidence optimizer thresholds
+    - Verdict analyzer performance
+    - EMA accuracy tracking
+    """
+    from self_learner import get_self_learner
+    learner = get_self_learner()
+
+    try:
+        status = learner.get_status()
+        return jsonify(status)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/trades")
 def trades_page():
     """Render the trade history page."""

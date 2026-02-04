@@ -335,8 +335,27 @@ class OIScheduler:
         # Run after market close (3:30 PM)
         if now.time() >= time(15, 30):
             print(f"[{now}] Running daily learning update...")
+
+            # Run full learning update (includes confidence & verdict analysis)
             self.self_learner.update_learning()
             self.last_learning_date = today
+
+            # Generate and log learning report for visibility
+            try:
+                report = self.self_learner.generate_learning_report()
+                print(f"[{now}] Learning Report:")
+                print(f"  Confidence: Best={report['confidence_analysis']['best_range']}, "
+                      f"Worst={report['confidence_analysis']['worst_range']}")
+                print(f"  Verdict: Best={report['verdict_analysis']['best_verdict']}, "
+                      f"Worst={report['verdict_analysis']['worst_verdict']}")
+                print(f"  Health: {report['overall_health']['status']}, "
+                      f"EMA={report['overall_health']['ema_accuracy']}")
+
+                # Store report in last_analysis for dashboard access
+                if self.last_analysis:
+                    self.last_analysis["learning_report"] = report
+            except Exception as e:
+                print(f"[{now}] Error generating learning report: {e}")
 
             # Reset pause state for next day
             if now.time() >= time(15, 45):

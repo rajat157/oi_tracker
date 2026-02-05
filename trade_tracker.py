@@ -328,7 +328,28 @@ class TradeTracker:
         # If PUT trades are bad, VerdictAnalyzer will learn this and skip them
         # If "strongly" verdicts are bad, VerdictAnalyzer will learn this too
 
-        # 9. QUALITY SCORE CALCULATION
+        # 9. FUTURES OI CONFIRMATION FILTER
+        # Backtest showed: aligned signals = 68% accuracy, conflicted = 43%
+        # Only trade when futures OI direction confirms options signal
+        futures_oi_change = analysis.get("futures_oi_change", 0)
+        is_bullish_signal = "bull" in verdict.lower()
+
+        if futures_oi_change != 0:  # Only filter if we have futures data
+            futures_bullish = futures_oi_change > 0  # Rising futures OI = bullish
+            futures_confirms = (is_bullish_signal == futures_bullish)
+
+            if not futures_confirms:
+                log.warning("Skipping: Futures OI does not confirm signal",
+                            signal_direction="bullish" if is_bullish_signal else "bearish",
+                            futures_oi_change=f"{futures_oi_change:+,}",
+                            futures_direction="bullish" if futures_bullish else "bearish")
+                return False
+            else:
+                log.info("Futures OI confirms signal",
+                         signal_direction="bullish" if is_bullish_signal else "bearish",
+                         futures_oi_change=f"{futures_oi_change:+,}")
+
+        # 10. QUALITY SCORE CALCULATION
         # High-quality trades (Score >= 7) can bypass strict regime requirements
         MIN_QUALITY_SCORE = 7
         quality_score = self._calculate_quality_score(analysis)
@@ -337,7 +358,7 @@ class TradeTracker:
         log.info("Quality score calculated", quality_score=quality_score,
                  min_required=MIN_QUALITY_SCORE, is_high_quality=is_high_quality)
 
-        # 10. MARKET REGIME FILTER: Adjust requirements based on market conditions
+        # 11. MARKET REGIME FILTER: Adjust requirements based on market conditions
         market_regime = analysis.get("market_regime", {})
         regime = market_regime.get("regime", "range_bound")
 
@@ -352,7 +373,7 @@ class TradeTracker:
                             risk_pct=f"{trade_setup.get('risk_pct')}%", max_allowed="15%")
                 return False
 
-        # 11. SYMMETRIC CONFIRMATION FOR BOTH DIRECTIONS
+        # 12. SYMMETRIC CONFIRMATION FOR BOTH DIRECTIONS
         direction = trade_setup.get("direction")
         confirmation_status = analysis.get("confirmation_status", "")
 
@@ -361,7 +382,7 @@ class TradeTracker:
             log.warning("Skipping: Needs confirmation", current_status=confirmation_status)
             return False
 
-        # 12. REGIME ALIGNMENT WITH QUALITY OVERRIDE
+        # 13. REGIME ALIGNMENT WITH QUALITY OVERRIDE
         # High-quality trades (Score >= 7) can trade in range_bound markets
         # This allows exceptional setups to bypass strict regime requirements
         if is_high_quality:
@@ -390,7 +411,7 @@ class TradeTracker:
                             quality_score=quality_score, current_regime=regime)
                 return False
 
-        # 13. MULTI-FACTOR CONFIRMATION
+        # 14. MULTI-FACTOR CONFIRMATION
         # Reduce required confirmations for high-quality trades
         REQUIRED_CONFIRMATIONS = 2 if is_high_quality else 3
         confirmations = self._count_confirmations(analysis)

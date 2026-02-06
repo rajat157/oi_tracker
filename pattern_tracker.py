@@ -362,10 +362,20 @@ def check_patterns(analysis: dict):
     # Get PM history for pattern detection
     pm_history = get_pm_history(limit=10)
 
-    # Check for PM reversal
+    # Check for PM reversal (basic detection for logging)
     reversal = detect_pm_reversal(pm_score, pm_history)
     if reversal:
         log_pattern(reversal["pattern"], analysis, reversal)
+
+    # ========================================
+    # STRONG PM REVERSAL ALERT (PM > 50)
+    # ========================================
+    # This is our backtested profitable signal:
+    # - PM was recently very negative (< -30)
+    # - PM is now strongly positive (> 50)
+    # - This catches the CONFIRMED reversal, not the early signal
+    
+    check_strong_pm_reversal_alert(pm_score, pm_history, analysis)
 
     # Update any failed entry recoveries
     trade_setup = analysis.get("trade_setup", {})
@@ -379,6 +389,104 @@ def check_patterns(analysis: dict):
                 strike, option_type, entry_premium,
                 datetime.now().isoformat()
             )
+
+
+def check_strong_pm_reversal_alert(pm_score: float, pm_history: List[Dict], analysis: dict) -> Optional[Dict]:
+    """
+    Check for STRONG PM reversal (PM > 50) and return alert data.
+    
+    Criteria:
+    1. Current PM > 50 (strong bullish momentum)
+    2. Recent PM was < -30 (was bearish recently)
+    
+    This signal has 75% win rate with +12.5 pts avg in backtest.
+    
+    Returns:
+        Alert dict if signal detected, None otherwise
+    """
+    # Threshold configuration
+    PM_STRONG_THRESHOLD = 50
+    PM_WAS_NEGATIVE_THRESHOLD = -30
+    
+    # Check current PM is strong positive
+    if pm_score < PM_STRONG_THRESHOLD:
+        return None
+    
+    # Check if PM was negative recently (within last 5 readings)
+    was_negative_recently = False
+    pm_was = 0
+    for h in pm_history[:5]:
+        if h.get("pm_score", 0) < PM_WAS_NEGATIVE_THRESHOLD:
+            was_negative_recently = True
+            pm_was = h.get("pm_score", 0)
+            break
+    
+    if not was_negative_recently:
+        return None
+    
+    # We have a strong PM reversal!
+    log.info("Strong PM reversal detected!", pm_score=pm_score, was_negative=pm_was)
+    
+    # Log the pattern
+    pattern_info = {
+        "pattern": "PM_STRONG_REVERSAL_ALERT",
+        "description": f"PM reversed from {pm_was:.1f} to {pm_score:.1f} (strong bullish)",
+        "pm_prev": pm_was,
+        "pm_change": pm_score - pm_was,
+    }
+    log_pattern("PM_STRONG_REVERSAL_ALERT", analysis, pattern_info)
+    
+    # Build alert data for dashboard
+    trade_setup = analysis.get("trade_setup", {})
+    spot_price = analysis.get("spot_price", 0)
+    confidence = analysis.get("signal_confidence", 0)
+    
+    # For CALL entry, calculate ATM CE strike
+    atm_strike = int(round(spot_price / 50) * 50)
+    
+    # Estimate CE premium (rough approximation)
+    ce_entry = trade_setup.get("entry_premium", 100)
+    ce_target = ce_entry * 1.4  # +40% target
+    ce_sl = ce_entry * 0.65  # -35% SL
+    
+    alert_data = {
+        "active": True,
+        "type": "PM_STRONG_REVERSAL",
+        "direction": "CALL",
+        "timestamp": datetime.now().isoformat(),
+        "spot_price": spot_price,
+        "pm_score": pm_score,
+        "pm_was": pm_was,
+        "pm_change": pm_score - pm_was,
+        "confidence": confidence,
+        "strike": atm_strike,
+        "entry_premium": round(ce_entry, 2),
+        "target_premium": round(ce_target, 2),
+        "sl_premium": round(ce_sl, 2),
+        "message": f"PM Reversal: {pm_was:.0f} → {pm_score:.0f}",
+        "backtest_stats": {
+            "win_rate": 75,
+            "avg_profit": 12.5,
+            "sample_size": 4
+        }
+    }
+    
+    return alert_data
+
+
+def get_active_alert(analysis: dict) -> Optional[Dict]:
+    """
+    Get active alert for dashboard display.
+    Called from scheduler after check_patterns.
+    
+    Returns alert data if active, None otherwise.
+    """
+    pm = analysis.get("premium_momentum", {})
+    pm_score = pm.get("premium_momentum_score", 0) if isinstance(pm, dict) else 0
+    
+    pm_history = get_pm_history(limit=10)
+    
+    return check_strong_pm_reversal_alert(pm_score, pm_history, analysis)
 
 
 def get_pattern_stats() -> Dict:

@@ -554,6 +554,40 @@ function updateOTMITMTables(data) {
         setText('itm-puts-total-change', formatSigned(data.itm_puts.total_oi_change));
         setText('itm-puts-total-force', formatNumber(data.itm_puts.total_force));
     }
+
+    // CALL Alert Card (PM Strong Reversal)
+    updateCallAlert(data.call_alert);
+}
+
+function updateCallAlert(alert) {
+    const card = document.getElementById('call-alert-card');
+    if (!card) return;
+
+    if (alert && alert.active) {
+        // Show the alert card
+        card.style.display = 'block';
+
+        // Update alert content
+        setText('alert-message', alert.message || 'PM Reversal Detected');
+        setText('alert-pm-score', '+' + (alert.pm_score || 0).toFixed(1));
+        setText('alert-pm-change', '+' + (alert.pm_change || 0).toFixed(1));
+        setText('alert-strike', (alert.strike || '--') + ' CE');
+        setText('alert-spot', formatNumber(alert.spot_price));
+        setText('alert-entry', '₹' + (alert.entry_premium || 0).toFixed(2));
+        setText('alert-target', '₹' + (alert.target_premium || 0).toFixed(2));
+        setText('alert-sl', '₹' + (alert.sl_premium || 0).toFixed(2));
+
+        // Update time
+        if (alert.timestamp) {
+            const time = new Date(alert.timestamp).toLocaleTimeString('en-IN', {
+                hour: '2-digit', minute: '2-digit', second: '2-digit'
+            });
+            setText('alert-time', time);
+        }
+    } else {
+        // Hide the alert card
+        card.style.display = 'none';
+    }
 }
 
 function updateStrengthAnalysis(strength) {

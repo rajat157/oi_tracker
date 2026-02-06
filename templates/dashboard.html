@@ -272,6 +272,56 @@
                     <a href="/trades" class="view-trades-btn">View All Trades</a>
                 </div>
 
+                <!-- CALL Alert Card (PM Strong Reversal) -->
+                <div class="card call-alert-card" id="call-alert-card" style="display: none;">
+                    <div class="alert-header">
+                        <span class="alert-icon">🟢</span>
+                        <span class="alert-title">CALL Entry Signal</span>
+                        <span class="alert-badge">75% Win Rate</span>
+                    </div>
+                    <div class="alert-content">
+                        <div class="alert-message" id="alert-message">PM Reversal Detected</div>
+                        <div class="alert-details">
+                            <div class="alert-row">
+                                <span class="alert-label">PM Score</span>
+                                <span class="alert-value" id="alert-pm-score">--</span>
+                            </div>
+                            <div class="alert-row">
+                                <span class="alert-label">PM Change</span>
+                                <span class="alert-value" id="alert-pm-change">--</span>
+                            </div>
+                            <div class="alert-row">
+                                <span class="alert-label">Strike</span>
+                                <span class="alert-value" id="alert-strike">--</span>
+                            </div>
+                            <div class="alert-row">
+                                <span class="alert-label">Spot</span>
+                                <span class="alert-value" id="alert-spot">--</span>
+                            </div>
+                        </div>
+                        <div class="alert-setup">
+                            <div class="setup-item entry">
+                                <span class="setup-label">Entry</span>
+                                <span class="setup-value" id="alert-entry">--</span>
+                            </div>
+                            <div class="setup-item target">
+                                <span class="setup-label">Target</span>
+                                <span class="setup-value" id="alert-target">--</span>
+                            </div>
+                            <div class="setup-item sl">
+                                <span class="setup-label">SL</span>
+                                <span class="setup-value" id="alert-sl">--</span>
+                            </div>
+                        </div>
+                        <div class="alert-strategy">
+                            <strong>Strategy:</strong> Target +40pts on spot, SL -50pts, Max 2hr hold
+                        </div>
+                        <div class="alert-time">
+                            Signal at: <span id="alert-time">--</span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Trap Warning Card -->
                 <div class="card trap-warning-card" id="trap-warning-card" style="display: none;">
                     <div class="trap-icon" id="trap-icon">

@@ -16,6 +16,7 @@ from database import (
     update_trade_setup_status,
     get_trade_setup_stats,
     get_last_resolved_trade,
+    get_todays_trades,
 )
 from self_learner import get_self_learner
 from pattern_tracker import log_failed_entry
@@ -29,6 +30,13 @@ MARKET_CLOSE = time(15, 25)  # Expire PENDING setups 5 mins before market close
 TRADE_SETUP_START = time(9, 30)   # Only create setups after 9:30 AM
 TRADE_SETUP_END = time(15, 15)    # Stop creating setups at 3:15 PM
 FORCE_CLOSE_TIME = time(15, 20)   # Force close ACTIVE trades at 3:20 PM
+
+# ===== NEW STRATEGY CONSTANTS (85.7% Win Rate Backtest) =====
+STRATEGY_TIME_START = time(11, 0)   # 11:00 AM - Strategy window start
+STRATEGY_TIME_END = time(14, 0)     # 2:00 PM - Strategy window end
+STRATEGY_SL_PCT = 20.0              # -20% stop loss
+STRATEGY_TARGET_PCT = 22.0          # +22% target
+STRATEGY_MIN_CONFIDENCE = 65.0      # Minimum 65% confidence
 
 
 class TradeTracker:
@@ -182,6 +190,59 @@ class TradeTracker:
 
         return False
 
+    def _is_valid_strategy_signal(self, analysis: dict) -> bool:
+        """
+        Check if current signal matches NEW strategy rules (85.7% win rate backtest).
+        
+        Rules:
+        - Time window: 11:00 - 14:00 IST only
+        - Verdict: "Slightly Bullish" OR "Slightly Bearish" only (skip "Winning")
+        - Confidence: >= 65%
+        
+        Returns:
+            True if signal is valid for new strategy
+        """
+        verdict = analysis.get("verdict", "")
+        confidence = analysis.get("signal_confidence", 0)
+        current_time = datetime.now().time()
+        
+        # Time window check
+        if current_time < STRATEGY_TIME_START or current_time > STRATEGY_TIME_END:
+            log.debug("Strategy: Outside time window", 
+                     current=current_time.strftime("%H:%M"),
+                     window=f"{STRATEGY_TIME_START.strftime('%H:%M')}-{STRATEGY_TIME_END.strftime('%H:%M')}")
+            return False
+        
+        # Verdict check - only "Slightly" allowed (not "Winning")
+        if "Slightly" not in verdict:
+            log.debug("Strategy: Verdict not 'Slightly'", verdict=verdict)
+            return False
+        
+        # Confidence check
+        if confidence < STRATEGY_MIN_CONFIDENCE:
+            log.debug("Strategy: Confidence below minimum", 
+                     confidence=f"{confidence:.0f}%", 
+                     min_required=f"{STRATEGY_MIN_CONFIDENCE:.0f}%")
+            return False
+        
+        log.info("Strategy: Valid signal", verdict=verdict, confidence=f"{confidence:.0f}%")
+        return True
+    
+    def _already_traded_today(self) -> bool:
+        """
+        Check if we already have a trade today (one-trade-per-day rule).
+        
+        Returns:
+            True if already traded today (should skip new trades)
+        """
+        today_trades = get_todays_trades()
+        if len(today_trades) > 0:
+            log.info("Strategy: Already traded today", 
+                    trades_count=len(today_trades),
+                    first_trade_id=today_trades[0].get("id"))
+            return True
+        return False
+
     def _is_direction_flip_cooldown(self, current_direction: str) -> bool:
         """Prevent rapid direction flips between CALL and PUT."""
         if not self.last_suggestion_time or not self.last_suggested_direction:
@@ -207,16 +268,11 @@ class TradeTracker:
         """
         Check if conditions are met to create a new trade setup.
 
-        Rules:
-        - Within allowed trading hours (9:30 AM - 3:15 PM)
-        - No existing PENDING or ACTIVE setup
-        - Self-learner says trading is allowed
-        - Signal confidence in optimal range (60-85%)
-        - Not in cooldown period after last trade
-        - No direction flip cooldown (prevents CALL↔PUT oscillation)
-        - Move hasn't already happened in signal direction
-        - No bounce in progress (for PUT trades)
-        - Trade setup exists in analysis
+        NEW STRATEGY RULES (85.7% Win Rate Backtest):
+        - Time window: 11:00 - 14:00 IST only
+        - Verdict: "Slightly Bullish" OR "Slightly Bearish" only
+        - Confidence: >= 65%
+        - ONE trade per day - first valid signal locks in
 
         Args:
             analysis: Current analysis dict from OI analyzer
@@ -225,9 +281,13 @@ class TradeTracker:
         Returns:
             True if new setup should be created
         """
-        # 0. Check trading hours window (9:30 AM - 3:15 PM)
-        current_time = datetime.now().time()
-        if current_time < TRADE_SETUP_START or current_time > TRADE_SETUP_END:
+        # ===== NEW STRATEGY: Check one-trade-per-day FIRST =====
+        if self._already_traded_today():
+            log.debug("Skipping: Already traded today (one trade per day rule)")
+            return False
+
+        # ===== NEW STRATEGY: Check strategy time window (11:00 - 14:00) =====
+        if not self._is_valid_strategy_signal(analysis):
             return False
 
         # 1. Check if there's already an active setup
@@ -237,189 +297,50 @@ class TradeTracker:
 
         # 2. Check if self-learner says to pause trading
         if not self.self_learner.signal_tracker.ema_tracker.should_trade():
-            # Cancel any active trade setup since we're paused
-            active_setup = get_active_trade_setup()
-            if active_setup:
-                update_trade_setup_status(
-                    active_setup["id"],
-                    status="CANCELLED",
-                    resolved_at=datetime.now()
-                )
-                # CRITICAL: Set cancellation cooldown
-                self.last_cancelled_time = datetime.now()
-                log.warning("Cancelled active setup due to self-learner pause",
-                            setup_id=active_setup['id'], cooldown_minutes=30)
-            else:
-                log.warning("Skipping: Self-learner paused trading")
+            # NOTE: Removed cancellation logic - setups are LOCKED once created
+            log.warning("Skipping: Self-learner paused trading")
             return False
 
-        # 3. Check confidence using LEARNED thresholds (dynamic, not hardcoded)
-        confidence = analysis.get("signal_confidence", 0)
-        verdict = analysis.get("verdict", "")
-
-        # Use unified self-learner check (confidence range + verdict filter)
-        should_trade, reason = self.self_learner.should_trade(confidence, verdict)
-        if not should_trade:
-            log.warning("Skipping trade", reason=reason)
+        # 3. Check if trade setup was generated
+        trade_setup = analysis.get("trade_setup")
+        if not trade_setup:
             return False
-
-        # Additional explicit confidence checks as fallback
-        if confidence < self.confidence_threshold:
-            log.warning("Skipping: Confidence below min threshold",
-                        confidence=f"{confidence:.0f}%", min_threshold=f"{self.confidence_threshold:.0f}%")
-            return False
-        if confidence > self.confidence_max:
-            log.warning("Skipping: Confidence above max threshold",
-                        confidence=f"{confidence:.0f}%", max_threshold=f"{self.confidence_max:.0f}%")
-            return False
-
-        # Check learned exclusion zones
-        for low, high in self.confidence_exclude_ranges:
-            if low <= confidence < high:
-                log.warning("Skipping: Confidence in exclude zone",
-                            confidence=f"{confidence:.0f}%", exclude_zone=f"[{low:.0f}-{high:.0f}%]")
-                return False
 
         # 4. Check cooldown period after last resolved trade
         if self._is_in_cooldown():
             log.warning("Skipping: In cooldown period after recent trade")
             return False
 
-        # 4a. CRITICAL: Check cancellation cooldown (prevents shifting trades)
-        # After cancelling a trade, wait 30 minutes before creating new one
-        # This protects users who placed limit orders based on cancelled trade
+        # 5. CRITICAL: Check cancellation cooldown (prevents shifting trades)
         if self._is_in_cancellation_cooldown():
             return False
 
-        # 4b. Check direction flip cooldown (prevents rapid CALL↔PUT switching)
-        trade_setup = analysis.get("trade_setup")
-        if trade_setup:
-            current_direction = trade_setup.get("direction")
-            if self._is_direction_flip_cooldown(current_direction):
-                return False
+        # 6. Check direction flip cooldown (prevents rapid CALL↔PUT switching)
+        current_direction = trade_setup.get("direction")
+        if self._is_direction_flip_cooldown(current_direction):
+            return False
 
-        # 5. Check if move already happened in signal direction
+        # 7. Check if move already happened in signal direction
         if price_history and self._is_move_already_happened(analysis, price_history):
             log.warning("Skipping: Move already happened in signal direction")
             return False
 
-        # 6. Check for bounce in progress (bad for PUT trades)
+        # 8. Check for bounce in progress (bad for PUT trades)
         if price_history and self._is_bounce_in_progress(analysis, price_history):
             log.warning("Skipping: Bounce in progress - bad for PUT entry")
             return False
 
-        # 7. Check if trade setup was generated
-        trade_setup = analysis.get("trade_setup")
-        if not trade_setup:
-            return False
-
-        # 8. VERDICT FILTER: Use LEARNED verdict accuracy (dynamic, not hardcoded)
-        # The self-learner's should_trade() already checked verdict via VerdictAnalyzer
-        # This section provides additional granular control
-
-        # Check if this specific verdict should be skipped based on learned performance
-        skip_verdict, verdict_reason = self.self_learner.verdict_analyzer.should_skip_verdict(verdict)
-        if skip_verdict:
-            log.warning("Skipping trade", reason=verdict_reason)
-            return False
-
-        # NOTE: The hardcoded PUT disable and "slightly" filters have been REMOVED
-        # The system now LEARNS which verdicts work and which don't
-        # If PUT trades are bad, VerdictAnalyzer will learn this and skip them
-        # If "strongly" verdicts are bad, VerdictAnalyzer will learn this too
-
-        # 9. FUTURES OI CONFIRMATION FILTER
-        # Backtest showed: aligned signals = 68% accuracy, conflicted = 43%
-        # Only trade when futures OI direction confirms options signal
-        futures_oi_change = analysis.get("futures_oi_change", 0)
-        is_bullish_signal = "bull" in verdict.lower()
-
-        if futures_oi_change != 0:  # Only filter if we have futures data
-            futures_bullish = futures_oi_change > 0  # Rising futures OI = bullish
-            futures_confirms = (is_bullish_signal == futures_bullish)
-
-            if not futures_confirms:
-                log.warning("Skipping: Futures OI does not confirm signal",
-                            signal_direction="bullish" if is_bullish_signal else "bearish",
-                            futures_oi_change=f"{futures_oi_change:+,}",
-                            futures_direction="bullish" if futures_bullish else "bearish")
-                return False
-            else:
-                log.info("Futures OI confirms signal",
-                         signal_direction="bullish" if is_bullish_signal else "bearish",
-                         futures_oi_change=f"{futures_oi_change:+,}")
-
-        # 10. QUALITY SCORE CALCULATION
-        # High-quality trades (Score >= 7) can bypass strict regime requirements
-        MIN_QUALITY_SCORE = 7
-        quality_score = self._calculate_quality_score(analysis)
-        is_high_quality = quality_score >= MIN_QUALITY_SCORE
-
-        log.info("Quality score calculated", quality_score=quality_score,
-                 min_required=MIN_QUALITY_SCORE, is_high_quality=is_high_quality)
-
-        # 11. MARKET REGIME FILTER: Adjust requirements based on market conditions
-        market_regime = analysis.get("market_regime", {})
-        regime = market_regime.get("regime", "range_bound")
-
-        if regime == "range_bound":
-            # In sideways markets, OTM options have poor performance - need higher delta
-            if trade_setup.get("moneyness") == "OTM":
-                log.warning("Skipping: OTM trade in sideways market has poor win rate")
-                return False
-            # Tighter SL required in sideways (max 15%)
-            if trade_setup.get("risk_pct", 20) > 15:
-                log.warning("Skipping: SL too wide for sideways market",
-                            risk_pct=f"{trade_setup.get('risk_pct')}%", max_allowed="15%")
-                return False
-
-        # 12. SYMMETRIC CONFIRMATION FOR BOTH DIRECTIONS
-        direction = trade_setup.get("direction")
-        confirmation_status = analysis.get("confirmation_status", "")
-
-        # Both CALL and PUT need CONFIRMED status
-        if confirmation_status not in ["CONFIRMED", "REVERSAL_ALERT"]:
-            log.warning("Skipping: Needs confirmation", current_status=confirmation_status)
-            return False
-
-        # 13. REGIME ALIGNMENT WITH QUALITY OVERRIDE
-        # High-quality trades (Score >= 7) can trade in range_bound markets
-        # This allows exceptional setups to bypass strict regime requirements
-        if is_high_quality:
-            # High quality: Only block if regime is COUNTER to direction
-            # (e.g., BUY_CALL in trending_down is always bad)
-            if direction == "BUY_CALL" and regime == "trending_down":
-                log.warning("Skipping CALL: Counter-trend even with high quality",
-                            quality_score=quality_score, current_regime=regime)
-                return False
-            elif direction == "BUY_PUT" and regime == "trending_up":
-                log.warning("Skipping PUT: Counter-trend even with high quality",
-                            quality_score=quality_score, current_regime=regime)
-                return False
-            # range_bound is allowed for high-quality trades
-            if regime == "range_bound":
-                log.info("HIGH QUALITY OVERRIDE: Allowing trade in range_bound market",
-                         quality_score=quality_score, direction=direction)
-        else:
-            # Standard quality: Require strict regime alignment
-            if direction == "BUY_CALL" and regime != "trending_up":
-                log.warning("Skipping CALL: Needs trending_up (or quality >= 7)",
-                            quality_score=quality_score, current_regime=regime)
-                return False
-            elif direction == "BUY_PUT" and regime != "trending_down":
-                log.warning("Skipping PUT: Needs trending_down (or quality >= 7)",
-                            quality_score=quality_score, current_regime=regime)
-                return False
-
-        # 14. MULTI-FACTOR CONFIRMATION
-        # Reduce required confirmations for high-quality trades
-        REQUIRED_CONFIRMATIONS = 2 if is_high_quality else 3
-        confirmations = self._count_confirmations(analysis)
-        if confirmations < REQUIRED_CONFIRMATIONS:
-            log.warning("Skipping: Insufficient confirmations",
-                        confirmations=confirmations, required=REQUIRED_CONFIRMATIONS,
-                        quality_score=quality_score)
-            return False
+        # ===== SIMPLIFIED: Skip complex filters for new strategy =====
+        # The new strategy relies on:
+        # - Time window (11:00-14:00) ✓
+        # - "Slightly" verdicts only ✓  
+        # - Confidence >= 65% ✓
+        # - One trade per day ✓
+        
+        log.info("NEW STRATEGY: All conditions met - creating trade setup",
+                 verdict=analysis.get("verdict"),
+                 confidence=f"{analysis.get('signal_confidence', 0):.0f}%",
+                 direction=current_direction)
 
         return True
 
@@ -584,6 +505,10 @@ class TradeTracker:
         """
         Create a new PENDING trade setup from analysis.
 
+        Uses NEW STRATEGY SL/Target:
+        - Stop Loss: -20% from entry
+        - Target: +22% from entry
+
         Args:
             analysis: Current analysis dict
             timestamp: Current timestamp
@@ -594,6 +519,16 @@ class TradeTracker:
         trade_setup = analysis.get("trade_setup")
         if not trade_setup:
             return None
+
+        # ===== NEW STRATEGY: Override SL and Target with fixed percentages =====
+        entry_premium = trade_setup["entry_premium"]
+        sl_premium = round(entry_premium * (1 - STRATEGY_SL_PCT / 100), 2)      # -20%
+        target1_premium = round(entry_premium * (1 + STRATEGY_TARGET_PCT / 100), 2)  # +22%
+        
+        log.info("NEW STRATEGY: Using fixed SL/Target",
+                 entry=f"₹{entry_premium:.2f}",
+                 sl=f"₹{sl_premium:.2f} (-{STRATEGY_SL_PCT}%)",
+                 target=f"₹{target1_premium:.2f} (+{STRATEGY_TARGET_PCT}%)")
 
         # Generate trade reasoning
         trade_reasoning = self._generate_trade_reasoning(analysis, trade_setup)
@@ -609,11 +544,11 @@ class TradeTracker:
             strike=trade_setup["strike"],
             option_type=trade_setup["option_type"],
             moneyness=trade_setup["moneyness"],
-            entry_premium=trade_setup["entry_premium"],
-            sl_premium=trade_setup["sl_premium"],
-            target1_premium=trade_setup["target1_premium"],
-            target2_premium=trade_setup.get("target2_premium"),
-            risk_pct=trade_setup["risk_pct"],
+            entry_premium=entry_premium,
+            sl_premium=sl_premium,                  # NEW: Fixed -20%
+            target1_premium=target1_premium,        # NEW: Fixed +22%
+            target2_premium=None,                   # Not used in new strategy
+            risk_pct=STRATEGY_SL_PCT,               # NEW: Fixed 20%
             spot_at_creation=analysis["spot_price"],
             verdict_at_creation=analysis["verdict"],
             signal_confidence=analysis["signal_confidence"],
@@ -632,7 +567,28 @@ class TradeTracker:
         quality_score = self._calculate_quality_score(analysis)
         log.info("Created PENDING setup", setup_id=setup_id, direction=trade_setup['direction'],
                  strike=trade_setup['strike'], option_type=trade_setup['option_type'],
-                 entry_premium=trade_setup['entry_premium'], quality_score=quality_score)
+                 entry_premium=entry_premium, sl_premium=sl_premium, 
+                 target1_premium=target1_premium, quality_score=quality_score)
+
+        # ===== NEW: Send Telegram alert for trade setup =====
+        try:
+            from alerts import send_trade_setup_alert
+            direction_text = "BUY CALL" if trade_setup["direction"] == "BUY_CALL" else "BUY PUT"
+            strike_text = f"{trade_setup['strike']} {trade_setup['option_type']}"
+            
+            send_trade_setup_alert(
+                direction=direction_text,
+                strike=strike_text,
+                entry_premium=entry_premium,
+                sl_premium=sl_premium,
+                target_premium=target1_premium,
+                sl_pct=STRATEGY_SL_PCT,
+                target_pct=STRATEGY_TARGET_PCT,
+                verdict=analysis["verdict"],
+                confidence=analysis["signal_confidence"]
+            )
+        except Exception as e:
+            log.error("Failed to send trade setup alert", error=str(e))
 
         # Update tracking for direction flip cooldown
         self.last_suggested_direction = trade_setup["direction"]
@@ -852,49 +808,30 @@ class TradeTracker:
         """
         Cancel a PENDING setup if the OI direction has flipped.
 
-        Only cancels PENDING setups, not ACTIVE ones.
+        NEW STRATEGY: DISABLED - Once a setup is created, it stays until:
+        - Entry is hit -> becomes ACTIVE
+        - SL/Target is hit -> WON/LOST
+        - EOD (15:20) -> force closed
+        - Market close (15:25) -> EXPIRED
+        
+        Setups are LOCKED once created - no more flipping!
 
         Args:
             current_verdict: Current OI verdict
             timestamp: Current timestamp
 
         Returns:
-            True if a setup was cancelled
+            Always False (cancellation disabled in new strategy)
         """
+        # ===== NEW STRATEGY: Setups are locked - no cancellation on direction flip =====
         setup = get_active_trade_setup()
-        if not setup or setup["status"] != "PENDING":
-            return False
-
-        # Determine if direction has changed
-        setup_direction = setup["direction"]  # BUY_CALL or BUY_PUT
-        setup_is_bullish = setup_direction == "BUY_CALL"
-
-        current_is_bullish = "bull" in current_verdict.lower()
-        current_is_bearish = "bear" in current_verdict.lower()
-
-        # Check for direction flip
-        direction_flipped = (
-            (setup_is_bullish and current_is_bearish) or
-            (not setup_is_bullish and current_is_bullish)
-        )
-
-        if direction_flipped:
-            update_trade_setup_status(
-                setup["id"],
-                status="CANCELLED",
-                resolved_at=timestamp
-            )
-
-            # CRITICAL: Set cancellation cooldown to prevent immediate recreation with different prices
-            self.last_cancelled_time = timestamp
-
-            log.warning("Setup CANCELLED - Direction flipped", setup_id=setup['id'],
-                        from_direction='BULLISH' if setup_is_bullish else 'BEARISH',
-                        to_direction='BULLISH' if current_is_bullish else 'BEARISH',
-                        cooldown_minutes=30)
-
-            return True
-
+        if setup and setup["status"] == "PENDING":
+            log.debug("Direction flip detected but setup is LOCKED (new strategy)",
+                     setup_id=setup['id'],
+                     original_direction=setup['direction'],
+                     current_verdict=current_verdict)
+        
+        # Return False - never cancel
         return False
 
     def expire_pending_setups(self, timestamp: datetime) -> bool:

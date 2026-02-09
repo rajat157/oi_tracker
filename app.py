@@ -388,7 +388,7 @@ def start_app(debug: bool = False, port: int = 5000):
     scheduler_thread.start()
 
     # Run the Flask app with SocketIO
-    socketio.run(app, host="0.0.0.0", port=port, debug=debug, use_reloader=False)
+    socketio.run(app, host="0.0.0.0", port=port, debug=debug, use_reloader=False, allow_unsafe_werkzeug=True)
 
 
 if __name__ == "__main__":

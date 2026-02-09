@@ -2002,6 +2002,24 @@ def purge_old_logs(days: int = 7):
         return deleted
 
 
+def get_todays_trades() -> list:
+    """
+    Get all trades created today (for one-trade-per-day enforcement).
+    
+    Returns:
+        List of trade setups created today (any status)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM trade_setups
+            WHERE date(created_at) = date('now', 'localtime')
+            ORDER BY created_at DESC
+        """)
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
 # Initialize database on import
 init_db()
 

@@ -143,6 +143,72 @@ R:R = <code>1:{rr_ratio:.1f}</code>
     return send_telegram(message.strip())
 
 
+def send_trade_setup_alert(
+    direction: str,
+    strike: str,
+    entry_premium: float,
+    sl_premium: float,
+    target_premium: float,
+    sl_pct: float,
+    target_pct: float,
+    verdict: str,
+    confidence: float
+) -> bool:
+    """
+    Send Telegram alert when a new trade setup is created.
+    
+    NEW STRATEGY (85.7% Win Rate):
+    - Time Window: 11:00 - 14:00 IST
+    - Only "Slightly" verdicts
+    - Confidence >= 65%
+    - ONE trade per day
+    
+    Args:
+        direction: BUY CALL or BUY PUT
+        strike: Strike with option type (e.g., "25750 CE")
+        entry_premium: Entry price
+        sl_premium: Stop loss price
+        target_premium: Target price
+        sl_pct: Stop loss percentage (e.g., 20.0)
+        target_pct: Target percentage (e.g., 22.0)
+        verdict: Market verdict
+        confidence: Signal confidence percentage
+    
+    Returns:
+        True if sent successfully
+    """
+    alert_type = "TRADE_SETUP"
+    
+    if not _check_cooldown(alert_type):
+        return False
+    
+    now = datetime.now()
+    
+    message = f"""
+<b>🎯 TRADE SETUP</b>
+
+<b>Direction:</b> <code>{direction}</code>
+<b>Strike:</b> <code>{strike}</code>
+<b>Entry:</b> <code>₹{entry_premium:.2f}</code>
+<b>Stop Loss:</b> <code>₹{sl_premium:.2f}</code> (-{sl_pct:.0f}%)
+<b>Target:</b> <code>₹{target_premium:.2f}</code> (+{target_pct:.0f}%)
+
+<b>Verdict:</b> {verdict}
+<b>Confidence:</b> {confidence:.0f}%
+
+⏰ <i>Valid until 14:00 or entry hit</i>
+📊 <i>One trade per day - this is it!</i>
+
+<i>Time: {now.strftime('%H:%M:%S')}</i>
+"""
+    
+    log.info("Sending trade setup alert", direction=direction, strike=strike,
+             entry=f"₹{entry_premium:.2f}", sl=f"₹{sl_premium:.2f}", 
+             target=f"₹{target_premium:.2f}")
+    
+    return send_telegram(message.strip())
+
+
 def send_test_alert() -> bool:
     """Send a test alert to verify configuration."""
     message = f"""

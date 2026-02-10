@@ -18,7 +18,7 @@ from database import (
 )
 from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
-from pattern_tracker import check_patterns, log_failed_entry, get_active_alert
+from pattern_tracker import check_patterns, log_failed_entry
 from logger import get_logger
 
 log = get_logger("scheduler")
@@ -235,18 +235,11 @@ class OIScheduler:
 
             log.info("Analysis complete", verdict=analysis['verdict'])
 
-            # Pattern Tracker: detect PM reversals and other entry timing patterns
+            # Pattern Tracker: detect patterns (PM reversal alerts disabled)
             try:
                 check_patterns(analysis)
-                
-                # Get active alert for dashboard display
-                alert_data = get_active_alert(analysis)
-                if alert_data:
-                    analysis["call_alert"] = alert_data
-                    log.info("CALL alert active", pm_score=alert_data['pm_score'], strike=alert_data['strike'])
-                else:
-                    analysis["call_alert"] = None
-                    
+                # PM reversal alerts disabled - using new strategy instead
+                analysis["call_alert"] = None
             except Exception as e:
                 log.error("Error in pattern tracking", error=str(e))
                 analysis["call_alert"] = None

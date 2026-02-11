@@ -16,7 +16,6 @@ from database import (
     get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
     get_previous_futures_oi, get_analysis_history, get_previous_verdict
 )
-from self_learner import get_self_learner
 from trade_tracker import get_trade_tracker
 from pattern_tracker import check_patterns, log_failed_entry
 from logger import get_logger
@@ -47,7 +46,6 @@ class OIScheduler:
         self.is_running = False
         self.last_purge_date = None
         self.last_learning_date = None
-        self.self_learner = get_self_learner()
         self.trade_tracker = get_trade_tracker()
         self.force_enabled = False
 
@@ -178,23 +176,12 @@ class OIScheduler:
             analysis["timestamp"] = timestamp.isoformat()
             analysis["expiry_date"] = current_expiry
 
-            # Self-learning: check pending signal outcomes FIRST (before serialization)
-            resolved = self.self_learner.check_outcomes(spot_price, timestamp)
-            for r in resolved:
-                status = "CORRECT" if r["was_correct"] else "WRONG"
-                log.info("Signal resolved", verdict=r['verdict'], status=status, pnl=f"{r['profit_loss_pct']:+.2f}%")
-
-            # Self-learning: record new signal and get status
-            learning_result = self.self_learner.process_new_signal(timestamp, analysis)
-            if learning_result["signal_id"]:
-                log.info("Recorded signal", signal_id=learning_result['signal_id'], confidence=f"{learning_result['confidence']:.0f}%")
-
-            # Add self_learning to analysis BEFORE serialization so it's stored in DB
+            # Self-learning removed - using fixed strategy params
             analysis["self_learning"] = {
-                "should_trade": learning_result["should_trade"],
-                "is_paused": learning_result["is_paused"],
-                "ema_accuracy": round(learning_result["ema_accuracy"] * 100, 1),
-                "consecutive_errors": learning_result["consecutive_errors"]
+                "should_trade": True,
+                "is_paused": False,
+                "ema_accuracy": 0,
+                "consecutive_errors": 0
             }
 
             # Calculate market trend from recent analysis history
@@ -340,50 +327,13 @@ class OIScheduler:
         self.fetch_and_analyze(force=force)
 
     def _check_daily_learning_update(self):
-        """Run daily learning update at end of market day."""
-        now = datetime.now()
-        today = now.date()
-
-        # Only run once per day, after market close
-        if self.last_learning_date == today:
-            return
-
-        # Run after market close (3:30 PM)
-        if now.time() >= time(15, 30):
-            log.info("Running daily learning update")
-
-            # Run full learning update (includes confidence & verdict analysis)
-            self.self_learner.update_learning()
-            self.last_learning_date = today
-
-            # Generate and log learning report for visibility
-            try:
-                report = self.self_learner.generate_learning_report()
-                log.info("Learning report generated",
-                         best_confidence=report['confidence_analysis']['best_range'],
-                         worst_confidence=report['confidence_analysis']['worst_range'],
-                         best_verdict=report['verdict_analysis']['best_verdict'],
-                         worst_verdict=report['verdict_analysis']['worst_verdict'],
-                         health_status=report['overall_health']['status'],
-                         ema_accuracy=report['overall_health']['ema_accuracy'])
-
-                # Store report in last_analysis for dashboard access
-                if self.last_analysis:
-                    self.last_analysis["learning_report"] = report
-            except Exception as e:
-                log.error("Error generating learning report", error=str(e))
-
-            # Reset pause state for next day
-            if now.time() >= time(15, 45):
-                self.self_learner.reset_for_new_day()
+        """Daily learning update - self-learner removed, now a no-op."""
+        pass
 
     def get_market_status(self) -> dict:
         """Get current market status information."""
         now = datetime.now()
         is_open = self.is_market_open()
-
-        # Add self-learning status
-        learning_status = self.self_learner.get_status()
 
         return {
             "is_open": is_open,
@@ -393,9 +343,9 @@ class OIScheduler:
             "day": now.strftime("%A"),
             "message": "Market is OPEN" if is_open else "Market is CLOSED",
             "self_learning": {
-                "should_trade": learning_status["signal_tracker"]["should_trade"],
-                "ema_accuracy": round(learning_status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
-                "is_paused": learning_status["signal_tracker"]["ema_tracker"]["is_paused"]
+                "should_trade": True,
+                "ema_accuracy": 0,
+                "is_paused": False
             }
         }
 

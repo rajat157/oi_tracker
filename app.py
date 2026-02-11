@@ -77,23 +77,14 @@ def api_latest():
     analysis = get_latest_analysis()
 
     if analysis:
-        # Add self_learning if missing (for old data stored without it)
-        # IMPORTANT: Old analyses load stale data from learned_weights table
-        # Always prefer live self-learner status to show current state
-        if "self_learning" not in analysis:
-            from self_learner import get_self_learner
-            learner = get_self_learner()
-            status = learner.get_status()
-            analysis["self_learning"] = {
-                "should_trade": status["signal_tracker"]["should_trade"],
-                "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
-                "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
-                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"],
-                "is_stale": True  # Mark as potentially stale from learned_weights table
-            }
-        else:
-            # Analysis has embedded self_learning - this is fresh data
-            analysis["self_learning"]["is_stale"] = False
+        # Static self_learning status (self-learner removed - using fixed strategy params)
+        analysis["self_learning"] = {
+            "should_trade": True,
+            "is_paused": False,
+            "ema_accuracy": 0,
+            "consecutive_errors": 0,
+            "is_stale": False
+        }
 
         # Add live trade tracker data (needs current snapshot for live P/L)
         snapshot = get_latest_snapshot()
@@ -141,42 +132,14 @@ def api_market_status():
 
 @app.route("/api/learning-report")
 def api_learning_report():
-    """
-    Get the self-learning system's analysis report.
-
-    Returns insights on:
-    - Which confidence ranges perform best/worst
-    - Which verdicts to trust/skip
-    - Overall system health
-    """
-    from self_learner import get_self_learner
-    learner = get_self_learner()
-
-    try:
-        report = learner.generate_learning_report()
-        return jsonify(report)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    """Self-learning system removed - returns static response."""
+    return jsonify({"status": "disabled", "message": "Self-learner removed - using fixed strategy params"})
 
 
 @app.route("/api/learning-status")
 def api_learning_status():
-    """
-    Get detailed self-learning system status.
-
-    Includes:
-    - Confidence optimizer thresholds
-    - Verdict analyzer performance
-    - EMA accuracy tracking
-    """
-    from self_learner import get_self_learner
-    learner = get_self_learner()
-
-    try:
-        status = learner.get_status()
-        return jsonify(status)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    """Self-learning system removed - returns static response."""
+    return jsonify({"status": "disabled", "message": "Self-learner removed - using fixed strategy params"})
 
 
 @app.route("/trades")
@@ -264,23 +227,14 @@ def handle_connect():
     analysis = get_latest_analysis()
 
     if analysis:
-        # Add self_learning if missing (for old data stored without it)
-        # IMPORTANT: Old analyses load stale data from learned_weights table
-        # Always prefer live self-learner status to show current state
-        if "self_learning" not in analysis:
-            from self_learner import get_self_learner
-            learner = get_self_learner()
-            status = learner.get_status()
-            analysis["self_learning"] = {
-                "should_trade": status["signal_tracker"]["should_trade"],
-                "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
-                "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
-                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"],
-                "is_stale": True  # Mark as potentially stale from learned_weights table
-            }
-        else:
-            # Analysis has embedded self_learning - this is fresh data
-            analysis["self_learning"]["is_stale"] = False
+        # Static self_learning status (self-learner removed)
+        analysis["self_learning"] = {
+            "should_trade": True,
+            "is_paused": False,
+            "ema_accuracy": 0,
+            "consecutive_errors": 0,
+            "is_stale": False
+        }
 
         # Add live trade tracker data
         snapshot = get_latest_snapshot()
@@ -323,23 +277,14 @@ def handle_request_latest():
     analysis = get_latest_analysis()
 
     if analysis:
-        # Add self_learning if missing (for old data stored without it)
-        # IMPORTANT: Old analyses load stale data from learned_weights table
-        # Always prefer live self-learner status to show current state
-        if "self_learning" not in analysis:
-            from self_learner import get_self_learner
-            learner = get_self_learner()
-            status = learner.get_status()
-            analysis["self_learning"] = {
-                "should_trade": status["signal_tracker"]["should_trade"],
-                "is_paused": status["signal_tracker"]["ema_tracker"]["is_paused"],
-                "ema_accuracy": round(status["signal_tracker"]["ema_tracker"]["ema_accuracy"] * 100, 1),
-                "consecutive_errors": status["signal_tracker"]["ema_tracker"]["consecutive_errors"],
-                "is_stale": True  # Mark as potentially stale from learned_weights table
-            }
-        else:
-            # Analysis has embedded self_learning - this is fresh data
-            analysis["self_learning"]["is_stale"] = False
+        # Static self_learning status (self-learner removed)
+        analysis["self_learning"] = {
+            "should_trade": True,
+            "is_paused": False,
+            "ema_accuracy": 0,
+            "consecutive_errors": 0,
+            "is_stale": False
+        }
 
         # Add live trade tracker data (needs current snapshot for live P/L)
         snapshot = get_latest_snapshot()

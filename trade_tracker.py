@@ -18,7 +18,6 @@ from database import (
     get_last_resolved_trade,
     get_todays_trades,
 )
-from self_learner import get_self_learner
 from pattern_tracker import log_failed_entry
 from logger import get_logger
 
@@ -44,15 +43,10 @@ class TradeTracker:
 
     def __init__(self):
         """Initialize the trade tracker."""
-        # Default thresholds (will be overridden by learned values)
-        self._default_confidence_min = 50.0
-        self._default_confidence_max = 90.0
-
         self.entry_tolerance = 0.02  # 2% tolerance for entry activation
         self.cooldown_minutes = 12  # Cooldown after trade resolution (4 fetch cycles - quality over quantity)
         self.move_threshold_pct = 0.8  # Skip if spot moved 0.8%+ in direction (widened from 0.5%)
         self.bounce_threshold_pct = 0.3  # Skip PUT if bounced 0.3%+ from low
-        self.self_learner = get_self_learner()
         self.direction_flip_cooldown_minutes = 15  # 5 fetch cycles
         self.last_suggested_direction = None
         self.last_suggestion_time = None
@@ -61,21 +55,18 @@ class TradeTracker:
 
     @property
     def confidence_threshold(self) -> float:
-        """Get minimum confidence threshold (learned or default)."""
-        learned = self.self_learner.get_learned_confidence_thresholds()
-        return learned.get("min_threshold", self._default_confidence_min)
+        """Get minimum confidence threshold (fixed strategy param)."""
+        return STRATEGY_MIN_CONFIDENCE
 
     @property
     def confidence_max(self) -> float:
-        """Get maximum confidence threshold (learned or default)."""
-        learned = self.self_learner.get_learned_confidence_thresholds()
-        return learned.get("max_threshold", self._default_confidence_max)
+        """Get maximum confidence threshold (fixed)."""
+        return 100.0
 
     @property
     def confidence_exclude_ranges(self) -> list:
-        """Get confidence ranges to exclude (learned)."""
-        learned = self.self_learner.get_learned_confidence_thresholds()
-        return learned.get("exclude_ranges", [])
+        """Get confidence ranges to exclude (none - fixed strategy)."""
+        return []
 
     def _count_confirmations(self, analysis: dict) -> int:
         """Count aligned confirmation signals."""
@@ -296,10 +287,10 @@ class TradeTracker:
             return False
 
         # 2. Check if self-learner says to pause trading
-        if not self.self_learner.signal_tracker.ema_tracker.should_trade():
-            # NOTE: Removed cancellation logic - setups are LOCKED once created
-            log.warning("Skipping: Self-learner paused trading")
-            return False
+        # BYPASSED: New strategy (85.7% backtest) overrides old EMA tracker
+        # if not self.self_learner.signal_tracker.ema_tracker.should_trade():
+        #     log.warning("Skipping: Self-learner paused trading")
+        #     return False
 
         # 3. Check if trade setup was generated
         trade_setup = analysis.get("trade_setup")

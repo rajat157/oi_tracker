@@ -25,6 +25,8 @@ log = get_logger("alerts")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7011095516")  # Default: Mason's chat
 SELLING_ALERT_CHAT_IDS = [x.strip() for x in os.getenv("SELLING_ALERT_CHAT_IDS", TELEGRAM_CHAT_ID).split(",")]
+SELLING_ALERT_BOT_TOKEN = os.getenv("SELLING_ALERT_BOT_TOKEN", "")  # Separate bot for external users
+SELLING_ALERT_EXTRA_CHAT_IDS = [x.strip() for x in os.getenv("SELLING_ALERT_EXTRA_CHAT_IDS", "").split(",") if x.strip()]
 
 # Alert cooldown to prevent spam (seconds)
 ALERT_COOLDOWN = 300  # 5 minutes between same-type alerts
@@ -71,8 +73,9 @@ def send_telegram(message: str, parse_mode: str = "HTML") -> bool:
 
 
 def send_telegram_multi(message: str, chat_ids: list, parse_mode: str = "HTML") -> bool:
-    """Send a message to multiple Telegram chat IDs."""
+    """Send selling alerts to Mason (main bot) + external users (separate bot)."""
     success = True
+    # Send to Mason via main bot
     for cid in chat_ids:
         if not TELEGRAM_BOT_TOKEN:
             return False
@@ -88,6 +91,21 @@ def send_telegram_multi(message: str, chat_ids: list, parse_mode: str = "HTML") 
         except Exception as e:
             log.error("Failed to send Telegram alert", chat_id=cid, error=str(e))
             success = False
+    # Send to external users via separate bot
+    if SELLING_ALERT_BOT_TOKEN and SELLING_ALERT_EXTRA_CHAT_IDS:
+        for cid in SELLING_ALERT_EXTRA_CHAT_IDS:
+            url = f"https://api.telegram.org/bot{SELLING_ALERT_BOT_TOKEN}/sendMessage"
+            payload = {"chat_id": cid, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True}
+            try:
+                response = requests.post(url, json=payload, timeout=10)
+                if response.status_code == 200:
+                    log.info("External alert sent", chat_id=cid)
+                else:
+                    log.error("External alert error", chat_id=cid, status=response.status_code)
+                    success = False
+            except Exception as e:
+                log.error("Failed to send external alert", chat_id=cid, error=str(e))
+                success = False
     return success
 
 

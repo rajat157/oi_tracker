@@ -344,10 +344,10 @@ class SellingTracker:
                          target2, verdict, confidence, spot):
         """Send Telegram alert for new selling setup."""
         try:
-            from alerts import send_telegram
+            from alerts import send_telegram_multi, SELLING_ALERT_CHAT_IDS
 
             dir_text = "SELL PUT" if direction == "SELL_PUT" else "SELL CALL"
-            emoji = "🔴" if "CALL" in direction else "🟢"
+            emoji = "ðŸ”´" if "CALL" in direction else "ðŸŸ¢"
 
             message = (
                 f"<b>{emoji} SELL SETUP</b>\n\n"
@@ -363,19 +363,19 @@ class SellingTracker:
                 f"<i>Auto-exits at T2. Take T1 manually if you prefer 1:1.</i>\n"
                 f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
             )
-            send_telegram(message)
+            send_telegram_multi(message, SELLING_ALERT_CHAT_IDS)
         except Exception as e:
             log.error("Failed to send sell alert", error=str(e))
 
     def _send_t1_alert(self, setup, current_premium):
         """Send Telegram alert when T1 is hit."""
         try:
-            from alerts import send_telegram
+            from alerts import send_telegram_multi, SELLING_ALERT_CHAT_IDS
             pnl = ((setup["entry_premium"] - current_premium) / setup["entry_premium"]) * 100
             dir_text = "SELL PUT" if setup["direction"] == "SELL_PUT" else "SELL CALL"
 
             message = (
-                f"<b>🎯 T1 HIT — SELL TRADE</b>\n\n"
+                f"<b>ðŸŽ¯ T1 HIT â€” SELL TRADE</b>\n\n"
                 f"<b>Direction:</b> <code>{dir_text}</code>\n"
                 f"<b>Strike:</b> <code>{setup['strike']} {setup['option_type']}</code>\n"
                 f"<b>Entry:</b> <code>Rs {setup['entry_premium']:.2f}</code>\n"
@@ -384,17 +384,17 @@ class SellingTracker:
                 f"<i>Book profit now or let it ride to T2 ({SELL_TARGET2_PCT:.0f}% drop)</i>\n"
                 f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
             )
-            send_telegram(message)
+            send_telegram_multi(message, SELLING_ALERT_CHAT_IDS)
         except Exception as e:
             log.error("Failed to send T1 alert", error=str(e))
 
     def _send_exit_alert(self, setup, exit_premium, reason, pnl):
         """Send Telegram alert when selling trade exits."""
         try:
-            from alerts import send_telegram
-            emoji = "✅" if pnl > 0 else "❌"
+            from alerts import send_telegram_multi, SELLING_ALERT_CHAT_IDS
+            emoji = "âœ…" if pnl > 0 else "âŒ"
             dir_text = "SELL PUT" if setup["direction"] == "SELL_PUT" else "SELL CALL"
-            t1_status = "✅ Hit" if setup.get("t1_hit") else "❌ Missed"
+            t1_status = "âœ… Hit" if setup.get("t1_hit") else "âŒ Missed"
 
             reason_text = reason
             if reason == "TARGET2":
@@ -415,7 +415,7 @@ class SellingTracker:
                 f"<b>T1 (1:1):</b> {t1_status}\n\n"
                 f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
             )
-            send_telegram(message)
+            send_telegram_multi(message, SELLING_ALERT_CHAT_IDS)
         except Exception as e:
             log.error("Failed to send sell exit alert", error=str(e))
 
@@ -437,3 +437,4 @@ class SellingTracker:
             if not row:
                 return {}
             return dict(row)
+

@@ -24,6 +24,7 @@ log = get_logger("alerts")
 # Configuration - set these in environment or .env file
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7011095516")  # Default: Mason's chat
+SELLING_ALERT_CHAT_IDS = [TELEGRAM_CHAT_ID, "640354012"]  # Mason + friend (selling alerts only)
 
 # Alert cooldown to prevent spam (seconds)
 ALERT_COOLDOWN = 300  # 5 minutes between same-type alerts
@@ -67,6 +68,27 @@ def send_telegram(message: str, parse_mode: str = "HTML") -> bool:
     except Exception as e:
         log.error("Failed to send Telegram alert", error=str(e))
         return False
+
+
+def send_telegram_multi(message: str, chat_ids: list, parse_mode: str = "HTML") -> bool:
+    """Send a message to multiple Telegram chat IDs."""
+    success = True
+    for cid in chat_ids:
+        if not TELEGRAM_BOT_TOKEN:
+            return False
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": cid, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True}
+        try:
+            response = requests.post(url, json=payload, timeout=10)
+            if response.status_code == 200:
+                log.info("Telegram alert sent", chat_id=cid)
+            else:
+                log.error("Telegram API error", chat_id=cid, status=response.status_code)
+                success = False
+        except Exception as e:
+            log.error("Failed to send Telegram alert", chat_id=cid, error=str(e))
+            success = False
+    return success
 
 
 def _check_cooldown(alert_type: str) -> bool:

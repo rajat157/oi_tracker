@@ -24,7 +24,7 @@ log = get_logger("alerts")
 # Configuration - set these in environment or .env file
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7011095516")  # Default: Mason's chat
-SELLING_ALERT_CHAT_IDS = [TELEGRAM_CHAT_ID, "640354012"]  # Mason + friend (selling alerts only)
+SELLING_ALERT_CHAT_IDS = [x.strip() for x in os.getenv("SELLING_ALERT_CHAT_IDS", TELEGRAM_CHAT_ID).split(",")]
 
 # Alert cooldown to prevent spam (seconds)
 ALERT_COOLDOWN = 300  # 5 minutes between same-type alerts

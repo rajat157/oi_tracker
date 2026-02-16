@@ -177,7 +177,7 @@
                 <!-- Sell Trade Card -->
                 <div class="card trade-setup-card sell-trade-card" id="sell-trade-card" style="display: none;">
                     <div class="trade-setup-title-row">
-                        <h3 class="card-title">Sell Trade Setup</h3>
+                        <h3 class="card-title">💰 Sell Trade</h3>
                         <span class="trade-status-badge" id="sell-status-badge">ACTIVE</span>
                     </div>
                     <div class="trade-setup-header">
@@ -222,10 +222,47 @@
                     </div>
                 </div>
 
+                <!-- Dessert Trade Card (1:2 RR strategies) -->
+                <div class="card trade-setup-card dessert-trade-card" id="dessert-trade-card" style="display: none;">
+                    <div class="trade-setup-title-row">
+                        <h3 class="card-title" id="dessert-strategy-name">🍰 Dessert Trade</h3>
+                        <span class="trade-status-badge" id="dessert-status-badge">ACTIVE</span>
+                    </div>
+                    <div class="trade-setup-header">
+                        <span class="trade-direction" id="dessert-direction">BUY PUT</span>
+                        <span class="trade-strike" id="dessert-strike">--</span>
+                        <span class="trade-confidence" id="dessert-rr">RR: 1:2</span>
+                    </div>
+                    <div class="trade-live-pnl" id="dessert-live-pnl" style="display: none;">
+                        <span class="pnl-label">Live P/L</span>
+                        <span class="pnl-value" id="dessert-pnl-value">--</span>
+                        <span class="pnl-current">Current: <strong id="dessert-current-premium">--</strong></span>
+                    </div>
+                    <div class="trade-levels">
+                        <div class="trade-level entry">
+                            <span class="level-label">Entry Premium</span>
+                            <span class="level-value" id="dessert-entry">--</span>
+                        </div>
+                        <div class="trade-level sl">
+                            <span class="level-label">Stop Loss (-25%)</span>
+                            <span class="level-value" id="dessert-sl">--</span>
+                        </div>
+                        <div class="trade-level target">
+                            <span class="level-label">Target (+50%)</span>
+                            <span class="level-value" id="dessert-target">--</span>
+                        </div>
+                    </div>
+                    <div class="trade-meta">
+                        <span>Spot: <strong id="dessert-spot">--</strong></span>
+                        <span>Verdict: <strong id="dessert-verdict">--</strong></span>
+                        <span>VIX: <strong id="dessert-vix">--</strong></span>
+                    </div>
+                </div>
+
                 <!-- Trade Setup Card (Persistent with Lifecycle) -->
                 <div class="card trade-setup-card" id="trade-setup-card" style="display: none;">
                     <div class="trade-setup-title-row">
-                        <h3 class="card-title">Active Trade Setup</h3>
+                        <h3 class="card-title">🫀 Iron Pulse</h3>
                         <span class="trade-status-badge" id="trade-status-badge">PENDING</span>
                     </div>
                     <div class="trade-setup-header">

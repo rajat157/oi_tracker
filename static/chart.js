@@ -455,6 +455,9 @@ function updateDashboard(data) {
     // Update Sell Trade Card
     updateSellTrade(data);
 
+    // Update Dessert Trade Card
+    updateDessertTrade(data);
+
     // Update Trade Setup Card (persistent with lifecycle)
     updateTradeSetup(data);
 
@@ -632,6 +635,65 @@ function updateStrengthAnalysis(strength) {
         netElem.classList.remove('positive', 'negative');
         netElem.classList.add(net >= 0 ? 'positive' : 'negative');
     }
+}
+
+function updateDessertTrade(data) {
+    const card = document.getElementById('dessert-trade-card');
+    if (!card) return;
+
+    const d = data.active_dessert_trade;
+    if (!d) {
+        card.style.display = 'none';
+        return;
+    }
+
+    card.style.display = 'block';
+
+    // Strategy name with emoji
+    const nameElem = document.getElementById('dessert-strategy-name');
+    if (nameElem) {
+        const name = d.strategy_name || 'Dessert';
+        const emoji = name.includes('Contra') ? '🎯' : name.includes('Phantom') ? '🔮' : '🍰';
+        nameElem.textContent = emoji + ' ' + name;
+    }
+
+    // Status badge
+    const badge = document.getElementById('dessert-status-badge');
+    if (badge) {
+        badge.textContent = d.status || 'ACTIVE';
+        badge.className = 'trade-status-badge status-' + (d.status || 'active').toLowerCase();
+    }
+
+    // Direction & strike
+    setText('dessert-direction', 'BUY PUT');
+    setText('dessert-strike', d.strike + ' PE');
+
+    // Premiums
+    setText('dessert-entry', (d.entry_premium || 0).toFixed(2));
+    setText('dessert-sl', (d.sl_premium || 0).toFixed(2));
+    setText('dessert-target', (d.target_premium || 0).toFixed(2));
+
+    // Live P&L
+    const pnlDiv = document.getElementById('dessert-live-pnl');
+    if (pnlDiv && d.current_pnl !== undefined && d.current_pnl !== null) {
+        pnlDiv.style.display = 'flex';
+        const pnlValue = document.getElementById('dessert-pnl-value');
+        if (pnlValue) {
+            const pnl = d.current_pnl;
+            pnlValue.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '%';
+            pnlValue.classList.remove('positive', 'negative');
+            pnlValue.classList.add(pnl >= 0 ? 'positive' : 'negative');
+        }
+        const curPrem = d.current_premium || d.last_premium || 0;
+        setText('dessert-current-premium', curPrem > 0 ? curPrem.toFixed(2) : '--');
+    } else if (pnlDiv) {
+        pnlDiv.style.display = 'none';
+    }
+
+    // Meta
+    setText('dessert-spot', (d.spot_at_creation || 0).toFixed(2));
+    setText('dessert-verdict', d.verdict_at_creation || '--');
+    setText('dessert-vix', (d.vix_at_creation || 0).toFixed(1));
 }
 
 function updateSellTrade(data) {

@@ -185,19 +185,20 @@ def send_trade_setup_alert(
     now = datetime.now()
     
     message = f"""
-<b>🎯 TRADE SETUP</b>
+<b>🫀 Iron Pulse — TRADE SETUP</b>
 
 <b>Direction:</b> <code>{direction}</code>
 <b>Strike:</b> <code>{strike}</code>
-<b>Entry:</b> <code>₹{entry_premium:.2f}</code>
-<b>Stop Loss:</b> <code>₹{sl_premium:.2f}</code> (-{sl_pct:.0f}%)
-<b>Target:</b> <code>₹{target_premium:.2f}</code> (+{target_pct:.0f}%)
+<b>Entry:</b> <code>Rs {entry_premium:.2f}</code>
+<b>Stop Loss:</b> <code>Rs {sl_premium:.2f}</code> (-{sl_pct:.0f}%)
+<b>Target:</b> <code>Rs {target_premium:.2f}</code> (+{target_pct:.0f}%)
+<b>RR:</b> <code>1:1</code>
 
 <b>Verdict:</b> {verdict}
 <b>Confidence:</b> {confidence:.0f}%
 
 ⏰ <i>Valid until 14:00 or entry hit</i>
-📊 <i>One trade per day - this is it!</i>
+📊 <i>One trade per day — bread &amp; butter!</i>
 
 <i>Time: {now.strftime('%H:%M:%S')}</i>
 """

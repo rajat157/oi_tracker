@@ -1343,6 +1343,24 @@ body {
     color: var(--bearish);
 }
 
+.trade-direction.sell-put {
+    background: var(--bullish-light);
+    color: var(--bullish);
+}
+
+.trade-direction.sell-call {
+    background: var(--bearish-light);
+    color: var(--bearish);
+}
+
+.sell-trade-card {
+    border-left: 3px solid #f59e0b;
+}
+
+.sell-trade-card .card-title {
+    color: #f59e0b;
+}
+
 .trade-strike {
     font-size: var(--text-sm);
     font-weight: 600;

@@ -18,6 +18,7 @@ from database import (
 )
 from trade_tracker import get_trade_tracker
 from selling_tracker import SellingTracker
+from dessert_tracker import DessertTracker
 from pattern_tracker import check_patterns, log_failed_entry
 from logger import get_logger
 
@@ -49,6 +50,7 @@ class OIScheduler:
         self.last_learning_date = None
         self.trade_tracker = get_trade_tracker()
         self.selling_tracker = SellingTracker()
+        self.dessert_tracker = DessertTracker()
         self.force_enabled = False
 
     def set_force_enabled(self, enabled: bool):
@@ -267,6 +269,24 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in selling tracker", error=str(e))
 
+            # ===== DESSERT TRACKER (1:2 RR strategies) =====
+            try:
+                # Check/update active dessert trade
+                dessert_update = self.dessert_tracker.check_and_update_dessert(strikes_data)
+                if dessert_update:
+                    log.info("Dessert trade updated",
+                             strategy=dessert_update.get('strategy'),
+                             action=dessert_update['action'],
+                             pnl=f"{dessert_update['pnl']:.2f}%",
+                             reason=dessert_update['reason'])
+
+                # Create new dessert trade if conditions met
+                strategy = self.dessert_tracker.should_create_dessert(analysis)
+                if strategy:
+                    self.dessert_tracker.create_dessert_trade(strategy, analysis, strikes_data)
+            except Exception as e:
+                log.error("Error in dessert tracker", error=str(e))
+
             # 6. Add trade tracker data to analysis for dashboard
             tracker_data = self.trade_tracker.get_stats()
             active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
@@ -292,6 +312,24 @@ class OIScheduler:
                 log.error("Error getting sell data for dashboard", error=str(e))
                 analysis["active_sell_trade"] = None
                 analysis["sell_stats"] = {}
+
+            # Add dessert tracker data
+            try:
+                from dessert_tracker import get_active_dessert
+                active_dessert = get_active_dessert()
+                if active_dessert:
+                    strike_d = strikes_data.get(active_dessert["strike"], {})
+                    cur_prem = strike_d.get("pe_ltp", 0)
+                    if cur_prem > 0:
+                        d_pnl = ((cur_prem - active_dessert["entry_premium"]) / active_dessert["entry_premium"]) * 100
+                        active_dessert["current_premium"] = cur_prem
+                        active_dessert["current_pnl"] = d_pnl
+                analysis["active_dessert_trade"] = active_dessert
+                analysis["dessert_stats"] = self.dessert_tracker.get_dessert_stats()
+            except Exception as e:
+                log.error("Error getting dessert data for dashboard", error=str(e))
+                analysis["active_dessert_trade"] = None
+                analysis["dessert_stats"] = {}
 
             # Run daily learning update at market close
             self._check_daily_learning_update()

@@ -115,6 +115,23 @@ def api_latest():
         except Exception:
             analysis["active_sell_trade"] = None
 
+        # Add dessert trade data
+        try:
+            from dessert_tracker import get_active_dessert, DessertTracker
+            active_dessert = get_active_dessert()
+            if active_dessert and snapshot and snapshot.get("strikes"):
+                strike_d = snapshot["strikes"].get(active_dessert["strike"], {})
+                cur_prem = strike_d.get("pe_ltp", 0)
+                if cur_prem and cur_prem > 0:
+                    d_pnl = ((cur_prem - active_dessert["entry_premium"]) / active_dessert["entry_premium"]) * 100
+                    active_dessert["current_premium"] = cur_prem
+                    active_dessert["current_pnl"] = d_pnl
+            analysis["active_dessert_trade"] = active_dessert
+            analysis["dessert_stats"] = DessertTracker().get_dessert_stats()
+        except Exception:
+            analysis["active_dessert_trade"] = None
+            analysis["dessert_stats"] = {}
+
         # Add chart history for frontend sync (last 30 data points)
         analysis["chart_history"] = get_analysis_history(limit=30)
 
@@ -220,6 +237,30 @@ def api_sell_stats():
     from selling_tracker import SellingTracker
     tracker = SellingTracker()
     return jsonify(tracker.get_sell_stats())
+
+
+@app.route("/api/dessert-trades")
+def api_dessert_trades():
+    """Get dessert trade history."""
+    from database import get_connection
+    days = request.args.get("days", 30, type=int)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM dessert_trades
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at DESC
+        """, (f"-{days} days",))
+        trades = [dict(r) for r in cursor.fetchall()]
+    return jsonify({"trades": trades})
+
+
+@app.route("/api/dessert-stats")
+def api_dessert_stats():
+    """Get dessert trade statistics."""
+    from dessert_tracker import DessertTracker
+    tracker = DessertTracker()
+    return jsonify(tracker.get_dessert_stats())
 
 
 @app.route("/api/logs")

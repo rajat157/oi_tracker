@@ -99,6 +99,22 @@ def api_latest():
             analysis["active_trade"] = None
             analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
 
+        # Add sell trade data
+        try:
+            from selling_tracker import get_active_sell_setup
+            active_sell = get_active_sell_setup()
+            if active_sell and snapshot and snapshot.get("strikes"):
+                strike_d = snapshot["strikes"].get(active_sell["strike"], {})
+                opt = active_sell["option_type"]
+                cur_prem = strike_d.get("ce_ltp" if opt == "CE" else "pe_ltp", 0)
+                if cur_prem and cur_prem > 0:
+                    sell_pnl = ((active_sell["entry_premium"] - cur_prem) / active_sell["entry_premium"]) * 100
+                    active_sell["current_premium"] = cur_prem
+                    active_sell["current_pnl"] = sell_pnl
+            analysis["active_sell_trade"] = active_sell
+        except Exception:
+            analysis["active_sell_trade"] = None
+
         # Add chart history for frontend sync (last 30 data points)
         analysis["chart_history"] = get_analysis_history(limit=30)
 

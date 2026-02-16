@@ -452,6 +452,9 @@ function updateDashboard(data) {
         ivSkewElem.style.color = skew > 2 ? '#f87171' : skew < -2 ? '#22c55e' : '#a1a1b5';
     }
 
+    // Update Sell Trade Card
+    updateSellTrade(data);
+
     // Update Trade Setup Card (persistent with lifecycle)
     updateTradeSetup(data);
 
@@ -629,6 +632,87 @@ function updateStrengthAnalysis(strength) {
         netElem.classList.remove('positive', 'negative');
         netElem.classList.add(net >= 0 ? 'positive' : 'negative');
     }
+}
+
+function updateSellTrade(data) {
+    const card = document.getElementById('sell-trade-card');
+    if (!card) return;
+
+    const sell = data.active_sell_trade;
+    if (!sell) {
+        card.style.display = 'none';
+        return;
+    }
+
+    card.style.display = 'block';
+
+    // Status badge
+    const badge = document.getElementById('sell-status-badge');
+    if (badge) {
+        badge.textContent = sell.status || 'ACTIVE';
+        badge.className = 'trade-status-badge status-' + (sell.status || 'active').toLowerCase();
+    }
+
+    // Direction
+    const dirElem = document.getElementById('sell-direction');
+    if (dirElem) {
+        const dirText = sell.direction === 'SELL_PUT' ? 'SELL PUT' : 'SELL CALL';
+        dirElem.textContent = dirText;
+        dirElem.classList.remove('buy-call', 'buy-put', 'sell-call', 'sell-put');
+        dirElem.classList.add(sell.direction === 'SELL_PUT' ? 'sell-put' : 'sell-call');
+    }
+
+    // Strike
+    setText('sell-strike', sell.strike + ' ' + sell.option_type);
+    setText('sell-confidence', 'Confidence: ' + Math.round(sell.signal_confidence || 0) + '%');
+
+    // Premiums
+    setText('sell-entry', (sell.entry_premium || 0).toFixed(2));
+    setText('sell-sl', (sell.sl_premium || 0).toFixed(2));
+    setText('sell-target1', (sell.target_premium || 0).toFixed(2));
+    setText('sell-target2', (sell.target2_premium || 0).toFixed(2));
+
+    // T1 hit status
+    const t1Status = document.getElementById('sell-t1-status');
+    if (t1Status) {
+        if (sell.t1_hit) {
+            t1Status.textContent = '✅ T1 Hit';
+            t1Status.style.color = 'var(--green, #22c55e)';
+        } else {
+            t1Status.textContent = '-25% drop';
+            t1Status.style.color = '';
+        }
+    }
+
+    // Current premium & P&L
+    const curPrem = sell.current_premium || sell.last_premium || 0;
+    setText('sell-current', curPrem > 0 ? curPrem.toFixed(2) : '--');
+
+    if (curPrem > 0 && sell.entry_premium > 0) {
+        const diff = sell.entry_premium - curPrem; // Seller profits when premium drops
+        const diffPct = (diff / sell.entry_premium * 100);
+        setText('sell-current-vs-entry', (diff >= 0 ? '+' : '') + diff.toFixed(2) + ' (' + (diffPct >= 0 ? '+' : '') + diffPct.toFixed(1) + '%)');
+    }
+
+    // Live P&L
+    const pnlDiv = document.getElementById('sell-live-pnl');
+    if (pnlDiv && sell.current_pnl !== undefined && sell.current_pnl !== null) {
+        pnlDiv.style.display = 'flex';
+        const pnlValue = document.getElementById('sell-pnl-value');
+        if (pnlValue) {
+            const pnl = sell.current_pnl;
+            pnlValue.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '%';
+            pnlValue.classList.remove('positive', 'negative');
+            pnlValue.classList.add(pnl >= 0 ? 'positive' : 'negative');
+        }
+        setText('sell-current-premium', curPrem > 0 ? curPrem.toFixed(2) : '--');
+    } else if (pnlDiv) {
+        pnlDiv.style.display = 'none';
+    }
+
+    // Meta
+    setText('sell-spot', (sell.spot_at_creation || 0).toFixed(2));
+    setText('sell-verdict', sell.verdict_at_creation || '--');
 }
 
 function updateTradeSetup(data) {

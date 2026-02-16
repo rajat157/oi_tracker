@@ -13,7 +13,8 @@ Selling Direction:
 
 Strike Selection: 1 strike OTM from ATM
 SL: 25% premium rise (loss for seller)
-Target: 25% premium drop (profit for seller)
+Target 1: 25% premium drop (1:1 RR - conservative)
+Target 2: 50% premium drop (1:2 RR - aggressive, backtested 83.3% WR)
 EOD Exit: 15:20 if no SL/Target hit
 """
 
@@ -28,8 +29,9 @@ log = get_logger("selling_tracker")
 SELL_TIME_START = time(11, 0)
 SELL_TIME_END = time(14, 0)
 SELL_MIN_CONFIDENCE = 65.0
-SELL_SL_PCT = 25.0      # Premium rises 25% = loss
-SELL_TARGET_PCT = 25.0   # Premium drops 25% = profit
+SELL_SL_PCT = 25.0       # Premium rises 25% = loss
+SELL_TARGET1_PCT = 25.0  # T1: Premium drops 25% = 1:1 RR
+SELL_TARGET2_PCT = 50.0  # T2: Premium drops 50% = 1:2 RR (83.3% WR backtested)
 SELL_OTM_OFFSET = 1      # 1 strike OTM
 SELL_MIN_PREMIUM = 5.0   # Min premium to sell (avoid illiquid)
 FORCE_CLOSE_TIME = time(15, 20)
@@ -50,6 +52,7 @@ def init_selling_tables():
                 entry_premium REAL NOT NULL,
                 sl_premium REAL NOT NULL,
                 target_premium REAL NOT NULL,
+                target2_premium REAL,
                 spot_at_creation REAL NOT NULL,
                 verdict_at_creation TEXT NOT NULL,
                 signal_confidence REAL,
@@ -62,9 +65,24 @@ def init_selling_tables():
                 max_premium_reached REAL,
                 min_premium_reached REAL,
                 last_checked_at DATETIME,
-                last_premium REAL
+                last_premium REAL,
+                t1_hit INTEGER DEFAULT 0,
+                t1_hit_at DATETIME
             )
         """)
+        # Migration: add columns if they don't exist (for existing DBs)
+        try:
+            cursor.execute("ALTER TABLE sell_trade_setups ADD COLUMN target2_premium REAL")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE sell_trade_setups ADD COLUMN t1_hit INTEGER DEFAULT 0")
+        except Exception:
+            pass
+        try:
+            cursor.execute("ALTER TABLE sell_trade_setups ADD COLUMN t1_hit_at DATETIME")
+        except Exception:
+            pass
         conn.commit()
         log.info("Selling tables initialized")
 
@@ -105,18 +123,18 @@ def get_todays_sell_trades() -> List[Dict]:
 
 
 def save_sell_setup(created_at, direction, strike, option_type, entry_premium,
-                    sl_premium, target_premium, spot, verdict, confidence, iv) -> int:
+                    sl_premium, target_premium, target2_premium, spot, verdict, confidence, iv) -> int:
     """Save a new selling trade setup."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO sell_trade_setups
             (created_at, direction, strike, option_type, entry_premium, sl_premium,
-             target_premium, spot_at_creation, verdict_at_creation, signal_confidence,
-             iv_at_creation, status, max_premium_reached, min_premium_reached)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
+             target_premium, target2_premium, spot_at_creation, verdict_at_creation,
+             signal_confidence, iv_at_creation, status, max_premium_reached, min_premium_reached)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?)
         """, (created_at, direction, strike, option_type, entry_premium,
-              sl_premium, target_premium, spot, verdict, confidence, iv,
+              sl_premium, target_premium, target2_premium, spot, verdict, confidence, iv,
               entry_premium, entry_premium))
         conn.commit()
         return cursor.lastrowid
@@ -206,9 +224,10 @@ class SellingTracker:
                        strike=strike, premium=entry_premium)
             return None
 
-        # Calculate SL and target for seller
+        # Calculate SL and targets for seller
         sl_premium = round(entry_premium * (1 + SELL_SL_PCT / 100), 2)
-        target_premium = round(entry_premium * (1 - SELL_TARGET_PCT / 100), 2)
+        target_premium = round(entry_premium * (1 - SELL_TARGET1_PCT / 100), 2)    # T1: 1:1
+        target2_premium = round(entry_premium * (1 - SELL_TARGET2_PCT / 100), 2)   # T2: 1:2
 
         now = datetime.now()
         setup_id = save_sell_setup(
@@ -219,6 +238,7 @@ class SellingTracker:
             entry_premium=entry_premium,
             sl_premium=sl_premium,
             target_premium=target_premium,
+            target2_premium=target2_premium,
             spot=spot,
             verdict=verdict,
             confidence=confidence,
@@ -228,11 +248,11 @@ class SellingTracker:
         log.info("Created SELL setup",
                  setup_id=setup_id, direction=direction,
                  strike=f"{strike} {option_type}",
-                 entry=entry_premium, sl=sl_premium, target=target_premium)
+                 entry=entry_premium, sl=sl_premium, t1=target_premium, t2=target2_premium)
 
         # Send Telegram alert
         self._send_sell_alert(direction, strike, option_type, entry_premium,
-                              sl_premium, target_premium, verdict, confidence, spot)
+                              sl_premium, target_premium, target2_premium, verdict, confidence, spot)
 
         return setup_id
 
@@ -287,17 +307,24 @@ class SellingTracker:
             self._send_exit_alert(setup, current_premium, "SL", pnl)
             return {"action": "LOST", "pnl": pnl, "reason": "SL"}
 
-        # Check target (premium drops = profit for seller)
-        if current_premium <= setup["target_premium"]:
+        # Check T1 hit (record but don't exit)
+        if not setup.get("t1_hit") and current_premium <= setup["target_premium"]:
+            update_sell_setup(setup["id"], t1_hit=1, t1_hit_at=now)
+            log.info("SELL trade T1 HIT", entry=setup["entry_premium"], current=current_premium)
+            self._send_t1_alert(setup, current_premium)
+
+        # Check T2 target (premium drops to T2 = full profit for seller)
+        t2 = setup.get("target2_premium") or setup["target_premium"]
+        if current_premium <= t2:
             pnl = ((setup["entry_premium"] - current_premium) / setup["entry_premium"]) * 100
             update_sell_setup(setup["id"],
                              status="WON", resolved_at=now,
-                             exit_premium=current_premium, exit_reason="TARGET",
+                             exit_premium=current_premium, exit_reason="TARGET2",
                              profit_loss_pct=pnl)
-            log.info("SELL trade WON (target hit)", pnl=f"{pnl:.2f}%",
+            log.info("SELL trade WON (T2 hit)", pnl=f"{pnl:.2f}%",
                      entry=setup["entry_premium"], exit=current_premium)
-            self._send_exit_alert(setup, current_premium, "TARGET", pnl)
-            return {"action": "WON", "pnl": pnl, "reason": "TARGET"}
+            self._send_exit_alert(setup, current_premium, "TARGET2", pnl)
+            return {"action": "WON", "pnl": pnl, "reason": "TARGET2"}
 
         # EOD exit
         if now.time() >= FORCE_CLOSE_TIME:
@@ -313,13 +340,11 @@ class SellingTracker:
 
         return None
 
-    def _send_sell_alert(self, direction, strike, option_type, entry, sl, target,
-                         verdict, confidence, spot):
+    def _send_sell_alert(self, direction, strike, option_type, entry, sl, target1,
+                         target2, verdict, confidence, spot):
         """Send Telegram alert for new selling setup."""
         try:
             from alerts import send_telegram
-            risk_pct = SELL_SL_PCT
-            target_pct = SELL_TARGET_PCT
 
             dir_text = "SELL PUT" if direction == "SELL_PUT" else "SELL CALL"
             emoji = "🔴" if "CALL" in direction else "🟢"
@@ -330,16 +355,38 @@ class SellingTracker:
                 f"<b>Strike:</b> <code>{strike} {option_type}</code>\n"
                 f"<b>Spot:</b> <code>{spot:.2f}</code>\n"
                 f"<b>Premium Collected:</b> <code>Rs {entry:.2f}</code>\n"
-                f"<b>SL (buyback):</b> <code>Rs {sl:.2f}</code> (+{risk_pct:.0f}% rise)\n"
-                f"<b>Target (buyback):</b> <code>Rs {target:.2f}</code> (-{target_pct:.0f}% drop)\n\n"
+                f"<b>SL (buyback):</b> <code>Rs {sl:.2f}</code> (+{SELL_SL_PCT:.0f}% rise)\n"
+                f"<b>T1 (1:1):</b> <code>Rs {target1:.2f}</code> (-{SELL_TARGET1_PCT:.0f}% drop)\n"
+                f"<b>T2 (1:2):</b> <code>Rs {target2:.2f}</code> (-{SELL_TARGET2_PCT:.0f}% drop)\n\n"
                 f"<b>Verdict:</b> {verdict}\n"
                 f"<b>Confidence:</b> {confidence:.0f}%\n\n"
-                f"<i>Seller profits when premium decays</i>\n"
+                f"<i>Auto-exits at T2. Take T1 manually if you prefer 1:1.</i>\n"
                 f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
             )
             send_telegram(message)
         except Exception as e:
             log.error("Failed to send sell alert", error=str(e))
+
+    def _send_t1_alert(self, setup, current_premium):
+        """Send Telegram alert when T1 is hit."""
+        try:
+            from alerts import send_telegram
+            pnl = ((setup["entry_premium"] - current_premium) / setup["entry_premium"]) * 100
+            dir_text = "SELL PUT" if setup["direction"] == "SELL_PUT" else "SELL CALL"
+
+            message = (
+                f"<b>🎯 T1 HIT — SELL TRADE</b>\n\n"
+                f"<b>Direction:</b> <code>{dir_text}</code>\n"
+                f"<b>Strike:</b> <code>{setup['strike']} {setup['option_type']}</code>\n"
+                f"<b>Entry:</b> <code>Rs {setup['entry_premium']:.2f}</code>\n"
+                f"<b>Current:</b> <code>Rs {current_premium:.2f}</code>\n"
+                f"<b>P&L:</b> <code>{pnl:+.1f}%</code> (1:1 RR)\n\n"
+                f"<i>Book profit now or let it ride to T2 ({SELL_TARGET2_PCT:.0f}% drop)</i>\n"
+                f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
+            )
+            send_telegram(message)
+        except Exception as e:
+            log.error("Failed to send T1 alert", error=str(e))
 
     def _send_exit_alert(self, setup, exit_premium, reason, pnl):
         """Send Telegram alert when selling trade exits."""
@@ -347,6 +394,15 @@ class SellingTracker:
             from alerts import send_telegram
             emoji = "✅" if pnl > 0 else "❌"
             dir_text = "SELL PUT" if setup["direction"] == "SELL_PUT" else "SELL CALL"
+            t1_status = "✅ Hit" if setup.get("t1_hit") else "❌ Missed"
+
+            reason_text = reason
+            if reason == "TARGET2":
+                reason_text = "T2 Target Hit (1:2 RR)"
+            elif reason == "SL":
+                reason_text = "Stop Loss"
+            elif reason == "EOD":
+                reason_text = "End of Day"
 
             message = (
                 f"<b>{emoji} SELL TRADE {'WON' if pnl > 0 else 'LOST'}</b>\n\n"
@@ -355,7 +411,8 @@ class SellingTracker:
                 f"<b>Entry Premium:</b> <code>Rs {setup['entry_premium']:.2f}</code>\n"
                 f"<b>Exit Premium:</b> <code>Rs {exit_premium:.2f}</code>\n"
                 f"<b>P&L:</b> <code>{pnl:+.2f}%</code>\n"
-                f"<b>Exit Reason:</b> {reason}\n\n"
+                f"<b>Exit:</b> {reason_text}\n"
+                f"<b>T1 (1:1):</b> {t1_status}\n\n"
                 f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
             )
             send_telegram(message)

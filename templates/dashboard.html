@@ -174,6 +174,54 @@
                     </div>
                 </div>
 
+                <!-- Sell Trade Card -->
+                <div class="card trade-setup-card sell-trade-card" id="sell-trade-card" style="display: none;">
+                    <div class="trade-setup-title-row">
+                        <h3 class="card-title">Sell Trade Setup</h3>
+                        <span class="trade-status-badge" id="sell-status-badge">ACTIVE</span>
+                    </div>
+                    <div class="trade-setup-header">
+                        <span class="trade-direction" id="sell-direction">--</span>
+                        <span class="trade-strike" id="sell-strike">--</span>
+                        <span class="trade-confidence" id="sell-confidence">Confidence: --</span>
+                    </div>
+                    <div class="trade-live-pnl" id="sell-live-pnl" style="display: none;">
+                        <span class="pnl-label">Live P/L</span>
+                        <span class="pnl-value" id="sell-pnl-value">--</span>
+                        <span class="pnl-current">Current: <strong id="sell-current-premium">--</strong></span>
+                    </div>
+                    <div class="trade-levels">
+                        <div class="trade-level entry">
+                            <span class="level-label">Premium Collected</span>
+                            <span class="level-value" id="sell-entry">--</span>
+                        </div>
+                        <div class="trade-level current">
+                            <span class="level-label">Current Premium</span>
+                            <span class="level-value" id="sell-current">--</span>
+                            <span class="level-detail" id="sell-current-vs-entry">--</span>
+                        </div>
+                        <div class="trade-level sl">
+                            <span class="level-label">SL (Buyback)</span>
+                            <span class="level-value" id="sell-sl">--</span>
+                            <span class="level-detail" id="sell-sl-detail">+25% rise</span>
+                        </div>
+                        <div class="trade-level target">
+                            <span class="level-label">T1 (1:1 Buyback)</span>
+                            <span class="level-value" id="sell-target1">--</span>
+                            <span class="level-detail" id="sell-t1-status">-25% drop</span>
+                        </div>
+                        <div class="trade-level target">
+                            <span class="level-label">T2 (1:2 Buyback)</span>
+                            <span class="level-value" id="sell-target2">--</span>
+                            <span class="level-detail" id="sell-t2-detail">-50% drop</span>
+                        </div>
+                    </div>
+                    <div class="trade-meta">
+                        <span>Spot: <strong id="sell-spot">--</strong></span>
+                        <span>Verdict: <strong id="sell-verdict">--</strong></span>
+                    </div>
+                </div>
+
                 <!-- Trade Setup Card (Persistent with Lifecycle) -->
                 <div class="card trade-setup-card" id="trade-setup-card" style="display: none;">
                     <div class="trade-setup-title-row">

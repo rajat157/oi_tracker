@@ -182,6 +182,30 @@ def api_trades():
     })
 
 
+@app.route("/api/sell-trades")
+def api_sell_trades():
+    """Get selling trade history."""
+    from selling_tracker import get_connection
+    days = request.args.get("days", 30, type=int)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM sell_trade_setups
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at DESC
+        """, (f"-{days} days",))
+        trades = [dict(r) for r in cursor.fetchall()]
+    return jsonify({"trades": trades})
+
+
+@app.route("/api/sell-stats")
+def api_sell_stats():
+    """Get selling trade statistics."""
+    from selling_tracker import SellingTracker
+    tracker = SellingTracker()
+    return jsonify(tracker.get_sell_stats())
+
+
 @app.route("/api/logs")
 def api_logs():
     """

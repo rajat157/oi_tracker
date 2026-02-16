@@ -17,6 +17,7 @@ from database import (
     get_previous_futures_oi, get_analysis_history, get_previous_verdict
 )
 from trade_tracker import get_trade_tracker
+from selling_tracker import SellingTracker
 from pattern_tracker import check_patterns, log_failed_entry
 from logger import get_logger
 
@@ -47,6 +48,7 @@ class OIScheduler:
         self.last_purge_date = None
         self.last_learning_date = None
         self.trade_tracker = get_trade_tracker()
+        self.selling_tracker = SellingTracker()
         self.force_enabled = False
 
     def set_force_enabled(self, enabled: bool):
@@ -251,11 +253,45 @@ class OIScheduler:
             if self.trade_tracker.should_create_new_setup(analysis, price_history):
                 self.trade_tracker.create_setup(analysis, timestamp)
 
+            # ===== SELLING TRACKER =====
+            try:
+                # Check/update active selling trade
+                sell_update = self.selling_tracker.check_and_update_sell_setup(strikes_data)
+                if sell_update:
+                    log.info("Sell trade updated", action=sell_update['action'],
+                             pnl=f"{sell_update['pnl']:.2f}%", reason=sell_update['reason'])
+
+                # Create new selling setup if conditions met
+                if self.selling_tracker.should_create_sell_setup(analysis):
+                    self.selling_tracker.create_sell_setup(analysis, strikes_data)
+            except Exception as e:
+                log.error("Error in selling tracker", error=str(e))
+
             # 6. Add trade tracker data to analysis for dashboard
             tracker_data = self.trade_tracker.get_stats()
             active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
             analysis["active_trade"] = active_setup_with_pnl
             analysis["trade_stats"] = tracker_data["stats"]
+
+            # Add selling tracker data
+            try:
+                from selling_tracker import get_active_sell_setup
+                active_sell = get_active_sell_setup()
+                if active_sell:
+                    # Calculate current P&L for active sell
+                    strike_d = strikes_data.get(active_sell["strike"], {})
+                    opt = active_sell["option_type"]
+                    cur_prem = strike_d.get("ce_ltp" if opt == "CE" else "pe_ltp", 0)
+                    if cur_prem > 0:
+                        sell_pnl = ((active_sell["entry_premium"] - cur_prem) / active_sell["entry_premium"]) * 100
+                        active_sell["current_premium"] = cur_prem
+                        active_sell["current_pnl"] = sell_pnl
+                analysis["active_sell_trade"] = active_sell
+                analysis["sell_stats"] = self.selling_tracker.get_sell_stats()
+            except Exception as e:
+                log.error("Error getting sell data for dashboard", error=str(e))
+                analysis["active_sell_trade"] = None
+                analysis["sell_stats"] = {}
 
             # Run daily learning update at market close
             self._check_daily_learning_update()

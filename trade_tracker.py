@@ -577,7 +577,8 @@ class TradeTracker:
                 sl_pct=STRATEGY_SL_PCT,
                 target_pct=STRATEGY_TARGET_PCT,
                 verdict=analysis["verdict"],
-                confidence=analysis["signal_confidence"]
+                confidence=analysis["signal_confidence"],
+                expiry_date=analysis.get("expiry_date", "")
             )
         except Exception as e:
             log.error("Failed to send trade setup alert", error=str(e))

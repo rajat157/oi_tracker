@@ -183,6 +183,52 @@ R:R = <code>1:{rr_ratio:.1f}</code>
     return send_telegram(message.strip())
 
 
+def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "") -> str:
+    """
+    Generate Kite trading symbol for NIFTY options.
+    Format: NIFTY{YY}{MMM}{strike}{CE/PE} (monthly) or NIFTY{YY}{M}{DD}{strike}{CE/PE} (weekly)
+    Weekly month codes: 1-9 for Jan-Sep, O/N/D for Oct/Nov/Dec
+    """
+    from datetime import datetime as dt
+    
+    # Try to parse expiry date
+    expiry = None
+    if expiry_date:
+        for fmt in ['%Y-%m-%d', '%d-%b-%Y', '%d-%m-%Y', '%d %b %Y']:
+            try:
+                expiry = dt.strptime(expiry_date, fmt)
+                break
+            except ValueError:
+                continue
+    
+    if not expiry:
+        # Fallback: use current week's Thursday
+        today = dt.now()
+        days_to_thu = (3 - today.weekday()) % 7
+        if days_to_thu == 0 and today.hour >= 15:
+            days_to_thu = 7
+        from datetime import timedelta
+        expiry = today + timedelta(days=days_to_thu)
+    
+    yy = expiry.strftime('%y')
+    
+    # Weekly month code: 1-9 for Jan-Sep, O/N/D for Oct/Nov/Dec
+    month_codes = {1:'1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6',
+                   7:'7', 8:'8', 9:'9', 10:'O', 11:'N', 12:'D'}
+    month_code = month_codes[expiry.month]
+    dd = expiry.strftime('%d')
+    
+    return f"NIFTY{yy}{month_code}{dd}{strike}{option_type}"
+
+
+def _get_kite_order_url(strike: int, option_type: str, entry_premium: float, 
+                         qty: int = 75, expiry_date: str = "") -> str:
+    """Generate a Kite order deep link URL."""
+    trading_symbol = _get_kite_trading_symbol(strike, option_type, expiry_date)
+    # Kite web direct order URL
+    return f"https://kite.zerodha.com/chart/ext/ciq/NFO-OPT/{trading_symbol}"
+
+
 def send_trade_setup_alert(
     direction: str,
     strike: str,
@@ -192,30 +238,12 @@ def send_trade_setup_alert(
     sl_pct: float,
     target_pct: float,
     verdict: str,
-    confidence: float
+    confidence: float,
+    expiry_date: str = ""
 ) -> bool:
     """
     Send Telegram alert when a new trade setup is created.
-    
-    NEW STRATEGY (85.7% Win Rate):
-    - Time Window: 11:00 - 14:00 IST
-    - Only "Slightly" verdicts
-    - Confidence >= 65%
-    - ONE trade per day
-    
-    Args:
-        direction: BUY CALL or BUY PUT
-        strike: Strike with option type (e.g., "25750 CE")
-        entry_premium: Entry price
-        sl_premium: Stop loss price
-        target_premium: Target price
-        sl_pct: Stop loss percentage (e.g., 20.0)
-        target_pct: Target percentage (e.g., 22.0)
-        verdict: Market verdict
-        confidence: Signal confidence percentage
-    
-    Returns:
-        True if sent successfully
+    Includes copy-ready order details for quick Kite execution.
     """
     alert_type = "TRADE_SETUP"
     
@@ -224,28 +252,40 @@ def send_trade_setup_alert(
     
     now = datetime.now()
     
-    message = f"""
-<b>🫀 Iron Pulse — TRADE SETUP</b>
+    # Parse strike number and option type from "25600 CE" format
+    parts = strike.split()
+    strike_num = int(parts[0])
+    ot = parts[1] if len(parts) > 1 else "CE"
+    
+    # Generate trading symbol for Kite
+    trading_symbol = _get_kite_trading_symbol(strike_num, ot, expiry_date)
+    
+    message = f"""<b>\U0001f49a Iron Pulse \u2014 TRADE SETUP</b>
 
 <b>Direction:</b> <code>{direction}</code>
 <b>Strike:</b> <code>{strike}</code>
 <b>Entry:</b> <code>Rs {entry_premium:.2f}</code>
 <b>Stop Loss:</b> <code>Rs {sl_premium:.2f}</code> (-{sl_pct:.0f}%)
-<b>Target:</b> <code>Rs {target_premium:.2f}</code> (+{target_pct:.0f}%)
-<b>RR:</b> <code>1:1</code>
+<b>T1:</b> <code>Rs {target_premium:.2f}</code> (+{target_pct:.0f}%)
+<b>T2:</b> Trail 15% below peak
+<b>RR:</b> <code>1:1 (T1) / runner (T2)</code>
 
 <b>Verdict:</b> {verdict}
 <b>Confidence:</b> {confidence:.0f}%
 
-⏰ <i>Valid until 14:00 or entry hit</i>
-📊 <i>One trade per day — bread &amp; butter!</i>
+<b>\U0001f4cb Quick Order:</b>
+<code>{trading_symbol}</code>
+<code>BUY | LIMIT Rs {entry_premium:.2f} | Qty 65</code>
+<code>SL Rs {sl_premium:.2f} | T1 Rs {target_premium:.2f}</code>
 
-<i>Time: {now.strftime('%H:%M:%S')}</i>
-"""
+\u23f0 <i>Valid until 14:00 or entry hit</i>
+\U0001f4ca <i>One trade per day \u2014 bread &amp; butter!</i>
+
+<i>Time: {now.strftime('%H:%M:%S')}</i>"""
     
     log.info("Sending trade setup alert", direction=direction, strike=strike,
-             entry=f"₹{entry_premium:.2f}", sl=f"₹{sl_premium:.2f}", 
-             target=f"₹{target_premium:.2f}")
+             entry=f"\u20b9{entry_premium:.2f}", sl=f"\u20b9{sl_premium:.2f}", 
+             target=f"\u20b9{target_premium:.2f}", symbol=trading_symbol)
     
     return send_telegram(message.strip())
 

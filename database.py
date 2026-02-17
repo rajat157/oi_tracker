@@ -397,6 +397,32 @@ def init_db():
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN prev_verdict TEXT")
 
+        # Settings table for key-value storage (Kite tokens, etc.)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at DATETIME NOT NULL
+            )
+        """)
+
+        conn.commit()
+
+
+def get_setting(key: str) -> Optional[str]:
+    """Get a setting value by key. Returns None if not found."""
+    with get_connection() as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+        return row['value'] if row else None
+
+
+def set_setting(key: str, value: str):
+    """Set a setting value (upsert)."""
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """, (key, value, datetime.now().isoformat()))
         conn.commit()
 
 

@@ -19,7 +19,6 @@ load_dotenv()
 API_KEY = os.environ.get('KITE_API_KEY', '')
 API_SECRET = os.environ.get('KITE_API_SECRET', '')
 ENV_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-TOKEN_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.kite_token')
 
 LOGIN_URL = f"https://kite.zerodha.com/connect/login?v=3&api_key={API_KEY}"
 TOKEN_URL = "https://api.kite.trade/session/token"
@@ -70,33 +69,25 @@ def exchange_token(request_token: str) -> dict:
 
 
 def save_token(access_token: str):
-    """Save access token to file and .env."""
-    # Save to token file with timestamp
-    with open(TOKEN_FILE, 'w') as f:
-        f.write(f"{access_token}\n{datetime.now().isoformat()}")
+    """Save access token to database and .env."""
+    from database import set_setting
+    set_setting('kite_access_token', access_token)
+    set_setting('kite_token_date', datetime.now().strftime('%Y-%m-%d'))
     
-    # Also save to .env
+    # Also save to .env as backup
     set_key(ENV_PATH, 'KITE_ACCESS_TOKEN', access_token)
-    print(f"Access token saved to {TOKEN_FILE} and .env")
+    print(f"Access token saved to database and .env")
 
 
 def load_token() -> str:
-    """Load today's access token if available."""
-    if not os.path.exists(TOKEN_FILE):
-        return ""
-    
-    with open(TOKEN_FILE, 'r') as f:
-        lines = f.read().strip().split('\n')
-    
-    if len(lines) < 2:
-        return ""
-    
-    token = lines[0]
-    saved_date = lines[1][:10]  # YYYY-MM-DD
+    """Load today's access token from database."""
+    from database import get_setting
+    token_date = get_setting('kite_token_date')
     today = datetime.now().strftime('%Y-%m-%d')
     
-    if saved_date == today:
-        return token
+    if token_date == today:
+        token = get_setting('kite_access_token')
+        return token or ""
     return ""
 
 

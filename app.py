@@ -394,6 +394,107 @@ def handle_set_force_fetch(data):
     log.info("Force auto-fetch toggled", enabled=enabled)
 
 
+# ===== KITE AUTH ROUTES =====
+
+@app.route('/kite/login')
+def kite_login():
+    """Redirect to Kite login page."""
+    import os
+    api_key = os.environ.get('KITE_API_KEY', '')
+    if not api_key:
+        return jsonify({"error": "KITE_API_KEY not configured"}), 400
+    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
+    from flask import redirect
+    return redirect(login_url)
+
+
+@app.route('/kite/callback')
+def kite_callback():
+    """Capture request_token from Kite redirect and exchange for access_token."""
+    import os, hashlib, requests as req
+    
+    request_token = request.args.get('request_token', '')
+    if not request_token:
+        return """<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
+        <h1 style="color:red;">Login Failed</h1>
+        <p>No request token received from Kite.</p>
+        <a href="/kite/login">Try Again</a>
+        </body></html>"""
+    
+    api_key = os.environ.get('KITE_API_KEY', '')
+    api_secret = os.environ.get('KITE_API_SECRET', '')
+    
+    if not api_secret:
+        # Show manual token entry
+        return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
+        <h1 style="color:orange;">API Secret Missing</h1>
+        <p>Add KITE_API_SECRET to .env and restart.</p>
+        <p>Request token: <code>{request_token}</code></p>
+        </body></html>"""
+    
+    # Exchange request_token for access_token
+    checksum = hashlib.sha256(f"{api_key}{request_token}{api_secret}".encode()).hexdigest()
+    
+    try:
+        resp = req.post("https://api.kite.trade/session/token", data={
+            'api_key': api_key,
+            'request_token': request_token,
+            'checksum': checksum
+        }, timeout=10)
+        result = resp.json()
+        
+        if result.get('status') == 'success':
+            access_token = result['data']['access_token']
+            
+            # Save token
+            from kite_auth import save_token
+            save_token(access_token)
+            
+            return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
+            <h1 style="color:green;">Login Successful!</h1>
+            <p>Access token saved. Iron Pulse can now place orders automatically.</p>
+            <p>Token: <code>{access_token[:10]}...</code></p>
+            <p><a href="/">Back to Dashboard</a></p>
+            <script>setTimeout(function(){{ window.close(); }}, 3000);</script>
+            </body></html>"""
+        else:
+            return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
+            <h1 style="color:red;">Token Exchange Failed</h1>
+            <p>{result.get('message', 'Unknown error')}</p>
+            <a href="/kite/login">Try Again</a>
+            </body></html>"""
+    except Exception as e:
+        return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
+        <h1 style="color:red;">Error</h1>
+        <p>{str(e)}</p>
+        <a href="/kite/login">Try Again</a>
+        </body></html>"""
+
+
+@app.route('/kite/status')
+def kite_status():
+    """Check if Kite is authenticated for today."""
+    from kite_auth import load_token
+    token = load_token()
+    return jsonify({
+        "authenticated": bool(token),
+        "token_preview": f"{token[:10]}..." if token else None
+    })
+
+
+@app.route('/kite/save-token', methods=['POST'])
+def kite_save_token():
+    """Manually save an access token (fallback)."""
+    data = request.get_json()
+    token = data.get('token', '').strip()
+    if not token:
+        return jsonify({"error": "No token provided"}), 400
+    
+    from kite_auth import save_token
+    save_token(token)
+    return jsonify({"status": "success", "message": "Token saved"})
+
+
 def start_app(debug: bool = False, port: int = 5000):
     """Start the application."""
     import threading

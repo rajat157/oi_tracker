@@ -16,8 +16,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     setTimeout(fetchMarketStatus, 500);
     setTimeout(fetchLatestData, 1000);
+    setTimeout(checkKiteStatus, 1500);
 
     setInterval(fetchMarketStatus, 60000);
+    setInterval(checkKiteStatus, 300000); // Check Kite auth every 5 min
 });
 
 // Initialize toggle switches
@@ -1203,4 +1205,50 @@ function formatCompact(num) {
     if (Math.abs(num) >= 100000) return (num / 100000).toFixed(1) + 'L';
     if (Math.abs(num) >= 1000) return (num / 1000).toFixed(0) + 'K';
     return num.toString();
+}
+
+// ===== Kite Auth =====
+function checkKiteStatus() {
+    fetch('/kite/status')
+        .then(r => r.json())
+        .then(data => {
+            const el = document.getElementById('kite-status');
+            const btn = document.getElementById('kite-login-btn');
+            if (data.authenticated) {
+                el.textContent = '✅ Connected';
+                el.style.color = '#22c55e';
+                btn.textContent = 'Re-login';
+                btn.style.background = '#555';
+            } else {
+                el.textContent = '❌ Not connected';
+                el.style.color = '#ef4444';
+                btn.textContent = 'Login to Kite';
+                btn.style.background = '#2563eb';
+            }
+        })
+        .catch(() => {
+            const el = document.getElementById('kite-status');
+            if (el) { el.textContent = '⚠️ Error'; el.style.color = '#f59e0b'; }
+        });
+}
+
+function saveKiteToken() {
+    const token = document.getElementById('kite-token-field').value.trim();
+    if (!token) { alert('Please paste a token'); return; }
+    
+    fetch('/kite/save-token', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({token: token})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            document.getElementById('kite-manual-input').style.display = 'none';
+            document.getElementById('kite-token-field').value = '';
+            checkKiteStatus();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown'));
+        }
+    });
 }

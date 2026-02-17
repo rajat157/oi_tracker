@@ -259,6 +259,34 @@
                     </div>
                 </div>
 
+                <!-- Kite Auth Card -->
+                <div class="card" id="kite-auth-card" style="margin-bottom: 10px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between;">
+                        <div>
+                            <span style="font-weight: bold;">🔗 Kite Connect</span>
+                            <span id="kite-status" style="margin-left: 8px; font-size: 0.85em; color: #888;">Checking...</span>
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <button id="kite-login-btn" onclick="window.open('/kite/login', '_blank')" 
+                                    style="padding: 6px 16px; border: none; border-radius: 6px; background: #2563eb; color: white; cursor: pointer; font-size: 0.85em;">
+                                Login to Kite
+                            </button>
+                            <button id="kite-manual-btn" onclick="document.getElementById('kite-manual-input').style.display='flex'" 
+                                    style="padding: 6px 12px; border: 1px solid #555; border-radius: 6px; background: transparent; color: #aaa; cursor: pointer; font-size: 0.8em;">
+                                Paste Token
+                            </button>
+                        </div>
+                    </div>
+                    <div id="kite-manual-input" style="display: none; margin-top: 8px; gap: 8px; align-items: center;">
+                        <input type="text" id="kite-token-field" placeholder="Paste access token here..." 
+                               style="flex: 1; padding: 6px 10px; border: 1px solid #555; border-radius: 6px; background: #1a1a2e; color: #eee; font-family: monospace; font-size: 0.85em;">
+                        <button onclick="saveKiteToken()" 
+                                style="padding: 6px 16px; border: none; border-radius: 6px; background: #22c55e; color: white; cursor: pointer; font-size: 0.85em;">
+                            Save
+                        </button>
+                    </div>
+                </div>
+
                 <!-- Trade Setup Card (Persistent with Lifecycle) -->
                 <div class="card trade-setup-card" id="trade-setup-card" style="display: none;">
                     <div class="trade-setup-title-row">

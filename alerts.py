@@ -186,12 +186,11 @@ R:R = <code>1:{rr_ratio:.1f}</code>
 def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "") -> str:
     """
     Generate Kite trading symbol for NIFTY options.
-    Format: NIFTY{YY}{MMM}{strike}{CE/PE} (monthly) or NIFTY{YY}{M}{DD}{strike}{CE/PE} (weekly)
-    Weekly month codes: 1-9 for Jan-Sep, O/N/D for Oct/Nov/Dec
+    Weekly: NIFTY{YY}{M}{DD}{strike}{CE/PE} (month code: 1-9, O, N, D)
+    Monthly: NIFTY{YY}{MMM}{strike}{CE/PE} (e.g., NIFTY26FEB25600CE)
     """
-    from datetime import datetime as dt
+    from datetime import datetime as dt, timedelta
     
-    # Try to parse expiry date
     expiry = None
     if expiry_date:
         for fmt in ['%Y-%m-%d', '%d-%b-%Y', '%d-%m-%Y', '%d %b %Y']:
@@ -202,23 +201,59 @@ def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "
                 continue
     
     if not expiry:
-        # Fallback: use current week's Thursday
+        # Fallback: next Thursday
         today = dt.now()
         days_to_thu = (3 - today.weekday()) % 7
         if days_to_thu == 0 and today.hour >= 15:
             days_to_thu = 7
-        from datetime import timedelta
         expiry = today + timedelta(days=days_to_thu)
     
     yy = expiry.strftime('%y')
     
-    # Weekly month code: 1-9 for Jan-Sep, O/N/D for Oct/Nov/Dec
+    # Check if it's a monthly expiry (last Thu of month) — uses MMM format
+    # Otherwise weekly — uses M+DD format
+    import calendar
+    last_day = calendar.monthrange(expiry.year, expiry.month)[1]
+    # Find last Thursday of the month
+    last_thu = last_day
+    while dt(expiry.year, expiry.month, last_thu).weekday() != 3:  # Thursday
+        last_thu -= 1
+    
+    is_monthly = (expiry.day == last_thu) or (expiry.day > last_thu - 3 and expiry.weekday() != 3)
+    # Also check: if expiry matches the monthly expiry date from instruments
+    month_names = {1:'JAN', 2:'FEB', 3:'MAR', 4:'APR', 5:'MAY', 6:'JUN',
+                   7:'JUL', 8:'AUG', 9:'SEP', 10:'OCT', 11:'NOV', 12:'DEC'}
     month_codes = {1:'1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6',
                    7:'7', 8:'8', 9:'9', 10:'O', 11:'N', 12:'D'}
-    month_code = month_codes[expiry.month]
-    dd = expiry.strftime('%d')
     
-    return f"NIFTY{yy}{month_code}{dd}{strike}{option_type}"
+    if is_monthly:
+        return f"NIFTY{yy}{month_names[expiry.month]}{strike}{option_type}"
+    else:
+        dd = str(expiry.day)  # No zero-padding
+        return f"NIFTY{yy}{month_codes[expiry.month]}{dd}{strike}{option_type}"
+
+
+def _get_kite_instrument_token(trading_symbol: str) -> str:
+    """Look up instrument token from Kite's public instruments CSV."""
+    import csv, io, requests
+    try:
+        resp = requests.get("https://api.kite.trade/instruments/NFO", timeout=15)
+        reader = csv.DictReader(io.StringIO(resp.text))
+        for row in reader:
+            if row['tradingsymbol'] == trading_symbol:
+                return row['instrument_token']
+    except Exception:
+        pass
+    return ""
+
+
+def _get_kite_chart_url(strike: int, option_type: str, expiry_date: str = "") -> str:
+    """Generate Kite chart URL (opens instrument page where user can click Buy)."""
+    symbol = _get_kite_trading_symbol(strike, option_type, expiry_date)
+    token = _get_kite_instrument_token(symbol)
+    if token:
+        return f"https://kite.zerodha.com/markets/ext/chart/web/tvc/NFO-OPT/{symbol}/{token}", symbol
+    return "", symbol
 
 
 def _get_kite_basket_url(strike: int, option_type: str, entry_premium: float,
@@ -265,8 +300,12 @@ def send_trade_setup_alert(
     strike_num = int(parts[0])
     ot = parts[1] if len(parts) > 1 else "CE"
     
-    # Generate trading symbol for Kite
-    trading_symbol = _get_kite_trading_symbol(strike_num, ot, expiry_date)
+    # Generate Kite chart URL
+    chart_url, trading_symbol = _get_kite_chart_url(strike_num, ot, expiry_date)
+    
+    kite_line = ""
+    if chart_url:
+        kite_line = f'\n\U0001f680 <a href="{chart_url}">Open in Kite</a>'
     
     message = f"""<b>\U0001f49a Iron Pulse \u2014 TRADE SETUP</b>
 
@@ -280,10 +319,8 @@ def send_trade_setup_alert(
 
 <b>Verdict:</b> {verdict}
 <b>Confidence:</b> {confidence:.0f}%
-
-\U0001f4cb <b>Kite Order (tap to copy):</b>
-<code>{trading_symbol}</code>
-<code>BUY LIMIT Rs {entry_premium:.2f} | Qty 65</code>
+{kite_line}
+<code>{trading_symbol} | BUY LIMIT Rs {entry_premium:.2f} | Qty 65</code>
 <code>SL Rs {sl_premium:.2f} | T1 Rs {target_premium:.2f}</code>
 
 \u23f0 <i>Valid until 14:00 or entry hit</i>

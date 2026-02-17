@@ -34,8 +34,9 @@ FORCE_CLOSE_TIME = time(15, 20)   # Force close ACTIVE trades at 3:20 PM
 STRATEGY_TIME_START = time(11, 0)   # 11:00 AM - Strategy window start
 STRATEGY_TIME_END = time(14, 0)     # 2:00 PM - Strategy window end
 STRATEGY_SL_PCT = 20.0              # -20% stop loss
-STRATEGY_TARGET_PCT = 22.0          # +22% target
+STRATEGY_TARGET_PCT = 22.0          # +22% target (T1)
 STRATEGY_MIN_CONFIDENCE = 65.0      # Minimum 65% confidence
+TRAILING_SL_PCT = 15.0              # After T1 hit: trail 15% below peak (T2)
 
 
 class TradeTracker:
@@ -693,73 +694,128 @@ class TradeTracker:
     def _check_active_resolution(self, setup: dict, current_premium: float,
                                   timestamp: datetime) -> Optional[dict]:
         """
-        Check if an ACTIVE setup should be resolved (WON or LOST).
+        Check if an ACTIVE setup should be resolved.
 
-        WON: current_premium >= target1_premium
-        LOST: current_premium <= sl_premium
+        Phase 1 (before T1): SL or T1 hit
+        Phase 2 (after T1): Trailing SL (15% below peak) or EOD
         """
         sl_premium = setup["sl_premium"]
         target1_premium = setup["target1_premium"]
         activation_premium = setup["activation_premium"] or setup["entry_premium"]
+        t1_already_hit = bool(setup.get("t1_hit"))
 
         # Track max/min premiums
         max_reached = max(setup.get("max_premium_reached") or current_premium, current_premium)
         min_reached = min(setup.get("min_premium_reached") or current_premium, current_premium)
 
-        # Check for stop loss hit
-        if current_premium <= sl_premium:
-            profit_loss_pct = ((current_premium - activation_premium) / activation_premium) * 100
-            profit_loss_points = current_premium - activation_premium
+        # Track peak premium (for trailing SL)
+        peak = max(setup.get("peak_premium") or current_premium, current_premium)
 
+        # ===== PHASE 1: Before T1 hit — normal SL/Target logic =====
+        if not t1_already_hit:
+            # Check for stop loss hit
+            if current_premium <= sl_premium:
+                profit_loss_pct = ((current_premium - activation_premium) / activation_premium) * 100
+                profit_loss_points = current_premium - activation_premium
+
+                update_trade_setup_status(
+                    setup["id"],
+                    status="LOST",
+                    resolved_at=timestamp,
+                    exit_premium=current_premium,
+                    hit_sl=True,
+                    hit_target=False,
+                    profit_loss_pct=profit_loss_pct,
+                    profit_loss_points=profit_loss_points,
+                    max_premium_reached=max_reached,
+                    min_premium_reached=min_reached,
+                    last_checked_at=timestamp,
+                    last_premium=current_premium
+                )
+
+                log.warning("Setup LOST - SL hit", setup_id=setup['id'],
+                            exit_premium=f"{current_premium:.2f}", pnl=f"{profit_loss_pct:.1f}%")
+
+                try:
+                    log_failed_entry(
+                        entry_timestamp=setup.get("created_at", ""),
+                        sl_hit_timestamp=timestamp.isoformat(),
+                        strike=setup["strike"],
+                        option_type=setup["option_type"],
+                        entry_premium=setup["entry_premium"],
+                        sl_premium=sl_premium,
+                        premium_at_sl=current_premium,
+                        target_premium=target1_premium
+                    )
+                except Exception as e:
+                    log.error("Error logging failed entry", error=str(e))
+
+                return {
+                    "setup_id": setup["id"],
+                    "previous_status": "ACTIVE",
+                    "new_status": "LOST",
+                    "exit_premium": current_premium,
+                    "profit_loss_pct": profit_loss_pct
+                }
+
+            # Check for T1 hit — DON'T close, just notify and start trailing
+            if current_premium >= target1_premium:
+                trailing_sl = peak * (1 - TRAILING_SL_PCT / 100)
+                update_trade_setup_status(
+                    setup["id"],
+                    status="ACTIVE",
+                    t1_hit=True,
+                    t1_hit_at=timestamp,
+                    t1_premium=current_premium,
+                    peak_premium=peak,
+                    trailing_sl=trailing_sl,
+                    hit_target=True,
+                    max_premium_reached=max_reached,
+                    min_premium_reached=min_reached,
+                    last_checked_at=timestamp,
+                    last_premium=current_premium
+                )
+
+                t1_pnl = ((current_premium - activation_premium) / activation_premium) * 100
+                log.info("T1 HIT - trailing SL activated", setup_id=setup['id'],
+                         t1_premium=f"{current_premium:.2f}", pnl=f"{t1_pnl:.1f}%",
+                         trailing_sl=f"{trailing_sl:.2f}")
+
+                # Send T1 notification
+                self._send_t1_alert(setup, current_premium, t1_pnl, trailing_sl)
+
+                return {
+                    "setup_id": setup["id"],
+                    "previous_status": "ACTIVE",
+                    "new_status": "T1_HIT",
+                    "exit_premium": current_premium,
+                    "profit_loss_pct": t1_pnl
+                }
+
+            # Update tracking
             update_trade_setup_status(
                 setup["id"],
-                status="LOST",
-                resolved_at=timestamp,
-                exit_premium=current_premium,
-                hit_sl=True,
-                hit_target=False,
-                profit_loss_pct=profit_loss_pct,
-                profit_loss_points=profit_loss_points,
+                status="ACTIVE",
+                peak_premium=peak,
                 max_premium_reached=max_reached,
                 min_premium_reached=min_reached,
                 last_checked_at=timestamp,
                 last_premium=current_premium
             )
+            return None
 
-            log.warning("Setup LOST - SL hit", setup_id=setup['id'],
-                        exit_premium=f"{current_premium:.2f}", pnl=f"{profit_loss_pct:.1f}%")
+        # ===== PHASE 2: After T1 hit — trailing SL logic =====
+        trailing_sl = peak * (1 - TRAILING_SL_PCT / 100)
 
-            # Log failed entry for recovery tracking
-            try:
-                log_failed_entry(
-                    entry_timestamp=setup.get("created_at", ""),
-                    sl_hit_timestamp=timestamp.isoformat(),
-                    strike=setup["strike"],
-                    option_type=setup["option_type"],
-                    entry_premium=setup["entry_premium"],
-                    sl_premium=sl_premium,
-                    premium_at_sl=current_premium,
-                    target_premium=target1_premium
-                )
-            except Exception as e:
-                log.error("Error logging failed entry", error=str(e))
-
-            return {
-                "setup_id": setup["id"],
-                "previous_status": "ACTIVE",
-                "new_status": "LOST",
-                "exit_premium": current_premium,
-                "profit_loss_pct": profit_loss_pct
-            }
-
-        # Check for target hit
-        if current_premium >= target1_premium:
+        # Check trailing SL
+        if current_premium <= trailing_sl:
             profit_loss_pct = ((current_premium - activation_premium) / activation_premium) * 100
             profit_loss_points = current_premium - activation_premium
+            status = "WON" if profit_loss_pct > 0 else "LOST"
 
             update_trade_setup_status(
                 setup["id"],
-                status="WON",
+                status=status,
                 resolved_at=timestamp,
                 exit_premium=current_premium,
                 hit_sl=False,
@@ -768,25 +824,30 @@ class TradeTracker:
                 profit_loss_points=profit_loss_points,
                 max_premium_reached=max_reached,
                 min_premium_reached=min_reached,
+                peak_premium=peak,
+                trailing_sl=trailing_sl,
                 last_checked_at=timestamp,
                 last_premium=current_premium
             )
 
-            log.info("Setup WON - Target hit", setup_id=setup['id'],
-                     exit_premium=f"{current_premium:.2f}", pnl=f"{profit_loss_pct:.1f}%")
+            log.info(f"Setup {status} - Trailing SL hit after T1", setup_id=setup['id'],
+                     exit_premium=f"{current_premium:.2f}", pnl=f"{profit_loss_pct:.1f}%",
+                     peak=f"{peak:.2f}")
 
             return {
                 "setup_id": setup["id"],
                 "previous_status": "ACTIVE",
-                "new_status": "WON",
+                "new_status": status,
                 "exit_premium": current_premium,
                 "profit_loss_pct": profit_loss_pct
             }
 
-        # Update tracking stats
+        # Update tracking with new peak and trailing SL
         update_trade_setup_status(
             setup["id"],
             status="ACTIVE",
+            peak_premium=peak,
+            trailing_sl=trailing_sl,
             max_premium_reached=max_reached,
             min_premium_reached=min_reached,
             last_checked_at=timestamp,
@@ -794,6 +855,28 @@ class TradeTracker:
         )
 
         return None
+
+    def _send_t1_alert(self, setup, current_premium, pnl, trailing_sl):
+        """Send Telegram alert when T1 (+22%) is hit."""
+        try:
+            from alerts import send_telegram
+            direction = "BUY CALL" if setup["direction"] == "BUY_CALL" else "BUY PUT"
+            strike_text = f"{setup['strike']} {setup['option_type']}"
+
+            message = (
+                f"<b>\U0001f49a T1 HIT \u2014 Iron Pulse</b>\n\n"
+                f"<b>Direction:</b> <code>{direction}</code>\n"
+                f"<b>Strike:</b> <code>{strike_text}</code>\n"
+                f"<b>Entry:</b> <code>Rs {setup['entry_premium']:.2f}</code>\n"
+                f"<b>Current:</b> <code>Rs {current_premium:.2f}</code>\n"
+                f"<b>P&L:</b> <code>{pnl:+.1f}%</code> (1:1 RR)\n\n"
+                f"<b>Trailing SL:</b> <code>Rs {trailing_sl:.2f}</code> (15% below peak)\n\n"
+                f"<i>Book at T1 now, or let it ride \u2014 trailing SL active!</i>\n"
+                f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
+            )
+            send_telegram(message)
+        except Exception as e:
+            log.error("Failed to send T1 alert", error=str(e))
 
     def cancel_on_direction_change(self, current_verdict: str, timestamp: datetime) -> bool:
         """
@@ -886,6 +969,7 @@ class TradeTracker:
 
         # Determine if it's a win or loss
         status = "WON" if profit_loss_pct > 0 else "LOST"
+        t1_was_hit = bool(setup.get("t1_hit"))
 
         update_trade_setup_status(
             setup["id"],
@@ -897,7 +981,29 @@ class TradeTracker:
         )
 
         log.info("Setup FORCE CLOSED at market end", setup_id=setup['id'],
-                 status=status, pnl=f"{profit_loss_pct:+.2f}%")
+                 status=status, pnl=f"{profit_loss_pct:+.2f}%", t1_hit=t1_was_hit)
+
+        # Send exit alert
+        try:
+            from alerts import send_telegram
+            direction = "BUY CALL" if setup["direction"] == "BUY_CALL" else "BUY PUT"
+            emoji = "\u2705" if profit_loss_pct > 0 else "\u274c"
+            t1_status = "\u2705 Hit" if t1_was_hit else "\u274c Missed"
+
+            message = (
+                f"<b>{emoji} Iron Pulse {'WON' if profit_loss_pct > 0 else 'LOST'} (EOD)</b>\n\n"
+                f"<b>Direction:</b> <code>{direction}</code>\n"
+                f"<b>Strike:</b> <code>{setup['strike']} {setup['option_type']}</code>\n"
+                f"<b>Entry:</b> <code>Rs {setup['entry_premium']:.2f}</code>\n"
+                f"<b>Exit:</b> <code>Rs {current_premium:.2f}</code>\n"
+                f"<b>P&L:</b> <code>{profit_loss_pct:+.1f}%</code>\n"
+                f"<b>T1 (+22%):</b> {t1_status}\n"
+                f"<b>Exit:</b> End of Day\n\n"
+                f"<i>Time: {timestamp.strftime('%H:%M:%S')}</i>"
+            )
+            send_telegram(message)
+        except Exception as e:
+            log.error("Failed to send EOD exit alert", error=str(e))
 
         return True
 

@@ -305,7 +305,20 @@ def init_db():
         for col_name, col_def in trade_setup_columns_to_add:
             try:
                 cursor.execute(f"ALTER TABLE trade_setups ADD COLUMN {col_name} {col_def}")
-                # Log migration (using print since logger may not be available during init)
+            except:
+                pass  # Column already exists
+
+        # Migration: T1/T2 trailing stop columns for Iron Pulse
+        iron_pulse_cols = [
+            ("t1_hit", "BOOLEAN DEFAULT 0"),
+            ("t1_hit_at", "DATETIME"),
+            ("t1_premium", "REAL"),
+            ("peak_premium", "REAL"),
+            ("trailing_sl", "REAL"),
+        ]
+        for col_name, col_def in iron_pulse_cols:
+            try:
+                cursor.execute(f"ALTER TABLE trade_setups ADD COLUMN {col_name} {col_def}")
             except:
                 pass  # Column already exists
 

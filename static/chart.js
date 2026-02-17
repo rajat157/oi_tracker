@@ -872,7 +872,30 @@ function updateTradeSetup(data) {
     setText('trade-sl', setup.sl_premium?.toFixed(2) || '--');
     setText('trade-sl-detail', `-${setup.risk_pct}%`);
     setText('trade-target1', setup.target1_premium?.toFixed(2) || '--');
-    setText('trade-target2', setup.target2_premium?.toFixed(2) || '--');
+
+    // T1 hit status
+    const t1Status = document.getElementById('trade-t1-status');
+    if (t1Status) {
+        if (setup.t1_hit) {
+            t1Status.textContent = '\u2705 T1 Hit';
+            t1Status.style.color = 'var(--green, #22c55e)';
+        } else {
+            t1Status.textContent = '+22%';
+            t1Status.style.color = '';
+        }
+    }
+
+    // Trailing SL row (shown after T1 hit)
+    const trailRow = document.getElementById('trade-trailing-row');
+    if (trailRow) {
+        if (setup.t1_hit && setup.trailing_sl) {
+            trailRow.style.display = '';
+            setText('trade-trailing-sl', setup.trailing_sl?.toFixed(2) || '--');
+            setText('trade-peak-info', 'Peak: ' + (setup.peak_premium?.toFixed(2) || '--'));
+        } else {
+            trailRow.style.display = 'none';
+        }
+    }
 
     // Update meta
     setText('trade-risk', setup.risk_points?.toFixed(2) || (setup.entry_premium && setup.sl_premium ? (setup.entry_premium - setup.sl_premium).toFixed(2) : '--'));

@@ -221,12 +221,20 @@ def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "
     return f"NIFTY{yy}{month_code}{dd}{strike}{option_type}"
 
 
-def _get_kite_order_url(strike: int, option_type: str, entry_premium: float, 
-                         qty: int = 75, expiry_date: str = "") -> str:
-    """Generate a Kite order deep link URL."""
+def _get_kite_basket_url(strike: int, option_type: str, entry_premium: float,
+                          qty: int = 65, expiry_date: str = "") -> str:
+    """Generate a Kite Publisher basket URL for one-tap ordering."""
+    import json, urllib.parse
     trading_symbol = _get_kite_trading_symbol(strike, option_type, expiry_date)
-    # Kite web direct order URL
-    return f"https://kite.zerodha.com/chart/ext/ciq/NFO-OPT/{trading_symbol}"
+    api_key = os.environ.get('KITE_API_KEY', '')
+    
+    basket = [{"variety": "regular", "tradingsymbol": trading_symbol,
+               "exchange": "NFO", "transaction_type": "BUY",
+               "order_type": "LIMIT", "price": round(entry_premium, 2),
+               "quantity": qty, "product": "MIS", "readonly": False}]
+    
+    encoded = urllib.parse.quote(json.dumps(basket))
+    return f"https://kite.zerodha.com/connect/basket?api_key={api_key}&data={encoded}"
 
 
 def send_trade_setup_alert(
@@ -273,9 +281,9 @@ def send_trade_setup_alert(
 <b>Verdict:</b> {verdict}
 <b>Confidence:</b> {confidence:.0f}%
 
-<b>\U0001f4cb Quick Order:</b>
+\U0001f4cb <b>Kite Order (tap to copy):</b>
 <code>{trading_symbol}</code>
-<code>BUY | LIMIT Rs {entry_premium:.2f} | Qty 65</code>
+<code>BUY LIMIT Rs {entry_premium:.2f} | Qty 65</code>
 <code>SL Rs {sl_premium:.2f} | T1 Rs {target_premium:.2f}</code>
 
 \u23f0 <i>Valid until 14:00 or entry hit</i>

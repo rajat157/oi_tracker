@@ -519,4 +519,4 @@ def start_app(debug: bool = False, port: int = 5000):
 
 
 if __name__ == "__main__":
-    start_app(debug=True, port=5000)
+    start_app(debug=False, port=5000)

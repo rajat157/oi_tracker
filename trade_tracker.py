@@ -583,6 +583,46 @@ class TradeTracker:
         except Exception as e:
             log.error("Failed to send trade setup alert", error=str(e))
 
+        # ===== AUTO ORDER PLACEMENT via Kite =====
+        try:
+            from kite_broker import is_authenticated, auto_place_iron_pulse
+            from alerts import _get_kite_trading_symbol, send_telegram
+            
+            if is_authenticated():
+                trading_symbol = _get_kite_trading_symbol(
+                    trade_setup['strike'], trade_setup['option_type'],
+                    analysis.get("expiry_date", "")
+                )
+                
+                result = auto_place_iron_pulse(
+                    trading_symbol=trading_symbol,
+                    entry_premium=entry_premium,
+                    sl_premium=sl_premium,
+                    target_premium=target1_premium,
+                    quantity=65
+                )
+                
+                if result.get('status') == 'success':
+                    from kite_broker import round_to_tick
+                    order_msg = (
+                        f"<b>\u2705 Order Placed on Kite!</b>\n\n"
+                        f"<b>Symbol:</b> <code>{result['symbol']}</code>\n"
+                        f"<b>Order:</b> BUY LIMIT @ Rs {result['entry']:.1f} | Qty 65\n"
+                        f"<b>GTT SL:</b> Rs {result['sl']:.1f}\n"
+                        f"<b>GTT Target:</b> Rs {result['target']:.1f}\n"
+                        f"<b>Order ID:</b> <code>{result['order_id']}</code>\n"
+                        f"<b>GTT ID:</b> <code>{result.get('trigger_id', 'FAILED')}</code>"
+                    )
+                    send_telegram(order_msg)
+                    log.info("Auto order placed", order_id=result['order_id'],
+                             trigger_id=result.get('trigger_id'))
+                else:
+                    log.warning("Auto order failed", result=result)
+            else:
+                log.info("Kite not authenticated - manual order needed")
+        except Exception as e:
+            log.error("Auto order placement error", error=str(e))
+
         # Update tracking for direction flip cooldown
         self.last_suggested_direction = trade_setup["direction"]
         self.last_suggestion_time = timestamp

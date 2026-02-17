@@ -14,6 +14,18 @@ API_KEY = os.environ.get('KITE_API_KEY', '')
 BASE_URL = "https://api.kite.trade"
 
 
+def round_to_tick(price: float, direction: str = "nearest") -> float:
+    """Round price to nearest 0.5 (e.g., 86.2 -> 86.0 or 86.5).
+    direction: 'up' for targets, 'down' for SL, 'nearest' for entry.
+    """
+    import math
+    if direction == "up":
+        return math.ceil(price * 2) / 2  # Round up to 0.5
+    elif direction == "down":
+        return math.floor(price * 2) / 2  # Round down to 0.5
+    return round(price * 2) / 2  # Nearest 0.5
+
+
 def _headers():
     """Get auth headers with today's access token."""
     token = load_token()
@@ -203,3 +215,65 @@ def delete_gtt(trigger_id: int) -> dict:
 def is_authenticated() -> bool:
     """Check if we have a valid access token for today."""
     return bool(load_token())
+
+
+def auto_place_iron_pulse(trading_symbol: str, entry_premium: float,
+                           sl_premium: float, target_premium: float,
+                           quantity: int = 65) -> dict:
+    """
+    Auto-place Iron Pulse trade: LIMIT BUY + GTT OCO (SL + Target).
+    Returns dict with order_id and trigger_id, or error.
+    """
+    if not is_authenticated():
+        log.warning("Kite not authenticated - skipping auto order")
+        return {"status": "error", "message": "Not authenticated"}
+    
+    # Round prices to tick size (0.5)
+    entry = round_to_tick(entry_premium, "nearest")
+    sl = round_to_tick(sl_premium, "down")
+    target = round_to_tick(target_premium, "up")
+    
+    log.info("Auto-placing Iron Pulse", symbol=trading_symbol,
+             entry=entry, sl=sl, target=target, qty=quantity)
+    
+    # 1. Place LIMIT BUY order
+    order_result = place_order(
+        trading_symbol=trading_symbol,
+        transaction_type="BUY",
+        quantity=quantity,
+        price=entry,
+        order_type="LIMIT",
+        product="MIS"
+    )
+    
+    if order_result.get('status') != 'success':
+        log.error("Failed to place buy order", result=order_result)
+        return {"status": "error", "message": f"Order failed: {order_result}", "order": order_result}
+    
+    order_id = order_result['data']['order_id']
+    
+    # 2. Place GTT OCO (SL + Target)
+    gtt_result = place_gtt_oco(
+        trading_symbol=trading_symbol,
+        entry_price=entry,
+        sl_price=sl,
+        target_price=target,
+        quantity=quantity,
+        product="MIS"
+    )
+    
+    trigger_id = None
+    if gtt_result.get('status') == 'success':
+        trigger_id = gtt_result['data']['trigger_id']
+    else:
+        log.error("Failed to place GTT, order is live without SL!", result=gtt_result)
+    
+    return {
+        "status": "success",
+        "order_id": order_id,
+        "trigger_id": trigger_id,
+        "entry": entry,
+        "sl": sl,
+        "target": target,
+        "symbol": trading_symbol
+    }

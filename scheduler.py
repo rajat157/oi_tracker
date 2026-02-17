@@ -364,17 +364,23 @@ class OIScheduler:
             log.warning("Scheduler already running")
             return
 
-        # Add the job — aligned to 3-min candles from market open (9:15)
-        # Since 15 % 3 == 0, standard */3 cron minutes align perfectly
-        # Runs at :00, :03, :06, ..., :57 during market hours (9:15-15:30)
+        # Calculate seconds until next candle-aligned minute
+        # Candles align to :00, :03, :06, ..., :57 (since market opens 9:15, 15%3==0)
+        from datetime import datetime as dt
+        now = dt.now()
+        current_min = now.minute
+        next_aligned = current_min + (3 - current_min % 3) if current_min % 3 != 0 else current_min + 3
+        seconds_to_next = (next_aligned - current_min) * 60 - now.second + 5  # +5s candle close offset
+        if seconds_to_next <= 0:
+            seconds_to_next += 180  # next 3-min window
+
+        from datetime import timedelta
+        start_date = now + timedelta(seconds=seconds_to_next)
+
+        # Add the job — 3-min interval aligned to candles
         self.scheduler.add_job(
             self.fetch_and_analyze,
-            trigger=CronTrigger(
-                minute='*/3',
-                hour='9-15',
-                day_of_week='mon-fri',
-                second=5,  # 5s offset to let candle close
-            ),
+            trigger=IntervalTrigger(minutes=interval_minutes, start_date=start_date),
             id="oi_fetcher",
             name="Fetch OI Data (candle-aligned)",
             replace_existing=True
@@ -383,11 +389,10 @@ class OIScheduler:
         # Start scheduler
         self.scheduler.start()
         self.is_running = True
-        log.info("Scheduler started (candle-aligned, every 3 min, mon-fri 9:15-15:30)")
+        log.info("Scheduler started", interval=f"{interval_minutes}min",
+                 next_run=start_date.strftime('%H:%M:%S'))
 
-        # Run immediately on start if market is open
-        if self.is_market_open():
-            self.fetch_and_analyze()
+        # First fetch at next aligned candle (no blocking startup fetch)
 
     def stop(self):
         """Stop the scheduler."""

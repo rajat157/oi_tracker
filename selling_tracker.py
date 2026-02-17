@@ -347,7 +347,7 @@ class SellingTracker:
             from alerts import send_telegram_multi, SELLING_ALERT_CHAT_IDS
 
             dir_text = "SELL PUT" if direction == "SELL_PUT" else "SELL CALL"
-            emoji = "ðŸ”´" if "CALL" in direction else "ðŸŸ¢"
+            emoji = "\U0001f534" if "CALL" in direction else "\U0001f7e2"
 
             message = (
                 f"<b>{emoji} SELL SETUP</b>\n\n"
@@ -375,7 +375,7 @@ class SellingTracker:
             dir_text = "SELL PUT" if setup["direction"] == "SELL_PUT" else "SELL CALL"
 
             message = (
-                f"<b>ðŸŽ¯ T1 HIT â€” SELL TRADE</b>\n\n"
+                f"<b>\U0001f3af T1 HIT \u2014 SELL TRADE</b>\n\n"
                 f"<b>Direction:</b> <code>{dir_text}</code>\n"
                 f"<b>Strike:</b> <code>{setup['strike']} {setup['option_type']}</code>\n"
                 f"<b>Entry:</b> <code>Rs {setup['entry_premium']:.2f}</code>\n"
@@ -392,9 +392,9 @@ class SellingTracker:
         """Send Telegram alert when selling trade exits."""
         try:
             from alerts import send_telegram_multi, SELLING_ALERT_CHAT_IDS
-            emoji = "âœ…" if pnl > 0 else "âŒ"
+            emoji = "✅" if pnl > 0 else "❌"
             dir_text = "SELL PUT" if setup["direction"] == "SELL_PUT" else "SELL CALL"
-            t1_status = "âœ… Hit" if setup.get("t1_hit") else "âŒ Missed"
+            t1_status = "✅ Hit" if setup.get("t1_hit") else "❌ Missed"
 
             reason_text = reason
             if reason == "TARGET2":

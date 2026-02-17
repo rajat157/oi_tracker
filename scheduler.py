@@ -8,6 +8,7 @@ import json
 from datetime import datetime, time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 from nse_fetcher import NSEFetcher
 from oi_analyzer import analyze_tug_of_war, calculate_market_trend
@@ -363,22 +364,30 @@ class OIScheduler:
             log.warning("Scheduler already running")
             return
 
-        # Add the job
+        # Add the job — aligned to 3-min candles from market open (9:15)
+        # Since 15 % 3 == 0, standard */3 cron minutes align perfectly
+        # Runs at :00, :03, :06, ..., :57 during market hours (9:15-15:30)
         self.scheduler.add_job(
             self.fetch_and_analyze,
-            trigger=IntervalTrigger(minutes=interval_minutes),
+            trigger=CronTrigger(
+                minute='*/3',
+                hour='9-15',
+                day_of_week='mon-fri',
+                second=5,  # 5s offset to let candle close
+            ),
             id="oi_fetcher",
-            name="Fetch OI Data",
+            name="Fetch OI Data (candle-aligned)",
             replace_existing=True
         )
 
         # Start scheduler
         self.scheduler.start()
         self.is_running = True
-        log.info("Scheduler started", interval_minutes=interval_minutes)
+        log.info("Scheduler started (candle-aligned, every 3 min, mon-fri 9:15-15:30)")
 
-        # Run immediately on start
-        self.fetch_and_analyze()
+        # Run immediately on start if market is open
+        if self.is_market_open():
+            self.fetch_and_analyze()
 
     def stop(self):
         """Stop the scheduler."""

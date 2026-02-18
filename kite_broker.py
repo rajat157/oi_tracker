@@ -39,7 +39,7 @@ def _headers():
 
 def place_order(trading_symbol: str, transaction_type: str = "BUY",
                 quantity: int = 65, price: float = 0,
-                order_type: str = "LIMIT", product: str = "MIS") -> dict:
+                order_type: str = "LIMIT", product: str = "NRML") -> dict:
     """
     Place an order on Kite.
     
@@ -80,7 +80,7 @@ def place_order(trading_symbol: str, transaction_type: str = "BUY",
 
 def place_gtt_oco(trading_symbol: str, entry_price: float,
                   sl_price: float, target_price: float,
-                  quantity: int = 65, product: str = "MIS") -> dict:
+                  quantity: int = 65, product: str = "NRML") -> dict:
     """
     Place a GTT OCO (One Cancels Other) order.
     Triggers at SL or Target, whichever hits first.
@@ -144,7 +144,7 @@ def place_gtt_oco(trading_symbol: str, entry_price: float,
 
 def modify_gtt(trigger_id: int, trading_symbol: str, current_price: float,
                new_sl_price: float, target_price: float,
-               quantity: int = 65, product: str = "MIS") -> dict:
+               quantity: int = 65, product: str = "NRML") -> dict:
     """Modify an existing GTT (e.g., update trailing SL)."""
     headers = _headers()
     if not headers:
@@ -243,7 +243,7 @@ def auto_place_iron_pulse(trading_symbol: str, entry_premium: float,
         quantity=quantity,
         price=entry,
         order_type="LIMIT",
-        product="MIS"
+        product="NRML"
     )
     
     if order_result.get('status') != 'success':
@@ -259,7 +259,7 @@ def auto_place_iron_pulse(trading_symbol: str, entry_premium: float,
         sl_price=sl,
         target_price=target,
         quantity=quantity,
-        product="MIS"
+        product="NRML"
     )
     
     trigger_id = None

@@ -37,6 +37,7 @@ STRATEGY_SL_PCT = 20.0              # -20% stop loss
 STRATEGY_TARGET_PCT = 22.0          # +22% target (T1)
 STRATEGY_MIN_CONFIDENCE = 65.0      # Minimum 65% confidence
 TRAILING_SL_PCT = 15.0              # After T1 hit: trail 15% below peak (T2)
+MIN_PREMIUM_PCT = 0.20              # Skip if premium < 0.20% of spot (cheap = no expected move)
 
 
 class TradeTracker:
@@ -298,26 +299,42 @@ class TradeTracker:
         if not trade_setup:
             return False
 
-        # 4. Check cooldown period after last resolved trade
+        # 4. Premium % of spot check (fundamental options filter)
+        # When ATM premium is too cheap relative to spot, market makers are pricing
+        # in near-zero movement. Hitting +22% target requires a 2-3 sigma event.
+        # Backtested: removes worst loss (-32.5% on Feb 10, prem=0.14%) with zero winners lost.
+        entry_premium = trade_setup.get("entry_premium", 0)
+        spot_price = analysis.get("spot_price", 0)
+        if spot_price > 0 and entry_premium > 0:
+            premium_pct = (entry_premium / spot_price) * 100
+            if premium_pct < MIN_PREMIUM_PCT:
+                log.warning("Skipping: Premium too cheap relative to spot",
+                           premium=f"₹{entry_premium:.2f}",
+                           spot=f"₹{spot_price:.0f}",
+                           premium_pct=f"{premium_pct:.3f}%",
+                           min_required=f"{MIN_PREMIUM_PCT:.2f}%")
+                return False
+
+        # 5. Check cooldown period after last resolved trade
         if self._is_in_cooldown():
             log.warning("Skipping: In cooldown period after recent trade")
             return False
 
-        # 5. CRITICAL: Check cancellation cooldown (prevents shifting trades)
+        # 6. CRITICAL: Check cancellation cooldown (prevents shifting trades)
         if self._is_in_cancellation_cooldown():
             return False
 
-        # 6. Check direction flip cooldown (prevents rapid CALL↔PUT switching)
+        # 7. Check direction flip cooldown (prevents rapid CALL↔PUT switching)
         current_direction = trade_setup.get("direction")
         if self._is_direction_flip_cooldown(current_direction):
             return False
 
-        # 7. Check if move already happened in signal direction
+        # 8. Check if move already happened in signal direction
         if price_history and self._is_move_already_happened(analysis, price_history):
             log.warning("Skipping: Move already happened in signal direction")
             return False
 
-        # 8. Check for bounce in progress (bad for PUT trades)
+        # 9. Check for bounce in progress (bad for PUT trades)
         if price_history and self._is_bounce_in_progress(analysis, price_history):
             log.warning("Skipping: Bounce in progress - bad for PUT entry")
             return False
@@ -328,6 +345,7 @@ class TradeTracker:
         # - "Slightly" verdicts only ✓  
         # - Confidence >= 65% ✓
         # - One trade per day ✓
+        # - Premium >= 0.20% of spot ✓ (fundamental options filter)
         
         log.info("NEW STRATEGY: All conditions met - creating trade setup",
                  verdict=analysis.get("verdict"),

@@ -132,6 +132,24 @@ def api_latest():
             analysis["active_dessert_trade"] = None
             analysis["dessert_stats"] = {}
 
+        # Add momentum trade data
+        try:
+            from momentum_tracker import get_active_momentum, MomentumTracker
+            active_momentum = get_active_momentum()
+            if active_momentum and snapshot and snapshot.get("strikes"):
+                strike_m = snapshot["strikes"].get(active_momentum["strike"], {})
+                key = "pe_ltp" if active_momentum["option_type"] == "PE" else "ce_ltp"
+                cur_prem = strike_m.get(key, 0)
+                if cur_prem and cur_prem > 0:
+                    m_pnl = ((cur_prem - active_momentum["entry_premium"]) / active_momentum["entry_premium"]) * 100
+                    active_momentum["current_premium"] = cur_prem
+                    active_momentum["current_pnl"] = m_pnl
+            analysis["active_momentum_trade"] = active_momentum
+            analysis["momentum_stats"] = MomentumTracker().get_momentum_stats()
+        except Exception:
+            analysis["active_momentum_trade"] = None
+            analysis["momentum_stats"] = {}
+
         # Add chart history for frontend sync (last 30 data points)
         analysis["chart_history"] = get_analysis_history(limit=30)
 
@@ -261,6 +279,30 @@ def api_dessert_stats():
     from dessert_tracker import DessertTracker
     tracker = DessertTracker()
     return jsonify(tracker.get_dessert_stats())
+
+
+@app.route("/api/momentum-trades")
+def api_momentum_trades():
+    """Get momentum trade history."""
+    from database import get_connection
+    days = request.args.get("days", 30, type=int)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM momentum_trades
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at DESC
+        """, (f"-{days} days",))
+        trades = [dict(r) for r in cursor.fetchall()]
+    return jsonify({"trades": trades})
+
+
+@app.route("/api/momentum-stats")
+def api_momentum_stats():
+    """Get momentum trade statistics."""
+    from momentum_tracker import MomentumTracker
+    tracker = MomentumTracker()
+    return jsonify(tracker.get_momentum_stats())
 
 
 @app.route("/api/logs")

@@ -20,6 +20,7 @@ from database import (
 from trade_tracker import get_trade_tracker
 from selling_tracker import SellingTracker
 from dessert_tracker import DessertTracker
+from momentum_tracker import MomentumTracker
 from pattern_tracker import check_patterns, log_failed_entry
 from logger import get_logger
 
@@ -52,6 +53,7 @@ class OIScheduler:
         self.trade_tracker = get_trade_tracker()
         self.selling_tracker = SellingTracker()
         self.dessert_tracker = DessertTracker()
+        self.momentum_tracker = MomentumTracker()
         self.force_enabled = False
 
     def set_force_enabled(self, enabled: bool):
@@ -288,6 +290,23 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in dessert tracker", error=str(e))
 
+            # ===== MOMENTUM TRACKER (1:2 RR trend-following) =====
+            try:
+                # Check/update active momentum trade
+                momentum_update = self.momentum_tracker.check_and_update_momentum(strikes_data)
+                if momentum_update:
+                    log.info("Momentum trade updated",
+                             action=momentum_update['action'],
+                             pnl=f"{momentum_update['pnl']:.2f}%",
+                             reason=momentum_update['reason'])
+
+                # Create new momentum trade if conditions met
+                direction = self.momentum_tracker.should_create_momentum(analysis)
+                if direction:
+                    self.momentum_tracker.create_momentum_trade(direction, analysis, strikes_data)
+            except Exception as e:
+                log.error("Error in momentum tracker", error=str(e))
+
             # 6. Add trade tracker data to analysis for dashboard
             tracker_data = self.trade_tracker.get_stats()
             active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
@@ -331,6 +350,25 @@ class OIScheduler:
                 log.error("Error getting dessert data for dashboard", error=str(e))
                 analysis["active_dessert_trade"] = None
                 analysis["dessert_stats"] = {}
+
+            # Add momentum tracker data
+            try:
+                from momentum_tracker import get_active_momentum
+                active_momentum = get_active_momentum()
+                if active_momentum:
+                    strike_m = strikes_data.get(active_momentum["strike"], {})
+                    key = "pe_ltp" if active_momentum["option_type"] == "PE" else "ce_ltp"
+                    cur_prem = strike_m.get(key, 0)
+                    if cur_prem > 0:
+                        m_pnl = ((cur_prem - active_momentum["entry_premium"]) / active_momentum["entry_premium"]) * 100
+                        active_momentum["current_premium"] = cur_prem
+                        active_momentum["current_pnl"] = m_pnl
+                analysis["active_momentum_trade"] = active_momentum
+                analysis["momentum_stats"] = self.momentum_tracker.get_momentum_stats()
+            except Exception as e:
+                log.error("Error getting momentum data for dashboard", error=str(e))
+                analysis["active_momentum_trade"] = None
+                analysis["momentum_stats"] = {}
 
             # Run daily learning update at market close
             self._check_daily_learning_update()

@@ -460,6 +460,9 @@ function updateDashboard(data) {
     // Update Dessert Trade Card
     updateDessertTrade(data);
 
+    // Update Momentum Trade Card
+    updateMomentumTrade(data);
+
     // Update Trade Setup Card (persistent with lifecycle)
     updateTradeSetup(data);
 
@@ -696,6 +699,62 @@ function updateDessertTrade(data) {
     setText('dessert-spot', (d.spot_at_creation || 0).toFixed(2));
     setText('dessert-verdict', d.verdict_at_creation || '--');
     setText('dessert-vix', (d.vix_at_creation || 0).toFixed(1));
+}
+
+function updateMomentumTrade(data) {
+    const card = document.getElementById('momentum-trade-card');
+    if (!card) return;
+
+    const d = data.active_momentum_trade;
+    if (!d) {
+        card.style.display = 'none';
+        return;
+    }
+
+    card.style.display = 'block';
+
+    // Strategy name
+    const nameElem = document.getElementById('momentum-strategy-name');
+    if (nameElem) {
+        const dirEmoji = d.direction === 'BUY_PUT' ? '🔴' : '🟢';
+        nameElem.textContent = '🚀 Momentum ' + dirEmoji;
+    }
+
+    // Status badge
+    const badge = document.getElementById('momentum-status-badge');
+    if (badge) {
+        badge.textContent = d.status || 'ACTIVE';
+        badge.className = 'trade-status-badge status-' + (d.status || 'active').toLowerCase();
+    }
+
+    // Direction & strike
+    const dirText = d.direction === 'BUY_PUT' ? 'BUY PUT' : 'BUY CALL';
+    setText('momentum-direction', dirText);
+    setText('momentum-strike', d.strike + ' ' + d.option_type);
+
+    // Premiums
+    setText('momentum-entry', (d.entry_premium || 0).toFixed(2));
+    setText('momentum-sl', (d.sl_premium || 0).toFixed(2));
+    setText('momentum-target', (d.target_premium || 0).toFixed(2));
+
+    // Live P&L
+    const pnlDiv = document.getElementById('momentum-live-pnl');
+    if (d.current_premium && d.current_pnl !== undefined) {
+        pnlDiv.style.display = 'flex';
+        const pnlValue = document.getElementById('momentum-pnl-value');
+        if (pnlValue) {
+            pnlValue.textContent = (d.current_pnl >= 0 ? '+' : '') + d.current_pnl.toFixed(2) + '%';
+            pnlValue.className = 'pnl-value ' + (d.current_pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+        }
+        setText('momentum-current-premium', d.current_premium.toFixed(2));
+    } else {
+        pnlDiv.style.display = 'none';
+    }
+
+    // Meta
+    setText('momentum-spot', (d.spot_at_creation || 0).toFixed(2));
+    setText('momentum-verdict', d.verdict_at_creation || '--');
+    setText('momentum-score', (d.combined_score || 0).toFixed(1));
 }
 
 function updateSellTrade(data) {

@@ -17,6 +17,7 @@ from database import (
     get_trade_setup_stats,
     get_last_resolved_trade,
     get_todays_trades,
+    get_recent_price_trend,
 )
 from pattern_tracker import log_failed_entry
 from logger import get_logger
@@ -218,7 +219,34 @@ class TradeTracker:
                      min_required=f"{STRATEGY_MIN_CONFIDENCE:.0f}%")
             return False
         
-        log.info("Strategy: Valid signal", verdict=verdict, confidence=f"{confidence:.0f}%")
+        # Enhanced logging: capture IV, DTE, momentum for future filter analysis
+        trade_setup = analysis.get("trade_setup", {})
+        iv = trade_setup.get("iv_at_strike", 0) if trade_setup else 0
+        expiry_str = analysis.get("expiry_date", "")
+        expiry_dt = self._parse_expiry_date(expiry_str) if expiry_str else None
+        dte = (expiry_dt - datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)).days if expiry_dt else -1
+
+        # 30m spot momentum
+        price_history_30m = get_recent_price_trend(lookback_minutes=30)
+        momentum_pct = 0.0
+        momentum_aligned = "N/A"
+        if price_history_30m and len(price_history_30m) >= 2:
+            first_s = price_history_30m[0].get("spot_price", 0)
+            last_s = price_history_30m[-1].get("spot_price", 0)
+            if first_s > 0:
+                momentum_pct = ((last_s - first_s) / first_s) * 100
+                direction = trade_setup.get("direction", "") if trade_setup else ""
+                is_bullish = direction == "BUY_CALL" or "bull" in verdict.lower()
+                if (is_bullish and momentum_pct >= 0) or (not is_bullish and momentum_pct <= 0):
+                    momentum_aligned = "ALN"
+                else:
+                    momentum_aligned = "MIS"
+
+        log.info("Strategy: Valid signal",
+                 verdict=verdict, confidence=f"{confidence:.0f}%",
+                 iv=f"{iv:.1f}", dte=dte,
+                 momentum_30m=f"{momentum_pct:+.3f}%",
+                 momentum_status=momentum_aligned)
         return True
     
     def _already_traded_today(self) -> bool:
@@ -339,14 +367,12 @@ class TradeTracker:
             log.warning("Skipping: Bounce in progress - bad for PUT entry")
             return False
 
-        # ===== SIMPLIFIED: Skip complex filters for new strategy =====
-        # The new strategy relies on:
-        # - Time window (11:00-14:00) ✓
-        # - "Slightly" verdicts only ✓  
-        # - Confidence >= 65% ✓
-        # - One trade per day ✓
-        # - Premium >= 0.20% of spot ✓ (fundamental options filter)
-        
+        # 10. DTE-aware momentum filter (Scenario H from backtest)
+        # On non-expiry-week days (DTE >= 3), block when IV > 10 AND momentum misaligned
+        if self._is_dte_momentum_filtered(analysis):
+            log.warning("Skipping: DTE-aware momentum filter triggered")
+            return False
+
         log.info("NEW STRATEGY: All conditions met - creating trade setup",
                  verdict=analysis.get("verdict"),
                  confidence=f"{analysis.get('signal_confidence', 0):.0f}%",
@@ -463,6 +489,91 @@ class TradeTracker:
         if bounce_pct > self.bounce_threshold_pct:
             return True
 
+        return False
+
+    def _parse_expiry_date(self, expiry_str: str) -> Optional[datetime]:
+        """Parse expiry date string to datetime (handles multiple NSE formats)."""
+        if not expiry_str:
+            return None
+        for fmt in ['%Y-%m-%d', '%d-%b-%Y', '%d-%m-%Y', '%d %b %Y']:
+            try:
+                return datetime.strptime(expiry_str, fmt)
+            except ValueError:
+                continue
+        return None
+
+    def _is_dte_momentum_filtered(self, analysis: dict) -> bool:
+        """
+        DTE-aware momentum filter (Scenario H from backtest analysis).
+
+        On non-expiry-week days (DTE >= 3), block entry when:
+        - IV at strike > 10, AND
+        - Spot 30m momentum is against trade direction
+
+        Near-expiry (DTE < 3): allow all trades (high IV is normal from gamma).
+
+        Returns:
+            True if trade should be BLOCKED by this filter
+        """
+        trade_setup = analysis.get("trade_setup", {})
+        if not trade_setup:
+            return False
+
+        # Calculate DTE
+        expiry_str = analysis.get("expiry_date", "")
+        expiry_dt = self._parse_expiry_date(expiry_str)
+        if not expiry_dt:
+            log.debug("DTE filter: Could not parse expiry date, allowing trade",
+                      expiry=expiry_str)
+            return False
+
+        today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        dte = (expiry_dt - today).days
+
+        # Near-expiry: skip filter (high IV is normal from gamma)
+        if dte < 3:
+            log.debug("DTE filter: Near expiry, filter skipped", dte=dte)
+            return False
+
+        # Check IV at strike
+        iv = trade_setup.get("iv_at_strike", 0)
+        if iv <= 10:
+            log.debug("DTE filter: IV within range, filter skipped",
+                      iv=f"{iv:.1f}", dte=dte)
+            return False
+
+        # Get 30-minute spot momentum
+        price_history_30m = get_recent_price_trend(lookback_minutes=30)
+        if not price_history_30m or len(price_history_30m) < 2:
+            log.debug("DTE filter: Insufficient price history, allowing trade")
+            return False
+
+        first_spot = price_history_30m[0].get("spot_price", 0)
+        last_spot = price_history_30m[-1].get("spot_price", 0)
+
+        if first_spot <= 0:
+            return False
+
+        momentum_pct = ((last_spot - first_spot) / first_spot) * 100
+
+        # Determine if momentum is against trade direction
+        direction = trade_setup.get("direction", "")
+        is_bullish_trade = direction == "BUY_CALL"
+
+        # Misaligned = spot rising but buying PUT, or spot falling but buying CALL
+        momentum_misaligned = (is_bullish_trade and momentum_pct < 0) or \
+                              (not is_bullish_trade and momentum_pct > 0)
+
+        if momentum_misaligned:
+            log.warning("DTE filter: BLOCKED - momentum misaligned on non-expiry day",
+                        dte=dte, iv=f"{iv:.1f}", momentum=f"{momentum_pct:+.3f}%",
+                        direction=direction,
+                        spot_30m=f"{first_spot:.0f} -> {last_spot:.0f}")
+            return True
+
+        log.debug("DTE filter: Momentum aligned, allowing trade",
+                  dte=dte, iv=f"{iv:.1f}", momentum=f"{momentum_pct:+.3f}%",
+                  direction=direction)
         return False
 
     def _generate_trade_reasoning(self, analysis: dict, trade_setup: dict) -> str:

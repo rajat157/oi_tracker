@@ -20,7 +20,7 @@ EOD Exit: 15:20 if no SL/Target hit
 
 from datetime import datetime, time, timedelta
 from typing import Optional, Dict, List
-from database import get_connection
+from database import get_connection, get_recent_price_trend
 from logger import get_logger
 
 log = get_logger("selling_tracker")
@@ -182,6 +182,41 @@ class SellingTracker:
         confidence = analysis.get("signal_confidence", 0)
         if confidence < SELL_MIN_CONFIDENCE:
             return False
+
+        # Enhanced logging: capture IV, DTE, momentum for future filter analysis
+        trade_setup = analysis.get("trade_setup", {})
+        iv = trade_setup.get("iv_at_strike", 0) if trade_setup else 0
+        expiry_str = analysis.get("expiry_date", "")
+        dte = -1
+        if expiry_str:
+            for fmt in ['%Y-%m-%d', '%d-%b-%Y', '%d-%m-%Y', '%d %b %Y']:
+                try:
+                    expiry_dt = datetime.strptime(expiry_str, fmt)
+                    today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                    dte = (expiry_dt - today).days
+                    break
+                except ValueError:
+                    continue
+
+        momentum_pct = 0.0
+        momentum_aligned = "N/A"
+        price_history_30m = get_recent_price_trend(lookback_minutes=30)
+        if price_history_30m and len(price_history_30m) >= 2:
+            first_s = price_history_30m[0].get("spot_price", 0)
+            last_s = price_history_30m[-1].get("spot_price", 0)
+            if first_s > 0:
+                momentum_pct = ((last_s - first_s) / first_s) * 100
+                is_bullish = "Bullish" in verdict
+                if (is_bullish and momentum_pct >= 0) or (not is_bullish and momentum_pct <= 0):
+                    momentum_aligned = "ALN"
+                else:
+                    momentum_aligned = "MIS"
+
+        log.info("Sell signal valid",
+                 verdict=verdict, confidence=f"{confidence:.0f}%",
+                 iv=f"{iv:.1f}", dte=dte,
+                 momentum_30m=f"{momentum_pct:+.3f}%",
+                 momentum_status=momentum_aligned)
 
         return True
 

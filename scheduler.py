@@ -55,6 +55,7 @@ class OIScheduler:
         self.dessert_tracker = DessertTracker()
         self.momentum_tracker = MomentumTracker()
         self.force_enabled = False
+        self.last_iron_pulse_time = None  # Track when Iron Pulse enters for selling decoupling
 
     def set_force_enabled(self, enabled: bool):
         """Enable/disable force fetch mode for automatic polling."""
@@ -257,6 +258,7 @@ class OIScheduler:
             # 5. Create new setup if conditions met (pass price_history for timing checks)
             if self.trade_tracker.should_create_new_setup(analysis, price_history):
                 self.trade_tracker.create_setup(analysis, timestamp)
+                self.last_iron_pulse_time = timestamp  # Track for selling decoupling
 
             # ===== SELLING TRACKER =====
             try:
@@ -266,8 +268,20 @@ class OIScheduler:
                     log.info("Sell trade updated", action=sell_update['action'],
                              pnl=f"{sell_update['pnl']:.2f}%", reason=sell_update['reason'])
 
-                # Create new selling setup if conditions met
-                if self.selling_tracker.should_create_sell_setup(analysis):
+                # Selling decoupling: delay 6 minutes after Iron Pulse entry
+                # Prevents both strategies from losing on the same signal
+                selling_deferred = False
+                if self.last_iron_pulse_time:
+                    seconds_since_ip = (timestamp - self.last_iron_pulse_time).total_seconds()
+                    if seconds_since_ip < 360:  # 6 minutes
+                        selling_deferred = True
+                        log.info("Selling deferred: Iron Pulse entered recently",
+                                 seconds_since=f"{seconds_since_ip:.0f}s",
+                                 required="360s",
+                                 reason="decoupling")
+
+                # Create new selling setup if conditions met (and not deferred)
+                if not selling_deferred and self.selling_tracker.should_create_sell_setup(analysis):
                     self.selling_tracker.create_sell_setup(analysis, strikes_data)
             except Exception as e:
                 log.error("Error in selling tracker", error=str(e))

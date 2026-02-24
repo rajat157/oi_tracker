@@ -1,0 +1,6 @@
+# Dev overrides — automatically loaded by docker compose
+services:
+  api:
+    volumes:
+      - ./backend:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

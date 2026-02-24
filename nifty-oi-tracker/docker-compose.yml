@@ -15,10 +15,12 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+    restart: unless-stopped
 
   postgres-test:
     image: postgres:16-alpine
     container_name: nifty-oi-postgres-test
+    profiles: ["dev", "test"]
     environment:
       POSTGRES_DB: nifty_oi_test
       POSTGRES_USER: nifty
@@ -45,21 +47,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
 
-  # Frontend runs locally via `npm run dev` during development
-  # Uncomment for production:
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     dockerfile: Dockerfile
-  #   container_name: nifty-oi-frontend
-  #   ports:
-  #     - "3000:3000"
-  #   depends_on:
-  #     - api
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: nifty-oi-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000/api/v1
+    depends_on:
+      - api
+    restart: unless-stopped
 
 volumes:
   pgdata:

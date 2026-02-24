@@ -53,6 +53,6 @@ export const api = {
     return fetchJSON<{ data: LogEntry[]; count: number }>(`/logs${qs}`);
   },
 
-  // SSE stream URL
+  // SSE stream URL — direct to backend (Next.js proxy doesn't support streaming)
   getSSEUrl: () => `${API_BASE}/events/stream`,
 };

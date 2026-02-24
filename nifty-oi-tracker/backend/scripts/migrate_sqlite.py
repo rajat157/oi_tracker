@@ -101,7 +101,7 @@ def migrate_oi_snapshots(src: sqlite3.Cursor, dst, count: int) -> int:
 
 
 def migrate_analysis_history(src: sqlite3.Cursor, dst, count: int) -> int:
-    """Migrate analysis_history table (analysis_json TEXT → analysis_blob JSON)."""
+    """Migrate analysis_history table (analysis_json TEXT -> analysis_blob JSON)."""
     cols = _get_sqlite_columns(src, "analysis_history")
     src.execute("SELECT * FROM analysis_history ORDER BY id")
     migrated = 0
@@ -158,7 +158,7 @@ def migrate_analysis_history(src: sqlite3.Cursor, dst, count: int) -> int:
 
 
 def migrate_trade_setups(src: sqlite3.Cursor, dst, count: int) -> int:
-    """Migrate trade_setups → iron_pulse_trades."""
+    """Migrate trade_setups -> iron_pulse_trades."""
     cols = _get_sqlite_columns(src, "trade_setups")
     src.execute("SELECT * FROM trade_setups ORDER BY id")
     migrated = 0
@@ -243,7 +243,7 @@ def migrate_trade_setups(src: sqlite3.Cursor, dst, count: int) -> int:
 
 
 def migrate_sell_trade_setups(src: sqlite3.Cursor, dst, count: int) -> int:
-    """Migrate sell_trade_setups → selling_trades."""
+    """Migrate sell_trade_setups -> selling_trades."""
     cols = _get_sqlite_columns(src, "sell_trade_setups")
     src.execute("SELECT * FROM sell_trade_setups ORDER BY id")
     migrated = 0
@@ -364,7 +364,7 @@ def migrate_dessert_trades(src: sqlite3.Cursor, dst, count: int) -> int:
 
 
 def migrate_system_logs(src: sqlite3.Cursor, dst, count: int) -> int:
-    """Migrate system_logs (details TEXT → JSON)."""
+    """Migrate system_logs (details TEXT -> JSON)."""
     cols = _get_sqlite_columns(src, "system_logs")
     src.execute("SELECT * FROM system_logs ORDER BY id")
     migrated = 0
@@ -409,7 +409,7 @@ TABLE_MIGRATIONS = [
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Migrate v1 SQLite → v2 PostgreSQL")
+    parser = argparse.ArgumentParser(description="Migrate v1 SQLite -> v2 PostgreSQL")
     parser.add_argument(
         "--sqlite-path",
         default="../../oi_tracker.db",
@@ -462,7 +462,7 @@ def main():
             print(f"SKIP: {v1_table} (empty)")
             continue
 
-        print(f"Migrating {v1_table} → {v2_table} ({count} rows)...")
+        print(f"Migrating {v1_table} -> {v2_table} ({count} rows)...")
         try:
             migrated = migrate_fn(src, dst, count)
             dst_conn.commit()

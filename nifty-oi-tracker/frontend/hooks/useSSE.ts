@@ -8,12 +8,14 @@ interface UseSSEOptions {
   reconnectInterval?: number;
 }
 
-export function useSSE({ url, onMessage, reconnectInterval = 3000 }: UseSSEOptions) {
+export function useSSE({ url, onMessage, reconnectInterval = 10000 }: UseSSEOptions) {
   const [connected, setConnected] = useState(false);
   const esRef = useRef<EventSource | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const mountedRef = useRef(true);
 
   const connect = useCallback(() => {
+    if (!mountedRef.current) return;
     if (esRef.current) {
       esRef.current.close();
     }
@@ -21,12 +23,16 @@ export function useSSE({ url, onMessage, reconnectInterval = 3000 }: UseSSEOptio
     const es = new EventSource(url);
     esRef.current = es;
 
-    es.onopen = () => setConnected(true);
+    es.onopen = () => {
+      if (mountedRef.current) setConnected(true);
+    };
 
     es.onerror = () => {
-      setConnected(false);
+      if (mountedRef.current) setConnected(false);
       es.close();
-      reconnectTimer.current = setTimeout(connect, reconnectInterval);
+      if (mountedRef.current) {
+        reconnectTimer.current = setTimeout(connect, reconnectInterval);
+      }
     };
 
     // Listen for typed events
@@ -43,8 +49,10 @@ export function useSSE({ url, onMessage, reconnectInterval = 3000 }: UseSSEOptio
   }, [url, onMessage, reconnectInterval]);
 
   useEffect(() => {
+    mountedRef.current = true;
     connect();
     return () => {
+      mountedRef.current = false;
       esRef.current?.close();
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
     };

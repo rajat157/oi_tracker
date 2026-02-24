@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String
+from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -17,8 +17,8 @@ class OISnapshot(Base):
     ce_oi_change: Mapped[int] = mapped_column(Integer, default=0)
     pe_oi: Mapped[int] = mapped_column(Integer, default=0)
     pe_oi_change: Mapped[int] = mapped_column(Integer, default=0)
-    ce_volume: Mapped[int] = mapped_column(Integer, default=0)
-    pe_volume: Mapped[int] = mapped_column(Integer, default=0)
+    ce_volume: Mapped[int] = mapped_column(BigInteger, default=0)
+    pe_volume: Mapped[int] = mapped_column(BigInteger, default=0)
     ce_iv: Mapped[float] = mapped_column(Float, default=0.0)
     pe_iv: Mapped[float] = mapped_column(Float, default=0.0)
     ce_ltp: Mapped[float] = mapped_column(Float, default=0.0)

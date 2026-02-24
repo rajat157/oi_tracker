@@ -52,7 +52,9 @@ export default function Dashboard() {
   });
 
   // Sync SSE connection state to store
-  useDashboardStore.setState({ connected });
+  useEffect(() => {
+    useDashboardStore.setState({ connected });
+  }, [connected]);
 
   return (
     <div className="min-h-screen bg-background">

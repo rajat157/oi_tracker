@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     alert_svc = AlertService()
     instruments = InstrumentService(api_key=settings.kite_api_key)
     market_data = MarketDataService(kite_auth=kite_auth, instruments=instruments)
-    premium_monitor = PremiumMonitorService(shadow_mode=False)
+    premium_monitor = PremiumMonitorService(shadow_mode=settings.shadow_mode)
     scheduler_svc = SchedulerService()
 
     # Build strategies map
@@ -61,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         "premium_monitor": premium_monitor,
         "instruments": instruments,
         "strategies": strategies,
+        "shadow_mode": settings.shadow_mode,
     }
 
     # Premium monitor exit callback
@@ -98,6 +99,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         token = await kite_auth.get_access_token()
         premium_monitor.start(settings.kite_api_key, token)
 
+    if settings.shadow_mode:
+        log.warning("SHADOW MODE enabled — no trades will be created or alerts sent")
     log.info("App started")
     yield
 

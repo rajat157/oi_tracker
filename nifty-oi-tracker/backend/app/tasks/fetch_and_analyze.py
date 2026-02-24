@@ -40,6 +40,7 @@ async def fetch_and_analyze(services: dict) -> dict | None:
     premium_monitor = services["premium_monitor"]
     strategies = services["strategies"]  # {StrategyName: TradingStrategy}
     instruments = services["instruments"]
+    shadow_mode = services.get("shadow_mode", False)
 
     # 1. Market hours check
     if not scheduler_svc.is_market_open():
@@ -97,7 +98,9 @@ async def fetch_and_analyze(services: dict) -> dict | None:
             # 8. Force close at 15:20 IST
             now_time = timestamp.time()
             if now_time >= FORCE_CLOSE_TIME:
-                await _force_close_all(trade_svc, strategies, strikes_data, timestamp, alert_svc)
+                await _force_close_all(
+                    trade_svc, strategies, strikes_data, timestamp, alert_svc, shadow_mode
+                )
 
             # 9. Evaluate strategies
             for strategy_name, strategy in strategies.items():
@@ -115,42 +118,58 @@ async def fetch_and_analyze(services: dict) -> dict | None:
 
                         exit_info = strategy.check_exit(active, current_premium, timestamp)
                         if exit_info:
-                            await trade_svc.update_trade(strategy_name, active["id"], exit_info)
-                            premium_monitor.unregister_trade(active["id"])
-                            await alert_svc.send_trade_exit_alert(
-                                strategy_name.value, active, exit_info
-                            )
+                            if shadow_mode:
+                                log.info(
+                                    "SHADOW: would exit trade",
+                                    strategy=strategy_name.value,
+                                    exit_info=str(exit_info),
+                                )
+                            else:
+                                await trade_svc.update_trade(
+                                    strategy_name, active["id"], exit_info
+                                )
+                                premium_monitor.unregister_trade(active["id"])
+                                await alert_svc.send_trade_exit_alert(
+                                    strategy_name.value, active, exit_info
+                                )
                     else:
                         # Check entry
                         if await trade_svc.has_traded_today(strategy_name):
                             continue
                         entry = strategy.should_enter(analysis, strikes_data)
                         if entry:
-                            trade_id = await trade_svc.create_trade(strategy_name, entry)
-                            await alert_svc.send_trade_entry_alert(
-                                strategy_name.value, entry
-                            )
-                            # Register with premium monitor
-                            token = instruments.get_instrument_token(
-                                entry["strike"], entry["option_type"], current_expiry
-                            )
-                            if token:
-                                premium_monitor.register_trade(
-                                    ActiveTrade(
-                                        trade_id=trade_id,
-                                        strategy=strategy_name.value,
-                                        strike=entry["strike"],
-                                        option_type=entry["option_type"],
-                                        instrument_token=token,
-                                        entry_premium=entry["entry_premium"],
-                                        sl_premium=entry["sl_premium"],
-                                        target_premium=entry.get(
-                                            "target1_premium",
-                                            entry.get("target_premium", 0),
-                                        ),
-                                        is_selling=is_selling,
-                                    )
+                            if shadow_mode:
+                                log.info(
+                                    "SHADOW: would enter trade",
+                                    strategy=strategy_name.value,
+                                    entry=str(entry),
                                 )
+                            else:
+                                trade_id = await trade_svc.create_trade(strategy_name, entry)
+                                await alert_svc.send_trade_entry_alert(
+                                    strategy_name.value, entry
+                                )
+                                # Register with premium monitor
+                                token = instruments.get_instrument_token(
+                                    entry["strike"], entry["option_type"], current_expiry
+                                )
+                                if token:
+                                    premium_monitor.register_trade(
+                                        ActiveTrade(
+                                            trade_id=trade_id,
+                                            strategy=strategy_name.value,
+                                            strike=entry["strike"],
+                                            option_type=entry["option_type"],
+                                            instrument_token=token,
+                                            entry_premium=entry["entry_premium"],
+                                            sl_premium=entry["sl_premium"],
+                                            target_premium=entry.get(
+                                                "target1_premium",
+                                                entry.get("target_premium", 0),
+                                            ),
+                                            is_selling=is_selling,
+                                        )
+                                    )
                 except Exception as e:
                     log.error(
                         "Strategy error",
@@ -176,7 +195,7 @@ async def fetch_and_analyze(services: dict) -> dict | None:
 
 
 async def _force_close_all(
-    trade_svc, strategies, strikes_data, now, alert_svc
+    trade_svc, strategies, strikes_data, now, alert_svc, shadow_mode=False
 ) -> None:
     """Force close all active trades at EOD."""
     for strategy_name, strategy in strategies.items():
@@ -200,5 +219,12 @@ async def _force_close_all(
             "profit_loss_pct": pnl,
             "resolved_at": now,
         }
-        await trade_svc.update_trade(strategy_name, active["id"], updates)
-        await alert_svc.send_trade_exit_alert(strategy_name.value, active, updates)
+        if shadow_mode:
+            log.info(
+                "SHADOW: would force close trade",
+                strategy=strategy_name.value,
+                updates=str(updates),
+            )
+        else:
+            await trade_svc.update_trade(strategy_name, active["id"], updates)
+            await alert_svc.send_trade_exit_alert(strategy_name.value, active, updates)

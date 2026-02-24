@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # App
     log_level: str = "INFO"
     environment: str = "development"
+    shadow_mode: bool = False
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

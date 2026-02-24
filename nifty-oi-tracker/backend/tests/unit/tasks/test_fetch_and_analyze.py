@@ -118,3 +118,92 @@ class TestFetchAndAnalyze:
         )
         result = await fetch_and_analyze(services)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_shadow_mode_skips_trade_create(self):
+        """Entry signal is detected but create_trade is NOT called in shadow mode."""
+        services = _make_services(market_open=True)
+        services["shadow_mode"] = True
+
+        mock_strategy = MagicMock()
+        mock_strategy.should_enter.return_value = {
+            "strike": 23500,
+            "option_type": "CE",
+            "entry_premium": 120.0,
+            "sl_premium": 96.0,
+            "target_premium": 144.0,
+            "direction": "BUY_CALL",
+            "spot_at_creation": 23530.0,
+        }
+        mock_strategy.check_exit.return_value = None
+        mock_strategy.should_force_close.return_value = False
+
+        from app.schemas.common import StrategyName
+
+        services["strategies"] = {StrategyName.IRON_PULSE: mock_strategy}
+
+        with patch("app.services.analysis_service.AnalysisService") as MockAS, \
+             patch("app.services.trade_service.TradeService") as MockTS:
+            mock_as = AsyncMock()
+            mock_as.get_prev_verdict = AsyncMock(return_value=None)
+            mock_as.save_snapshots = AsyncMock()
+            mock_as.save_analysis = AsyncMock(return_value=1)
+            MockAS.return_value = mock_as
+
+            mock_ts = AsyncMock()
+            mock_ts.get_active_trade = AsyncMock(return_value=None)
+            mock_ts.has_traded_today = AsyncMock(return_value=False)
+            mock_ts.create_trade = AsyncMock(return_value=1)
+            MockTS.return_value = mock_ts
+
+            result = await fetch_and_analyze(services)
+
+        assert result is not None
+        mock_ts.create_trade.assert_not_called()
+        services["alert"].send_trade_entry_alert.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_shadow_mode_skips_trade_exit(self):
+        """Exit signal is detected but update_trade is NOT called in shadow mode."""
+        services = _make_services(market_open=True)
+        services["shadow_mode"] = True
+
+        mock_strategy = MagicMock()
+        mock_strategy.check_exit.return_value = {
+            "status": "WON",
+            "exit_premium": 144.0,
+            "exit_reason": "Target hit",
+            "profit_loss_pct": 20.0,
+        }
+        mock_strategy.should_force_close.return_value = False
+
+        from app.schemas.common import StrategyName
+
+        services["strategies"] = {StrategyName.IRON_PULSE: mock_strategy}
+
+        active_trade = {
+            "id": 42,
+            "strike": 23500,
+            "option_type": "CE",
+            "entry_premium": 120.0,
+        }
+
+        with patch("app.services.analysis_service.AnalysisService") as MockAS, \
+             patch("app.services.trade_service.TradeService") as MockTS:
+            mock_as = AsyncMock()
+            mock_as.get_prev_verdict = AsyncMock(return_value=None)
+            mock_as.save_snapshots = AsyncMock()
+            mock_as.save_analysis = AsyncMock(return_value=1)
+            MockAS.return_value = mock_as
+
+            mock_ts = AsyncMock()
+            mock_ts.get_active_trade = AsyncMock(return_value=active_trade)
+            mock_ts.update_trade = AsyncMock()
+            MockTS.return_value = mock_ts
+
+            result = await fetch_and_analyze(services)
+
+        assert result is not None
+        mock_ts.update_trade.assert_not_called()
+        services["alert"].send_trade_exit_alert.assert_not_called()
+        services["premium_monitor"].unregister_trade.assert_not_called()

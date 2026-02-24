@@ -30,20 +30,23 @@ class KiteDataFetcher:
     """Fetches option chain data via Kite Connect API."""
 
     def __init__(self):
-        api_key = os.environ.get('KITE_API_KEY', '')
-        access_token = load_token()
-
-        self._kite = KiteConnect(api_key=api_key)
-        if access_token:
-            self._kite.set_access_token(access_token)
-
-        self._instrument_map = InstrumentMap(
-            api_key=api_key, access_token=access_token
-        )
+        self._api_key = os.environ.get('KITE_API_KEY', '')
+        self._kite = KiteConnect(api_key=self._api_key)
+        self._instrument_map = InstrumentMap(api_key=self._api_key)
 
         # OI baseline tracking (per day)
         self._day_open_oi: Dict[Tuple[int, str], int] = {}  # (strike, type) -> baseline OI
         self._oi_baseline_date: Optional[date] = None
+
+        # Set token if already available
+        self._refresh_token()
+
+    def _refresh_token(self):
+        """Load the latest access token from DB and set it on the Kite client."""
+        access_token = load_token()
+        if access_token:
+            self._kite.set_access_token(access_token)
+            self._instrument_map.set_access_token(access_token)
 
     def close(self):
         """No-op. No browser to close."""
@@ -71,6 +74,9 @@ class KiteDataFetcher:
             Or None on failure.
         """
         try:
+            # 0. Refresh token (picks up daily re-auth)
+            self._refresh_token()
+
             # 1. Refresh instruments (cached per day)
             if not self._instrument_map.refresh():
                 log.error("Failed to refresh instruments")
@@ -171,6 +177,7 @@ class KiteDataFetcher:
     def fetch_india_vix(self) -> Optional[float]:
         """Fetch India VIX via Kite LTP API."""
         try:
+            self._refresh_token()
             vix_sym = self._instrument_map.get_vix_symbol()
             resp = self._kite.ltp(vix_sym)
             return resp[vix_sym]["last_price"]
@@ -187,6 +194,7 @@ class KiteDataFetcher:
             Or None on failure.
         """
         try:
+            self._refresh_token()
             fut_inst = self._instrument_map.get_nifty_future()
             if not fut_inst:
                 log.error("No NIFTY futures instrument found")

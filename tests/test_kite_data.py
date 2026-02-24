@@ -79,8 +79,10 @@ def fetcher(mock_kite):
     """Create a KiteDataFetcher with mocked dependencies."""
     from kite_data import KiteDataFetcher
     imap = _make_instrument_map()
-    with patch('kite_data.InstrumentMap', return_value=imap):
+    with patch('kite_data.InstrumentMap', return_value=imap), \
+         patch('kite_data.load_token', return_value='test_token'):
         f = KiteDataFetcher.__new__(KiteDataFetcher)
+        f._api_key = 'test_key'
         f._kite = mock_kite
         f._instrument_map = imap
         f._day_open_oi = {}

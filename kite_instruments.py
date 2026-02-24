@@ -20,7 +20,7 @@ INSTRUMENTS_URL = "https://api.kite.trade/instruments/NFO"
 class InstrumentMap:
     """Manages NIFTY instrument token lookups from Kite's instrument CSV."""
 
-    def __init__(self, api_key: str, access_token: str):
+    def __init__(self, api_key: str, access_token: str = ""):
         self._api_key = api_key
         self._access_token = access_token
         self._instruments: List[dict] = []
@@ -29,6 +29,10 @@ class InstrumentMap:
         self._options: Dict[Tuple[int, str, str], dict] = {}  # (strike, type, expiry) -> instrument
         self._futures: List[dict] = []
         self._expiries: List[str] = []
+
+    def set_access_token(self, access_token: str):
+        """Update the access token (called when token is refreshed)."""
+        self._access_token = access_token
 
     def refresh(self) -> bool:
         """
@@ -43,7 +47,11 @@ class InstrumentMap:
             return True
 
         try:
-            resp = requests.get(INSTRUMENTS_URL)
+            headers = {}
+            if self._api_key and self._access_token:
+                headers['Authorization'] = f'token {self._api_key}:{self._access_token}'
+                headers['X-Kite-Version'] = '3'
+            resp = requests.get(INSTRUMENTS_URL, headers=headers)
             resp.raise_for_status()
 
             reader = csv.DictReader(io.StringIO(resp.text))

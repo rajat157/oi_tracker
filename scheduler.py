@@ -438,6 +438,9 @@ class OIScheduler:
 
         # Start premium monitor and pick up existing active trades
         try:
+            # Ensure instruments are loaded before scanning trades
+            self.kite_fetcher._refresh_token()
+            self.kite_fetcher._instrument_map.refresh()
             self.premium_monitor._instrument_map = self.kite_fetcher._instrument_map
             self.premium_monitor.scan_existing_trades()
             self.premium_monitor.start()

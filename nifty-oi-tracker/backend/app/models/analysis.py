@@ -1,7 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Index, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import JSON, DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -32,6 +31,6 @@ class AnalysisHistory(Base):
     futures_oi: Mapped[int] = mapped_column(Integer, default=0)
     futures_oi_change: Mapped[int] = mapped_column(Integer, default=0)
     futures_basis: Mapped[float] = mapped_column(Float, default=0.0)
-    analysis_blob: Mapped[dict | None] = mapped_column(JSONB)
+    analysis_blob: Mapped[dict | None] = mapped_column(JSON)
 
     __table_args__ = (Index("ix_analysis_history_timestamp", "timestamp"),)

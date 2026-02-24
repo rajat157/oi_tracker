@@ -1,18 +1,17 @@
 import asyncio
+import os
 from collections.abc import AsyncGenerator
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.config import settings
-from app.core.dependencies import get_db
-from app.main import create_app
-from app.models import Base
+# Test database URL — uses env var or defaults to a sqlite async for unit tests
+TEST_DB_URL = os.environ.get(
+    "TEST_DATABASE_URL",
+    "sqlite+aiosqlite:///:memory:",
+)
 
-# Use the test database
-TEST_DB_URL = settings.test_database_url
-
+# Only create engine if we have a valid URL
 engine_test = create_async_engine(TEST_DB_URL, echo=False)
 async_session_test = async_sessionmaker(
     engine_test, class_=AsyncSession, expire_on_commit=False
@@ -29,6 +28,8 @@ def event_loop():
 @pytest.fixture(scope="session", autouse=True)
 async def setup_database():
     """Create all tables before tests, drop after."""
+    from app.models import Base
+
     async with engine_test.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -47,8 +48,13 @@ async def db_session() -> AsyncGenerator[AsyncSession]:
 
 
 @pytest.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
+async def client(db_session: AsyncSession) -> AsyncGenerator:
     """FastAPI test client with DB session override."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.core.dependencies import get_db
+    from app.main import create_app
+
     app = create_app()
 
     async def override_get_db():

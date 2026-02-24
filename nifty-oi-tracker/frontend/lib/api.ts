@@ -5,6 +5,7 @@ import type {
   TradeStats,
   MarketStatus,
   StrategyName,
+  LogEntry,
 } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
@@ -36,11 +37,21 @@ export const api = {
     );
   },
   getTradeStats: (strategy: StrategyName) =>
-    fetchJSON<TradeStats>(`/trades/${strategy}/stats`),
+    fetchJSON<{ strategy: string; stats: TradeStats }>(`/trades/${strategy}/stats`),
 
   // Market
   getMarketStatus: () => fetchJSON<MarketStatus>("/market/status"),
-  triggerRefresh: () => fetchJSON<{ message: string }>("/market/refresh", { method: "POST" }),
+  triggerRefresh: () =>
+    fetchJSON<{ message: string }>("/market/refresh", { method: "POST" }),
+
+  // Kite
+  getKiteStatus: () => fetchJSON<{ authenticated: boolean }>("/kite/status"),
+
+  // Logs
+  getLogs: (params?: Record<string, string>) => {
+    const qs = params ? "?" + new URLSearchParams(params).toString() : "";
+    return fetchJSON<{ data: LogEntry[]; count: number }>(`/logs${qs}`);
+  },
 
   // SSE stream URL
   getSSEUrl: () => `${API_BASE}/events/stream`,

@@ -119,6 +119,17 @@ export interface MarketStatus {
   server_time: string;
 }
 
+// Logs
+export interface LogEntry {
+  id: number;
+  timestamp: string;
+  level: "DEBUG" | "INFO" | "WARNING" | "ERROR";
+  component: string;
+  message: string;
+  details: Record<string, unknown> | null;
+  session_id: string | null;
+}
+
 // SSE Events
 export interface SSEEventData {
   event: "analysis_update" | "trade_update" | "market_status";

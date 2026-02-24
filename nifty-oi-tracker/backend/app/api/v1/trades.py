@@ -1,9 +1,21 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db
+from app.schemas.common import StrategyName
+from app.services.trade_service import TradeService
 
 router = APIRouter(prefix="/trades", tags=["trades"])
+
+
+def _parse_strategy(strategy: str) -> StrategyName:
+    try:
+        return StrategyName(strategy)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid strategy: {strategy}. Valid: {[s.value for s in StrategyName]}",
+        )
 
 
 @router.get("/{strategy}")
@@ -17,13 +29,23 @@ async def get_trades(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Unified trade history per strategy."""
-    return {"strategy": strategy, "data": [], "count": 0}
+    sname = _parse_strategy(strategy)
+    svc = TradeService(db)
+    data, total = await svc.get_trades(
+        sname, days=days, status=status, direction=direction,
+        limit=limit, offset=offset,
+    )
+    return {"strategy": strategy, "data": data, "count": total}
 
 
 @router.get("/{strategy}/stats")
 async def get_trade_stats(
     strategy: str,
+    days: int = Query(30, ge=1, le=365),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Win rate, avg P/L per strategy."""
-    return {"strategy": strategy, "stats": {}}
+    sname = _parse_strategy(strategy)
+    svc = TradeService(db)
+    stats = await svc.get_stats(sname, days=days)
+    return {"strategy": strategy, "stats": stats}

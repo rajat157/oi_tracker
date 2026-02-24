@@ -60,16 +60,12 @@ def test_live_analysis():
     old_analysis = analyze_tug_of_war(
         old_strikes,
         snapshot["spot_price"],
-        include_atm=True,
-        include_itm=True
     )
 
     # Analyze with volume (new behavior)
     new_analysis = analyze_tug_of_war(
         snapshot["strikes"],
         snapshot["spot_price"],
-        include_atm=True,
-        include_itm=True
     )
 
     print(f"Spot Price: {snapshot['spot_price']:,.1f}")
@@ -91,18 +87,18 @@ def test_live_analysis():
 
     # Show per-strike breakdown
     print("OTM Calls Breakdown:")
-    for call in new_analysis['otm_calls'][:3]:
+    for call in new_analysis['otm_calls']['strikes'][:3]:
         print(f"  Strike {call['strike']}: "
-              f"OI Δ={call['oi_change']:,}, "
-              f"Vol={call.get('volume', 0):,}, "
+              f"OI Δ={call['call_oi_change']:,}, "
+              f"Force={call.get('call_force', 0):,}, "
               f"Conviction={call.get('conviction', 1.0):.2f}x")
     print()
 
     print("OTM Puts Breakdown:")
-    for put in new_analysis['otm_puts'][:3]:
+    for put in new_analysis['otm_puts']['strikes'][:3]:
         print(f"  Strike {put['strike']}: "
-              f"OI Δ={put['oi_change']:,}, "
-              f"Vol={put.get('volume', 0):,}, "
+              f"OI Δ={put['put_oi_change']:,}, "
+              f"Force={put.get('put_force', 0):,}, "
               f"Conviction={put.get('conviction', 1.0):.2f}x")
 
 

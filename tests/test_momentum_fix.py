@@ -54,8 +54,6 @@ def test_momentum_on_historical_data():
         analysis = analyze_tug_of_war(
             strikes,
             record['spot_price'],
-            include_atm=True,
-            include_itm=True,
             price_history=recent_prices
         )
 
@@ -74,9 +72,8 @@ def test_momentum_on_historical_data():
         print(f"    Old Score:       N/A (not stored)")
         print(f"    New Score:       {analysis['combined_score']:+.1f}")
         print(f"    Weight Breakdown:")
-        print(f"      - OTM:         {analysis['weights']['otm']*100:.0f}%")
-        print(f"      - ATM:         {analysis['weights']['atm']*100:.0f}%")
-        print(f"      - ITM:         {analysis['weights']['itm']*100:.0f}%")
+        print(f"      - Below Spot:  {analysis['weights']['below_spot']*100:.0f}%")
+        print(f"      - Above Spot:  {analysis['weights']['above_spot']*100:.0f}%")
         print(f"      - Momentum:    {analysis['weights']['momentum']*100:.0f}%")
         print()
 
@@ -89,7 +86,7 @@ def test_momentum_on_historical_data():
     print("  bullish/neutral compared to old verdict")
     print("- If price is falling (negative momentum), verdict should shift towards")
     print("  bearish compared to old verdict")
-    print("- Momentum weight should be 20% when price history is available")
+    print("- Momentum weight should be non-zero when price history is available")
 
 
 def test_momentum_calculation():

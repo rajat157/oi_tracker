@@ -10,7 +10,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
-from nse_fetcher import NSEFetcher
+from kite_data import KiteDataFetcher
+from premium_monitor import PremiumMonitor, ActiveTrade
 from oi_analyzer import analyze_tug_of_war, calculate_market_trend
 from database import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
@@ -41,7 +42,7 @@ class OIScheduler:
 
         Args:
             socketio: Flask-SocketIO instance for pushing updates
-            headless: Run browser in headless mode
+            headless: Run browser in headless mode (unused — kept for API compat)
         """
         self.scheduler = BackgroundScheduler()
         self.headless = headless
@@ -56,6 +57,11 @@ class OIScheduler:
         self.momentum_tracker = MomentumTracker()
         self.force_enabled = False
         self.last_iron_pulse_time = None  # Track when Iron Pulse enters for selling decoupling
+        # Kite data fetcher (reusable, no browser)
+        self.kite_fetcher = KiteDataFetcher()
+        # Premium monitor for real-time SL/target detection
+        self.premium_monitor = PremiumMonitor(socketio=socketio, shadow_mode=False)
+        self.premium_monitor.set_exit_callback(self._handle_premium_exit)
 
     def set_force_enabled(self, enabled: bool):
         """Enable/disable force fetch mode for automatic polling."""
@@ -111,21 +117,11 @@ class OIScheduler:
 
         log.info("Fetching OI data")
 
-        fetcher = None
         try:
-            # Create fetcher for this job
-            fetcher = NSEFetcher(headless=self.headless)
-
-            # Fetch raw data
-            raw_data = fetcher.fetch_option_chain()
-            if not raw_data:
-                log.error("Failed to fetch data from NSE")
-                return
-
-            # Parse the data
-            parsed = fetcher.parse_option_data(raw_data)
+            # Fetch via Kite API (already parsed, no browser needed)
+            parsed = self.kite_fetcher.fetch_option_chain()
             if not parsed:
-                log.error("Failed to parse option chain data")
+                log.error("Failed to fetch data from Kite")
                 return
 
             timestamp = datetime.now()
@@ -146,14 +142,14 @@ class OIScheduler:
             prev_strikes_data = get_previous_strikes_data()
 
             # Fetch India VIX for volatility context
-            vix = fetcher.fetch_india_vix() or 0.0
+            vix = self.kite_fetcher.fetch_india_vix() or 0.0
             if vix > 0:
                 log.info("India VIX fetched", vix=f"{vix:.2f}")
             else:
                 log.debug("VIX not available")
 
             # Fetch futures data for cross-validation
-            futures_data = fetcher.fetch_futures_data() or {}
+            futures_data = self.kite_fetcher.fetch_futures_data() or {}
             futures_oi = futures_data.get("future_oi", 0)
             futures_basis = futures_data.get("basis", 0.0)
 
@@ -400,10 +396,6 @@ class OIScheduler:
             log.error("Error in fetch_and_analyze", error=str(e))
             import traceback
             traceback.print_exc()
-        finally:
-            # Always close the fetcher to free browser resources
-            if fetcher:
-                fetcher.close()
 
     def start(self, interval_minutes: int = 3):
         """
@@ -444,6 +436,14 @@ class OIScheduler:
         log.info("Scheduler started", interval=f"{interval_minutes}min",
                  next_run=start_date.strftime('%H:%M:%S'))
 
+        # Start premium monitor and pick up existing active trades
+        try:
+            self.premium_monitor._instrument_map = self.kite_fetcher._instrument_map
+            self.premium_monitor.scan_existing_trades()
+            self.premium_monitor.start()
+        except Exception as e:
+            log.error("Failed to start premium monitor", error=str(e))
+
         # First fetch at next aligned candle (no blocking startup fetch)
 
     def stop(self):
@@ -451,6 +451,10 @@ class OIScheduler:
         if self.is_running:
             self.scheduler.shutdown()
             self.is_running = False
+            try:
+                self.premium_monitor.stop()
+            except Exception:
+                pass
             log.info("Scheduler stopped")
 
     def get_last_analysis(self):
@@ -465,6 +469,87 @@ class OIScheduler:
             force: If True, fetch even if market is closed
         """
         self.fetch_and_analyze(force=force)
+
+    def _handle_premium_exit(self, exit_info: dict):
+        """
+        Callback from PremiumMonitor when SL/target hit is detected via WebSocket.
+
+        Args:
+            exit_info: Dict with trade_id, tracker_type, action, exit_premium, reason
+        """
+        trade_id = exit_info["trade_id"]
+        tracker_type = exit_info["tracker_type"]
+        action = exit_info["action"]
+        exit_premium = exit_info.get("exit_premium", 0)
+        reason = exit_info.get("reason", "")
+
+        log.info("Premium monitor exit detected",
+                 trade_id=trade_id, tracker=tracker_type,
+                 action=action, exit_premium=f"{exit_premium:.2f}",
+                 reason=reason)
+
+        try:
+            from datetime import datetime as dt
+            now = dt.now()
+
+            if tracker_type == "iron_pulse":
+                from database import update_trade_setup_status
+                status = "WON" if action == "WON" else "LOST"
+                update_trade_setup_status(
+                    trade_id, status,
+                    resolved_at=now.isoformat(),
+                    exit_premium=exit_premium,
+                    hit_sl=(action == "LOST"),
+                    hit_target=(action == "WON"),
+                )
+            elif tracker_type == "selling":
+                from database import get_connection
+                with get_connection() as conn:
+                    status = "WON" if action == "WON" else "LOST"
+                    pnl = exit_info.get("pnl_pct", 0)
+                    conn.execute("""
+                        UPDATE sell_trade_setups SET status=?, resolved_at=?,
+                        exit_premium=?, exit_reason=?, profit_loss_pct=?
+                        WHERE id=?
+                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
+                    conn.commit()
+            elif tracker_type == "dessert":
+                from database import get_connection
+                with get_connection() as conn:
+                    status = "WON" if action == "WON" else "LOST"
+                    pnl = exit_info.get("pnl_pct", 0)
+                    conn.execute("""
+                        UPDATE dessert_trades SET status=?, resolved_at=?,
+                        exit_premium=?, exit_reason=?, profit_loss_pct=?
+                        WHERE id=?
+                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
+                    conn.commit()
+            elif tracker_type == "momentum":
+                from database import get_connection
+                with get_connection() as conn:
+                    status = "WON" if action == "WON" else "LOST"
+                    pnl = exit_info.get("pnl_pct", 0)
+                    conn.execute("""
+                        UPDATE momentum_trades SET status=?, resolved_at=?,
+                        exit_premium=?, exit_reason=?, profit_loss_pct=?
+                        WHERE id=?
+                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
+                    conn.commit()
+
+            # Unregister from monitor
+            self.premium_monitor.unregister_trade(trade_id)
+
+            # Send Telegram alert
+            try:
+                from alerts import send_alert
+                msg = f"{'🟢' if action == 'WON' else '🔴'} {tracker_type.upper()} {action}\n{reason}\nExit: ₹{exit_premium:.2f}"
+                send_alert(msg)
+            except Exception:
+                pass
+
+        except Exception as e:
+            log.error("Error handling premium exit", error=str(e),
+                      trade_id=trade_id, tracker=tracker_type)
 
     def _check_daily_learning_update(self):
         """Daily learning update - self-learner removed, now a no-op."""

@@ -25,7 +25,7 @@ echo.
 
 REM Change to project root directory and run script
 cd /d "%~dp0.."
-python scripts/monitor_call_performance.py --days 7
+python scripts/check_live_stats.py
 
 echo.
 echo ================================================================================

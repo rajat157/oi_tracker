@@ -31,8 +31,12 @@ class KiteAuthService:
             return await self._get_setting(session, "kite_access_token")
 
     async def is_authenticated(self) -> bool:
-        token = await self.get_access_token()
-        return token is not None and len(token) > 0
+        try:
+            token = await self.get_access_token()
+            return token is not None and len(token) > 0
+        except Exception:
+            # Tables may not exist yet (before migrations)
+            return False
 
     def get_login_url(self) -> str:
         return f"https://kite.zerodha.com/connect/login?v=3&api_key={self._api_key}"

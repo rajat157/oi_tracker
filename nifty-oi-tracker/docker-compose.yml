@@ -54,6 +54,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     container_name: nifty-oi-frontend
+    profiles: ["prod"]
     ports:
       - "3000:3000"
     environment:

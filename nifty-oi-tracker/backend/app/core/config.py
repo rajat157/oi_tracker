@@ -4,11 +4,9 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # Database
-    database_url: str = "postgresql+asyncpg://nifty:nifty_dev_pass@localhost:5432/nifty_oi"
-    test_database_url: str = (
-        "postgresql+asyncpg://nifty:nifty_dev_pass@localhost:5433/nifty_oi_test"
-    )
+    # Database — must be set via .env or environment variable
+    database_url: str = ""
+    test_database_url: str = ""
 
     # Kite Connect
     kite_api_key: str = ""

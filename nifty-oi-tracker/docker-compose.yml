@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: nifty_oi
       POSTGRES_USER: nifty
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nifty_dev_pass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5432:5432"
     volumes:
@@ -22,7 +22,7 @@ services:
     environment:
       POSTGRES_DB: nifty_oi_test
       POSTGRES_USER: nifty
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nifty_dev_pass}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     ports:
       - "5433:5432"
     healthcheck:
@@ -41,7 +41,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://nifty:${POSTGRES_PASSWORD:-nifty_dev_pass}@postgres:5432/nifty_oi
+      DATABASE_URL: postgresql+asyncpg://nifty:${POSTGRES_PASSWORD}@postgres:5432/nifty_oi
     depends_on:
       postgres:
         condition: service_healthy

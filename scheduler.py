@@ -542,13 +542,27 @@ class OIScheduler:
             # Unregister from monitor
             self.premium_monitor.unregister_trade(trade_id)
 
-            # Send Telegram alert
+            # Send Telegram alert via the appropriate tracker method
             try:
-                from alerts import send_alert
-                msg = f"{'🟢' if action == 'WON' else '🔴'} {tracker_type.upper()} {action}\n{reason}\nExit: ₹{exit_premium:.2f}"
-                send_alert(msg)
-            except Exception:
-                pass
+                if tracker_type == "selling":
+                    from selling_tracker import get_connection
+                    with get_connection() as conn:
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT * FROM sell_trade_setups WHERE id = ?", (trade_id,))
+                        row = cursor.fetchone()
+                        if row:
+                            setup = dict(row)
+                            pnl = exit_info.get("pnl_pct", 0)
+                            exit_reason = "TARGET2" if action == "WON" else "SL"
+                            self.selling_tracker._send_exit_alert(setup, exit_premium, exit_reason, pnl)
+                else:
+                    from alerts import send_telegram
+                    emoji = "\U0001f7e2" if action == "WON" else "\U0001f534"
+                    msg = f"{emoji} {tracker_type.upper()} {action}\n{reason}\nExit: \u20b9{exit_premium:.2f}"
+                    send_telegram(msg)
+            except Exception as e:
+                log.error("Failed to send exit alert", error=str(e),
+                          trade_id=trade_id, tracker=tracker_type)
 
         except Exception as e:
             log.error("Error handling premium exit", error=str(e),

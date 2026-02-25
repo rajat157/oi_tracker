@@ -92,16 +92,23 @@ class AnalysisService:
         )
         result = await self.session.execute(stmt)
         rows = result.scalars().all()
-        return [
-            {
+        items = []
+        for r in reversed(rows):  # Oldest first for charts
+            blob = r.analysis_blob or {}
+            items.append({
                 "timestamp": r.timestamp.isoformat() if r.timestamp else None,
                 "spot_price": r.spot_price,
                 "verdict": r.verdict,
                 "signal_confidence": r.signal_confidence,
                 "vix": r.vix,
-            }
-            for r in reversed(rows)  # Oldest first for charts
-        ]
+                "call_oi_change": r.call_oi_change,
+                "put_oi_change": r.put_oi_change,
+                "otm_put_force": blob.get("otm_puts", {}).get("total_force", 0),
+                "otm_call_force": blob.get("otm_calls", {}).get("total_force", 0),
+                "itm_put_force": blob.get("itm_puts", {}).get("total_force", 0),
+                "itm_call_force": blob.get("itm_calls", {}).get("total_force", 0),
+            })
+        return items
 
     async def get_prev_verdict(self) -> str | None:
         """Get the previous analysis verdict for hysteresis."""

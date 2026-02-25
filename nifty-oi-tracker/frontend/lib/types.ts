@@ -11,6 +11,78 @@ export type Verdict =
   | "Bullish"
   | "Bearish";
 
+// Analysis blob sub-types
+export interface ZoneStrike {
+  strike: number;
+  bullish_force: number;
+  bearish_force: number;
+  net_force: number;
+}
+
+export interface OTMITMStrike {
+  strike: number;
+  put_oi?: number;
+  put_oi_change?: number;
+  put_force?: number;
+  call_oi?: number;
+  call_oi_change?: number;
+  call_force?: number;
+}
+
+export interface ZoneData {
+  strikes: ZoneStrike[];
+  total_bullish_force: number;
+  total_bearish_force: number;
+  net_force: number;
+  score: number;
+}
+
+export interface OTMITMZone {
+  strikes: OTMITMStrike[];
+  total_oi: number;
+  total_oi_change: number;
+  total_force: number;
+}
+
+export interface StrengthAnalysis {
+  put_strength: { ratio: number; score: number };
+  call_strength: { ratio: number; score: number };
+  direction: string;
+  net_strength: number;
+}
+
+export interface WeightsBreakdown {
+  below_spot: number;
+  above_spot: number;
+  momentum: number;
+}
+
+export interface AnalysisBlob {
+  combined_score: number;
+  below_spot_score: number;
+  above_spot_score: number;
+  momentum_score: number;
+  weights: WeightsBreakdown;
+  confirmation_status: string;
+  confirmation_message: string;
+  pcr: number;
+  volume_pcr: number;
+  price_change_pct: number;
+  avg_call_conviction: number;
+  avg_put_conviction: number;
+  below_spot: ZoneData;
+  above_spot: ZoneData;
+  otm_puts: OTMITMZone;
+  itm_calls: OTMITMZone;
+  otm_calls: OTMITMZone;
+  itm_puts: OTMITMZone;
+  strength_analysis: StrengthAnalysis;
+  net_oi_change: number;
+  trap_warning: string | null;
+  market_regime: string;
+  expiry_date: string;
+}
+
 // Analysis
 export interface Analysis {
   id: number;
@@ -29,7 +101,7 @@ export interface Analysis {
   signal_confidence: number;
   futures_oi: number;
   futures_basis: number;
-  analysis_blob: Record<string, unknown> | null;
+  analysis_blob: AnalysisBlob | null;
 }
 
 export interface AnalysisHistoryItem {
@@ -38,6 +110,12 @@ export interface AnalysisHistoryItem {
   verdict: Verdict;
   signal_confidence: number;
   vix: number;
+  call_oi_change: number;
+  put_oi_change: number;
+  otm_put_force: number;
+  otm_call_force: number;
+  itm_put_force: number;
+  itm_call_force: number;
 }
 
 // Trades

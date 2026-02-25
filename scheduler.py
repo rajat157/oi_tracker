@@ -16,7 +16,8 @@ from oi_analyzer import analyze_tug_of_war, calculate_market_trend
 from database import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
     get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
-    get_previous_futures_oi, get_analysis_history, get_previous_verdict
+    get_previous_futures_oi, get_analysis_history, get_previous_verdict,
+    save_orderflow_depth, purge_old_orderflow
 )
 from trade_tracker import get_trade_tracker
 from selling_tracker import SellingTracker
@@ -97,6 +98,9 @@ class OIScheduler:
             log.info("Purging old data", cutoff=str(cutoff_date), retention_days=90)
             purge_old_data(cutoff_date)
             log.info("Old data purged", keep_from=str(cutoff_date))
+
+        # Purge orderflow depth data (30-day rolling window)
+        purge_old_orderflow(days=30)
 
         self.last_purge_date = today
 
@@ -439,6 +443,15 @@ class OIScheduler:
             replace_existing=True
         )
 
+        # 10-second orderflow depth collection (WebSocket MODE_FULL cache, no API calls)
+        self.scheduler.add_job(
+            self._save_orderflow_depth,
+            trigger=IntervalTrigger(seconds=10),
+            id="orderflow_collector",
+            name="Collect Orderflow Depth (10s)",
+            replace_existing=True
+        )
+
         # Start scheduler
         self.scheduler.start()
         self.is_running = True
@@ -588,6 +601,14 @@ class OIScheduler:
         pnl_data = self.premium_monitor.get_live_pnl()
         if pnl_data:
             self.socketio.emit("pnl_update", pnl_data)
+
+    def _save_orderflow_depth(self):
+        """Save orderflow depth snapshot every 10s for active trades."""
+        if not self.is_market_open():
+            return
+        depth_records = self.premium_monitor.get_depth_snapshot()
+        if depth_records:
+            save_orderflow_depth(depth_records)
 
     def get_market_status(self) -> dict:
         """Get current market status information."""

@@ -78,8 +78,9 @@ export interface AnalysisBlob {
   itm_puts: OTMITMZone;
   strength_analysis: StrengthAnalysis;
   net_oi_change: number;
+  futures_oi_change: number;
   trap_warning: string | null;
-  market_regime: string;
+  market_regime: string | { regime: string; description: string; oi_change_weight: number; oi_total_weight: number };
   expiry_date: string;
 }
 

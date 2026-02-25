@@ -3,6 +3,7 @@ import type {
   Analysis,
   AnalysisBlob,
   AnalysisHistoryItem,
+  MarketStatus,
   TradeBase,
   TradeStats,
   StrategyName,
@@ -15,6 +16,8 @@ interface DashboardState {
   activeTrades: Record<string, TradeBase | null>;
   tradeStats: Record<string, TradeStats>;
   connected: boolean;
+  marketStatus: MarketStatus | null;
+  kiteAuthenticated: boolean | null;
 
   // Actions
   setAnalysis: (analysis: Analysis) => void;
@@ -24,6 +27,8 @@ interface DashboardState {
   setTradeStats: (strategy: StrategyName, stats: TradeStats) => void;
   setAllTradeStats: (stats: Record<string, TradeStats>) => void;
   setConnected: (connected: boolean) => void;
+  setMarketStatus: (status: MarketStatus) => void;
+  setKiteAuthenticated: (auth: boolean | null) => void;
   updateFromSSE: (event: string, data: unknown) => void;
 }
 
@@ -33,6 +38,8 @@ export const useDashboardStore = create<DashboardState>((set) => ({
   activeTrades: {},
   tradeStats: {},
   connected: false,
+  marketStatus: null,
+  kiteAuthenticated: null,
 
   setAnalysis: (analysis) => set({ analysis }),
   setChartHistory: (chartHistory) => set({ chartHistory }),
@@ -47,6 +54,8 @@ export const useDashboardStore = create<DashboardState>((set) => ({
     })),
   setAllTradeStats: (stats) => set({ tradeStats: stats }),
   setConnected: (connected) => set({ connected }),
+  setMarketStatus: (marketStatus) => set({ marketStatus }),
+  setKiteAuthenticated: (kiteAuthenticated) => set({ kiteAuthenticated }),
 
   updateFromSSE: (event, data) => {
     if (event === "analysis_update") {

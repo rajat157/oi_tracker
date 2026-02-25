@@ -3,7 +3,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { useDashboardStore } from "@/stores/dashboard-store";
-import { ConfirmationBadge } from "./ConfirmationBadge";
 import { ScoreBreakdown } from "./ScoreBreakdown";
 
 const verdictColors: Record<string, string> = {
@@ -13,6 +12,20 @@ const verdictColors: Record<string, string> = {
   Bullish: "bg-green-600/10 text-green-400 border-green-600/20",
   Bearish: "bg-red-600/10 text-red-400 border-red-600/20",
 };
+
+const confirmationConfig: Record<string, { icon: string; color: string }> = {
+  CONFIRMED: { icon: "✓", color: "text-green-500" },
+  CONFLICT: { icon: "⚠", color: "text-yellow-500" },
+  REVERSAL_ALERT: { icon: "‼", color: "text-red-500" },
+};
+
+function getScoreColor(s: number) {
+  if (s > 30) return "text-green-500";
+  if (s > 10) return "text-green-400";
+  if (s >= -10) return "text-yellow-400";
+  if (s >= -30) return "text-red-400";
+  return "text-red-500";
+}
 
 export function VerdictCard() {
   const analysis = useDashboardStore((s) => s.analysis);
@@ -32,7 +45,20 @@ export function VerdictCard() {
     );
   }
 
+  const blob = analysis.analysis_blob;
+  const score = blob?.combined_score ?? 0;
+  const confidence = analysis.signal_confidence ?? 0;
+  const markerPct = Math.min(Math.max((score + 100) / 2, 0), 100);
   const colorClass = verdictColors[analysis.verdict] || verdictColors.Neutral;
+
+  const confLabel = confidence >= 65 ? "Tradeable" : confidence >= 50 ? "Marginal" : "Low";
+  const confLabelColor =
+    confidence >= 65 ? "text-green-500" : confidence >= 50 ? "text-yellow-500" : "text-red-500";
+
+  const confStatus = blob?.confirmation_status;
+  const confConfig = confStatus
+    ? confirmationConfig[confStatus] ?? confirmationConfig.CONFLICT
+    : null;
 
   return (
     <Card>
@@ -41,29 +67,55 @@ export function VerdictCard() {
           Market Verdict
         </CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex items-center gap-3">
-          <Badge className={`text-lg px-3 py-1 ${colorClass}`}>{analysis.verdict}</Badge>
+      <CardContent className="space-y-4">
+        {/* Verdict badge */}
+        <Badge className={`text-lg px-3 py-1 ${colorClass}`}>{analysis.verdict}</Badge>
+
+        {/* Score gauge */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Score</span>
+            <span className={`font-mono text-xl font-bold ${getScoreColor(score)}`}>
+              {score > 0 ? "+" : ""}
+              {score.toFixed(1)}
+            </span>
+          </div>
+          <div className="relative w-full h-2.5 rounded-full overflow-hidden bg-gradient-to-r from-red-600 via-yellow-500 to-green-600">
+            <div
+              className="absolute top-0 w-1 h-full bg-white shadow-md transition-all duration-500"
+              style={{ left: `${markerPct}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>Bearish</span>
+            <span>Neutral</span>
+            <span>Bullish</span>
+          </div>
         </div>
-        <ConfirmationBadge />
-        <div className="grid grid-cols-2 gap-2 text-sm">
-          <div>
-            <span className="text-muted-foreground">Spot: </span>
-            <span className="font-mono">{analysis.spot_price.toFixed(2)}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Confidence: </span>
-            <span className="font-mono">{analysis.signal_confidence.toFixed(1)}%</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">VIX: </span>
-            <span className="font-mono">{analysis.vix.toFixed(2)}</span>
-          </div>
-          <div>
-            <span className="text-muted-foreground">Max Pain: </span>
-            <span className="font-mono">{analysis.max_pain}</span>
+
+        {/* Confidence */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Confidence</span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-medium">{confidence.toFixed(0)}%</span>
+            <span className={`text-xs font-medium ${confLabelColor}`}>{confLabel}</span>
           </div>
         </div>
+
+        {/* Confirmation */}
+        {confConfig && (
+          <div className={`flex items-center gap-2 text-sm ${confConfig.color}`}>
+            <span className="text-base">{confConfig.icon}</span>
+            <span className="font-medium">{confStatus}</span>
+            {blob?.confirmation_message && (
+              <span className="text-muted-foreground text-xs">
+                {blob.confirmation_message}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Score Breakdown (collapsible) */}
         <ScoreBreakdown />
       </CardContent>
     </Card>

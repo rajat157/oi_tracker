@@ -11,30 +11,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useDashboardStore } from "@/stores/dashboard-store";
+import { fmt, fmtSigned, colorDir } from "@/lib/format";
 import type { ZoneStrike, OTMITMStrike, ZoneData, OTMITMZone } from "@/lib/types";
-
-function fmt(n: number | undefined) {
-  if (n == null) return "-";
-  return n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
-}
-
-function fmtForce(n: number | undefined) {
-  if (n == null) return "-";
-  const s = n.toFixed(1);
-  return n > 0 ? `+${s}` : s;
-}
-
-function colorForce(n: number | undefined) {
-  if (n == null || n === 0) return "";
-  return n > 0 ? "text-green-500" : "text-red-500";
-}
 
 function SpotZoneTable({ title, zone }: { title: string; zone: ZoneData | undefined }) {
   if (!zone?.strikes?.length) return null;
   return (
     <details className="group">
       <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
-        {title} (Net: <span className={colorForce(zone.net_force)}>{fmtForce(zone.net_force)}</span>)
+        {title} (Net: <span className={colorDir(zone.net_force)}>{fmtSigned(zone.net_force, 1)}</span>)
       </summary>
       <div className="mt-2">
         <Table>
@@ -50,18 +35,18 @@ function SpotZoneTable({ title, zone }: { title: string; zone: ZoneData | undefi
             {zone.strikes.map((s: ZoneStrike) => (
               <TableRow key={s.strike}>
                 <TableCell className="font-mono">{s.strike}</TableCell>
-                <TableCell className="text-right font-mono text-green-500">{fmtForce(s.bullish_force)}</TableCell>
-                <TableCell className="text-right font-mono text-red-500">{fmtForce(s.bearish_force)}</TableCell>
-                <TableCell className={`text-right font-mono ${colorForce(s.net_force)}`}>{fmtForce(s.net_force)}</TableCell>
+                <TableCell className="text-right font-mono text-green-500">{fmtSigned(s.bullish_force, 1)}</TableCell>
+                <TableCell className="text-right font-mono text-red-500">{fmtSigned(s.bearish_force, 1)}</TableCell>
+                <TableCell className={`text-right font-mono ${colorDir(s.net_force)}`}>{fmtSigned(s.net_force, 1)}</TableCell>
               </TableRow>
             ))}
           </TableBody>
           <TableFooter>
             <TableRow>
               <TableCell className="font-medium">Total</TableCell>
-              <TableCell className="text-right font-mono text-green-500">{fmtForce(zone.total_bullish_force)}</TableCell>
-              <TableCell className="text-right font-mono text-red-500">{fmtForce(zone.total_bearish_force)}</TableCell>
-              <TableCell className={`text-right font-mono font-medium ${colorForce(zone.net_force)}`}>{fmtForce(zone.net_force)}</TableCell>
+              <TableCell className="text-right font-mono text-green-500">{fmtSigned(zone.total_bullish_force, 1)}</TableCell>
+              <TableCell className="text-right font-mono text-red-500">{fmtSigned(zone.total_bearish_force, 1)}</TableCell>
+              <TableCell className={`text-right font-mono font-medium ${colorDir(zone.net_force)}`}>{fmtSigned(zone.net_force, 1)}</TableCell>
             </TableRow>
           </TableFooter>
         </Table>
@@ -75,7 +60,7 @@ function OTMITMTable({ title, zone, type }: { title: string; zone: OTMITMZone | 
   return (
     <details className="group">
       <summary className="cursor-pointer text-sm font-medium text-muted-foreground hover:text-foreground">
-        {title} (Force: <span className={colorForce(zone.total_force)}>{fmtForce(zone.total_force)}</span>)
+        {title} (Force: <span className={colorDir(zone.total_force)}>{fmtSigned(zone.total_force, 1)}</span>)
       </summary>
       <div className="mt-2">
         <Table>
@@ -96,8 +81,8 @@ function OTMITMTable({ title, zone, type }: { title: string; zone: OTMITMZone | 
                 <TableRow key={s.strike}>
                   <TableCell className="font-mono">{s.strike}</TableCell>
                   <TableCell className="text-right font-mono">{fmt(oi)}</TableCell>
-                  <TableCell className={`text-right font-mono ${colorForce(change)}`}>{fmtForce(change)}</TableCell>
-                  <TableCell className={`text-right font-mono ${colorForce(force)}`}>{fmtForce(force)}</TableCell>
+                  <TableCell className={`text-right font-mono ${colorDir(change)}`}>{fmtSigned(change)}</TableCell>
+                  <TableCell className={`text-right font-mono ${colorDir(force)}`}>{fmtSigned(force, 1)}</TableCell>
                 </TableRow>
               );
             })}
@@ -106,8 +91,8 @@ function OTMITMTable({ title, zone, type }: { title: string; zone: OTMITMZone | 
             <TableRow>
               <TableCell className="font-medium">Total</TableCell>
               <TableCell className="text-right font-mono">{fmt(zone.total_oi)}</TableCell>
-              <TableCell className={`text-right font-mono ${colorForce(zone.total_oi_change)}`}>{fmtForce(zone.total_oi_change)}</TableCell>
-              <TableCell className={`text-right font-mono font-medium ${colorForce(zone.total_force)}`}>{fmtForce(zone.total_force)}</TableCell>
+              <TableCell className={`text-right font-mono ${colorDir(zone.total_oi_change)}`}>{fmtSigned(zone.total_oi_change)}</TableCell>
+              <TableCell className={`text-right font-mono font-medium ${colorDir(zone.total_force)}`}>{fmtSigned(zone.total_force, 1)}</TableCell>
             </TableRow>
           </TableFooter>
         </Table>

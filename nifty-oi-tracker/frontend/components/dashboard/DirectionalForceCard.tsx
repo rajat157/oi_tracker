@@ -2,6 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDashboardStore } from "@/stores/dashboard-store";
+import { fmtSigned } from "@/lib/format";
 
 export function DirectionalForceCard() {
   const blob = useDashboardStore((s) => s.analysis?.analysis_blob);
@@ -43,7 +44,7 @@ export function DirectionalForceCard() {
         <div className="flex justify-between">
           <span className="text-muted-foreground">Net Strength</span>
           <span className={`font-mono font-medium ${sa.net_strength > 0 ? "text-green-500" : sa.net_strength < 0 ? "text-red-500" : ""}`}>
-            {sa.net_strength > 0 ? "+" : ""}{sa.net_strength.toFixed(1)}
+            {fmtSigned(sa.net_strength, 1)}
           </span>
         </div>
       </CardContent>

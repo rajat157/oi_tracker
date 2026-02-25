@@ -125,6 +125,8 @@ class KiteDataFetcher:
                 ltp = quote.get('last_price', 0.0)
                 oi = int(quote.get('oi', 0))
                 volume = int(quote.get('volume', 0))
+                buy_qty = int(quote.get('buy_quantity', 0))
+                sell_qty = int(quote.get('sell_quantity', 0))
 
                 # OI change: current - baseline
                 oi_key = (strike, otype)
@@ -147,8 +149,10 @@ class KiteDataFetcher:
                     strikes_data[strike] = {
                         "ce_oi": 0, "ce_oi_change": 0, "ce_volume": 0,
                         "ce_iv": 0.0, "ce_ltp": 0.0,
+                        "ce_buy_qty": 0, "ce_sell_qty": 0,
                         "pe_oi": 0, "pe_oi_change": 0, "pe_volume": 0,
                         "pe_iv": 0.0, "pe_ltp": 0.0,
+                        "pe_buy_qty": 0, "pe_sell_qty": 0,
                     }
 
                 prefix = "ce" if otype == "CE" else "pe"
@@ -157,6 +161,8 @@ class KiteDataFetcher:
                 strikes_data[strike][f"{prefix}_volume"] = volume
                 strikes_data[strike][f"{prefix}_iv"] = iv
                 strikes_data[strike][f"{prefix}_ltp"] = ltp
+                strikes_data[strike][f"{prefix}_buy_qty"] = buy_qty
+                strikes_data[strike][f"{prefix}_sell_qty"] = sell_qty
 
             log.info("Option chain fetched via Kite",
                      spot=f"{spot_price:.2f}",

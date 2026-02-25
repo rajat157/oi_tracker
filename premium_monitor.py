@@ -8,6 +8,7 @@ Shadow mode (Phase A): Logs detections but does NOT update DB or send alerts.
 Live mode (Phase B): Calls exit_callback on SL/target detection.
 """
 
+import json
 import os
 import threading
 from dataclasses import dataclass, field
@@ -68,6 +69,9 @@ class PremiumMonitor:
         # LTP cache — updated on every WebSocket tick
         self._latest_ltp: Dict[int, float] = {}
 
+        # Depth cache — updated on every MODE_FULL tick
+        self._latest_depth: Dict[int, dict] = {}
+
     def set_exit_callback(self, callback: Callable):
         """Set the callback for SL/target hit detection.
 
@@ -89,7 +93,7 @@ class PremiumMonitor:
         if self._ticker and self._running:
             try:
                 self._ticker.subscribe([token])
-                self._ticker.set_mode(self._ticker.MODE_LTP, [token])
+                self._ticker.set_mode(self._ticker.MODE_FULL, [token])
             except Exception as e:
                 log.error("Failed to subscribe token", token=token, error=str(e))
 
@@ -183,7 +187,7 @@ class PremiumMonitor:
         tokens = list(self._token_to_trades.keys())
         if tokens:
             ws.subscribe(tokens)
-            ws.set_mode(ws.MODE_LTP, tokens)
+            ws.set_mode(ws.MODE_FULL, tokens)
             log.info("WebSocket connected, subscribed", tokens=len(tokens))
         else:
             log.info("WebSocket connected, no tokens to subscribe")
@@ -195,6 +199,10 @@ class PremiumMonitor:
             ltp = tick.get('last_price')
             if token and ltp is not None:
                 self._on_tick_received(token, ltp)
+            # Cache depth data if available (MODE_FULL)
+            depth = tick.get('depth')
+            if token and depth:
+                self._latest_depth[token] = depth
 
     def _on_close(self, ws, code, reason):
         """WebSocket closed."""
@@ -330,6 +338,35 @@ class PremiumMonitor:
             }
 
         return result
+
+    def get_depth_snapshot(self) -> list:
+        """Return depth snapshots for all monitored trades with cached WebSocket depth."""
+        snapshots = []
+        for trade in self._all_trades.values():
+            depth = self._latest_depth.get(trade.instrument_token)
+            if not depth:
+                continue
+            buy_levels = depth.get('buy', [])
+            sell_levels = depth.get('sell', [])
+            total_bid = sum(l.get('quantity', 0) for l in buy_levels)
+            total_ask = sum(l.get('quantity', 0) for l in sell_levels)
+            obi = round(total_bid / total_ask, 3) if total_ask > 0 else 0.0
+            snapshots.append({
+                "instrument_token": trade.instrument_token,
+                "strike": trade.strike,
+                "option_type": trade.option_type,
+                "total_bid_qty": total_bid,
+                "total_ask_qty": total_ask,
+                "bid_ask_imbalance": obi,
+                "best_bid_price": buy_levels[0]['price'] if buy_levels else 0,
+                "best_bid_qty": buy_levels[0]['quantity'] if buy_levels else 0,
+                "best_bid_orders": buy_levels[0].get('orders', 0) if buy_levels else 0,
+                "best_ask_price": sell_levels[0]['price'] if sell_levels else 0,
+                "best_ask_qty": sell_levels[0]['quantity'] if sell_levels else 0,
+                "best_ask_orders": sell_levels[0].get('orders', 0) if sell_levels else 0,
+                "depth_json": json.dumps(depth),
+            })
+        return snapshots
 
     def scan_existing_trades(self):
         """

@@ -397,6 +397,43 @@ def init_db():
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN prev_verdict TEXT")
 
+        # Add migration for buy/sell quantity columns (orderflow data)
+        cursor.execute("""
+            SELECT COUNT(*) as count FROM pragma_table_info('oi_snapshots')
+            WHERE name='ce_buy_qty'
+        """)
+        if cursor.fetchone()['count'] == 0:
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN ce_buy_qty INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN ce_sell_qty INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_buy_qty INTEGER DEFAULT 0")
+            cursor.execute("ALTER TABLE oi_snapshots ADD COLUMN pe_sell_qty INTEGER DEFAULT 0")
+
+        # Orderflow depth table for WebSocket 5-level bid/ask data
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS orderflow_depth (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME NOT NULL,
+                instrument_token INTEGER NOT NULL,
+                strike INTEGER NOT NULL,
+                option_type TEXT NOT NULL,
+                spot_price REAL DEFAULT 0.0,
+                total_bid_qty INTEGER DEFAULT 0,
+                total_ask_qty INTEGER DEFAULT 0,
+                bid_ask_imbalance REAL DEFAULT 0.0,
+                best_bid_price REAL DEFAULT 0.0,
+                best_bid_qty INTEGER DEFAULT 0,
+                best_bid_orders INTEGER DEFAULT 0,
+                best_ask_price REAL DEFAULT 0.0,
+                best_ask_qty INTEGER DEFAULT 0,
+                best_ask_orders INTEGER DEFAULT 0,
+                depth_json TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_orderflow_depth_ts
+            ON orderflow_depth(timestamp)
+        """)
+
         # Settings table for key-value storage (Kite tokens, etc.)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
@@ -445,8 +482,9 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
                 INSERT INTO oi_snapshots
                 (timestamp, spot_price, strike_price, ce_oi, ce_oi_change,
                  pe_oi, pe_oi_change, ce_volume, pe_volume, ce_iv, pe_iv,
-                 ce_ltp, pe_ltp, expiry_date)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ce_ltp, pe_ltp, ce_buy_qty, ce_sell_qty, pe_buy_qty, pe_sell_qty,
+                 expiry_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 timestamp.isoformat(),
                 spot_price,
@@ -461,6 +499,10 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
                 data.get("pe_iv", 0.0),
                 data.get("ce_ltp", 0.0),
                 data.get("pe_ltp", 0.0),
+                data.get("ce_buy_qty", 0),
+                data.get("ce_sell_qty", 0),
+                data.get("pe_buy_qty", 0),
+                data.get("pe_sell_qty", 0),
                 expiry_date
             ))
 
@@ -881,6 +923,63 @@ def purge_old_data(keep_from_date):
         except ImportError:
             pass
         return snapshots_deleted, analysis_deleted
+
+
+def save_orderflow_depth(records: list):
+    """
+    Bulk insert orderflow depth snapshots from WebSocket MODE_FULL data.
+
+    Args:
+        records: List of dicts with keys matching orderflow_depth columns.
+    """
+    if not records:
+        return
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        ts = datetime.now().isoformat()
+        for r in records:
+            cursor.execute("""
+                INSERT INTO orderflow_depth
+                (timestamp, instrument_token, strike, option_type,
+                 total_bid_qty, total_ask_qty, bid_ask_imbalance,
+                 best_bid_price, best_bid_qty, best_bid_orders,
+                 best_ask_price, best_ask_qty, best_ask_orders,
+                 depth_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                ts,
+                r.get("instrument_token", 0),
+                r.get("strike", 0),
+                r.get("option_type", ""),
+                r.get("total_bid_qty", 0),
+                r.get("total_ask_qty", 0),
+                r.get("bid_ask_imbalance", 0.0),
+                r.get("best_bid_price", 0.0),
+                r.get("best_bid_qty", 0),
+                r.get("best_bid_orders", 0),
+                r.get("best_ask_price", 0.0),
+                r.get("best_ask_qty", 0),
+                r.get("best_ask_orders", 0),
+                r.get("depth_json", ""),
+            ))
+        conn.commit()
+
+
+def purge_old_orderflow(days: int = 30):
+    """Delete orderflow depth data older than `days` days."""
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM orderflow_depth WHERE timestamp < ?", (cutoff,))
+        deleted = cursor.rowcount
+        conn.commit()
+        if deleted > 0:
+            try:
+                from logger import get_logger
+                log = get_logger("database")
+                log.info("Purged old orderflow depth", deleted=deleted, days=days)
+            except ImportError:
+                pass
 
 
 def purge_all_data():

@@ -13,7 +13,7 @@ def get_engine():
     if _engine is None:
         _engine = create_async_engine(
             settings.database_url,
-            echo=settings.environment == "development",
+            echo=False,
             pool_pre_ping=True,
             pool_size=10,
             max_overflow=20,

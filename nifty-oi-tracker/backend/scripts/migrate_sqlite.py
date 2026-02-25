@@ -363,6 +363,67 @@ def migrate_dessert_trades(src: sqlite3.Cursor, dst, count: int) -> int:
     return migrated
 
 
+def migrate_momentum_trades(src: sqlite3.Cursor, dst, count: int) -> int:
+    """Migrate momentum_trades (direct mapping)."""
+    cols = _get_sqlite_columns(src, "momentum_trades")
+    src.execute("SELECT * FROM momentum_trades ORDER BY id")
+    migrated = 0
+
+    while True:
+        rows = src.fetchmany(BATCH_SIZE)
+        if not rows:
+            break
+        values = []
+        for row in rows:
+            r = dict(zip(cols, row))
+            created = _add_tz(r.get("created_at"))
+            values.append((
+                created, created,  # created_at, updated_at
+                r.get("strategy_name", "Momentum"),
+                r.get("direction", ""),
+                r.get("strike", 0),
+                r.get("option_type", ""),
+                r.get("entry_premium", 0),
+                r.get("sl_premium", 0),
+                r.get("target_premium", 0),
+                r.get("spot_at_creation", 0),
+                r.get("verdict_at_creation", ""),
+                r.get("signal_confidence"),
+                r.get("iv_skew_at_creation"),
+                r.get("vix_at_creation"),
+                r.get("combined_score"),
+                r.get("confirmation_status"),
+                r.get("status", "ACTIVE"),
+                _add_tz(r.get("resolved_at")),
+                r.get("exit_premium"),
+                r.get("exit_reason"),
+                r.get("profit_loss_pct"),
+                r.get("max_premium_reached"),
+                r.get("min_premium_reached"),
+                _add_tz(r.get("last_checked_at")),
+                r.get("last_premium"),
+            ))
+        psycopg2.extras.execute_values(
+            dst,
+            """INSERT INTO momentum_trades
+               (created_at, updated_at,
+                strategy_name, direction, strike, option_type,
+                entry_premium, sl_premium, target_premium,
+                spot_at_creation, verdict_at_creation,
+                signal_confidence, iv_skew_at_creation,
+                vix_at_creation, combined_score, confirmation_status,
+                status, resolved_at, exit_premium, exit_reason,
+                profit_loss_pct, max_premium_reached, min_premium_reached,
+                last_checked_at, last_premium)
+               VALUES %s""",
+            values,
+        )
+        migrated += len(values)
+        print(f"  momentum_trades: {migrated}/{count}")
+
+    return migrated
+
+
 def migrate_system_logs(src: sqlite3.Cursor, dst, count: int) -> int:
     """Migrate system_logs (details TEXT -> JSON)."""
     cols = _get_sqlite_columns(src, "system_logs")
@@ -404,6 +465,7 @@ TABLE_MIGRATIONS = [
     ("trade_setups", "iron_pulse_trades", migrate_trade_setups),
     ("sell_trade_setups", "selling_trades", migrate_sell_trade_setups),
     ("dessert_trades", "dessert_trades", migrate_dessert_trades),
+    ("momentum_trades", "momentum_trades", migrate_momentum_trades),
     ("system_logs", "system_logs", migrate_system_logs),
 ]
 
@@ -464,6 +526,7 @@ def main():
 
         print(f"Migrating {v1_table} -> {v2_table} ({count} rows)...")
         try:
+            dst.execute(f"TRUNCATE TABLE {v2_table} RESTART IDENTITY CASCADE")  # noqa: S608
             migrated = migrate_fn(src, dst, count)
             dst_conn.commit()
             total_migrated += migrated

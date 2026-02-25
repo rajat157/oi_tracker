@@ -65,6 +65,9 @@ class PremiumMonitor:
         # Instrument map (set externally or via scan)
         self._instrument_map = None
 
+        # LTP cache — updated on every WebSocket tick
+        self._latest_ltp: Dict[int, float] = {}
+
     def set_exit_callback(self, callback: Callable):
         """Set the callback for SL/target hit detection.
 
@@ -207,6 +210,7 @@ class PremiumMonitor:
 
     def _on_tick_received(self, token: int, current_premium: float):
         """Process a single tick for a token."""
+        self._latest_ltp[token] = current_premium
         trades = self._token_to_trades.get(token, [])
 
         for trade in list(trades):  # Copy to avoid modification during iteration
@@ -291,6 +295,41 @@ class PremiumMonitor:
                 }
 
         return None
+
+    def get_live_pnl(self) -> dict:
+        """Return current P&L for all active trades using cached WebSocket LTP.
+
+        Returns dict keyed by tracker_type with current_premium, pnl_pct, etc.
+        Empty dict if no trades or no LTP data.
+        """
+        if not self._all_trades or not self._latest_ltp:
+            return {}
+
+        result = {}
+        for trade in self._all_trades.values():
+            ltp = self._latest_ltp.get(trade.instrument_token)
+            if ltp is None:
+                continue
+
+            if trade.is_selling:
+                pnl_pct = ((trade.entry_premium - ltp) / trade.entry_premium) * 100
+            else:
+                pnl_pct = ((ltp - trade.entry_premium) / trade.entry_premium) * 100
+
+            pnl_points = ltp - trade.entry_premium
+            if trade.is_selling:
+                pnl_points = trade.entry_premium - ltp
+
+            result[trade.tracker_type] = {
+                "current_premium": round(ltp, 2),
+                "pnl_pct": round(pnl_pct, 2),
+                "pnl_points": round(pnl_points, 2),
+                "strike": trade.strike,
+                "option_type": trade.option_type,
+                "entry_premium": trade.entry_premium,
+            }
+
+        return result
 
     def scan_existing_trades(self):
         """

@@ -430,6 +430,15 @@ class OIScheduler:
             replace_existing=True
         )
 
+        # 30-second live P&L broadcast (uses cached WebSocket LTP, no API calls)
+        self.scheduler.add_job(
+            self._broadcast_live_pnl,
+            trigger=IntervalTrigger(seconds=30),
+            id="pnl_broadcaster",
+            name="Broadcast Live P&L (30s)",
+            replace_existing=True
+        )
+
         # Start scheduler
         self.scheduler.start()
         self.is_running = True
@@ -571,6 +580,14 @@ class OIScheduler:
     def _check_daily_learning_update(self):
         """Daily learning update - self-learner removed, now a no-op."""
         pass
+
+    def _broadcast_live_pnl(self):
+        """Emit lightweight P&L update from WebSocket LTP cache every 30s."""
+        if not self.socketio or not self.is_market_open():
+            return
+        pnl_data = self.premium_monitor.get_live_pnl()
+        if pnl_data:
+            self.socketio.emit("pnl_update", pnl_data)
 
     def get_market_status(self) -> dict:
         """Get current market status information."""

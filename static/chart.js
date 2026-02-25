@@ -244,6 +244,10 @@ function setupSocketListeners() {
             updateChartFromServer(data.chart_history);
         }
     });
+
+    socket.on('pnl_update', data => {
+        updateLivePnl(data);
+    });
 }
 
 // Fetch functions
@@ -639,6 +643,69 @@ function updateStrengthAnalysis(strength) {
         netElem.textContent = (net >= 0 ? '+' : '') + net.toFixed(1);
         netElem.classList.remove('positive', 'negative');
         netElem.classList.add(net >= 0 ? 'positive' : 'negative');
+    }
+}
+
+function updateLivePnl(data) {
+    // Lightweight P&L update from 30-second WebSocket LTP cache.
+    // Only touches P&L numbers — card visibility handled by oi_update.
+
+    // Iron Pulse
+    if (data.iron_pulse) {
+        const ip = data.iron_pulse;
+        const pnlValue = document.getElementById('trade-pnl-value');
+        if (pnlValue) {
+            const pnl = ip.pnl_pct;
+            const pts = ip.pnl_points;
+            pnlValue.textContent = `${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}% (${pts >= 0 ? '+' : ''}${pts.toFixed(2)} pts)`;
+            pnlValue.classList.remove('positive', 'negative');
+            pnlValue.classList.add(pnl >= 0 ? 'positive' : 'negative');
+        }
+        setText('trade-current-premium', ip.current_premium.toFixed(2));
+    }
+
+    // Selling
+    if (data.selling) {
+        const s = data.selling;
+        const pnlValue = document.getElementById('sell-pnl-value');
+        if (pnlValue) {
+            const pnl = s.pnl_pct;
+            pnlValue.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '%';
+            pnlValue.classList.remove('positive', 'negative');
+            pnlValue.classList.add(pnl >= 0 ? 'positive' : 'negative');
+        }
+        const curPrem = s.current_premium;
+        setText('sell-current', curPrem.toFixed(2));
+        setText('sell-current-premium', curPrem.toFixed(2));
+        if (s.entry_premium > 0) {
+            const diff = s.entry_premium - curPrem;
+            const diffPct = (diff / s.entry_premium * 100);
+            setText('sell-current-vs-entry', (diff >= 0 ? '+' : '') + diff.toFixed(2) + ' (' + (diffPct >= 0 ? '+' : '') + diffPct.toFixed(1) + '%)');
+        }
+    }
+
+    // Dessert
+    if (data.dessert) {
+        const d = data.dessert;
+        const pnlValue = document.getElementById('dessert-pnl-value');
+        if (pnlValue) {
+            const pnl = d.pnl_pct;
+            pnlValue.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '%';
+            pnlValue.classList.remove('positive', 'negative');
+            pnlValue.classList.add(pnl >= 0 ? 'positive' : 'negative');
+        }
+        setText('dessert-current-premium', d.current_premium.toFixed(2));
+    }
+
+    // Momentum
+    if (data.momentum) {
+        const m = data.momentum;
+        const pnlValue = document.getElementById('momentum-pnl-value');
+        if (pnlValue) {
+            pnlValue.textContent = (m.pnl_pct >= 0 ? '+' : '') + m.pnl_pct.toFixed(2) + '%';
+            pnlValue.className = 'pnl-value ' + (m.pnl_pct >= 0 ? 'pnl-positive' : 'pnl-negative');
+        }
+        setText('momentum-current-premium', m.current_premium.toFixed(2));
     }
 }
 

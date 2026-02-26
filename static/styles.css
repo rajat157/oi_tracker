@@ -2684,6 +2684,18 @@ body {
     color: var(--text-primary);
 }
 
+.pred-hint {
+    font-size: 0.75em;
+    color: var(--text-muted);
+    cursor: help;
+    opacity: 0.5;
+    transition: opacity 0.2s ease;
+}
+
+.pred-hint:hover {
+    opacity: 1;
+}
+
 .pred-conviction-bar {
     height: 8px;
     background: var(--bg-secondary);

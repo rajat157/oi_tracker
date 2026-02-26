@@ -24,6 +24,7 @@ from selling_tracker import SellingTracker
 from dessert_tracker import DessertTracker
 from momentum_tracker import MomentumTracker
 from pattern_tracker import check_patterns, log_failed_entry
+from prediction_engine import PredictionEngine
 from logger import get_logger
 
 log = get_logger("scheduler")
@@ -56,6 +57,7 @@ class OIScheduler:
         self.selling_tracker = SellingTracker()
         self.dessert_tracker = DessertTracker()
         self.momentum_tracker = MomentumTracker()
+        self.prediction_engine = PredictionEngine()
         self.force_enabled = False
         self.last_iron_pulse_time = None  # Track when Iron Pulse enters for selling decoupling
         # Kite data fetcher (reusable, no browser)
@@ -229,6 +231,14 @@ class OIScheduler:
             self.last_analysis = analysis
 
             log.info("Analysis complete", verdict=analysis['verdict'])
+
+            # Prediction Tree: generate/match/deepen predictions
+            try:
+                prediction_result = self.prediction_engine.process_candle(analysis)
+                if prediction_result:
+                    analysis["prediction_tree"] = prediction_result
+            except Exception as e:
+                log.error("Error in prediction engine", error=str(e))
 
             # Pattern Tracker: detect patterns (PM reversal alerts disabled)
             try:

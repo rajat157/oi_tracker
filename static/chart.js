@@ -1459,8 +1459,16 @@ function updatePredictionTree(pt) {
     // Primary metrics
     setText('pred-depth', pt.depth != null ? pt.depth : '--');
     setText('pred-conviction', pt.conviction != null ? pt.conviction.toFixed(0) + '%' : '--');
-    const dirShort = (pt.direction || '--').substring(0, 4).toUpperCase();
+    const dirFull = (pt.direction || '').toUpperCase();
+    const dirShort = dirFull.substring(0, 4) || '--';
     setText('pred-direction', dirShort);
+    const dirTooltips = {
+        'CONTINUATION': 'Market is following the current trend. Predictions align with the prevailing direction.',
+        'REVERSAL': 'Market is moving against the prior trend. Predictions expect a direction change.',
+        'CONSOLIDATION': 'Market is range-bound. Neither bulls nor bears have control.',
+    };
+    const dirMetric = document.getElementById('pred-direction-metric');
+    if (dirMetric) dirMetric.title = dirTooltips[dirFull] || 'Predicted market direction based on matched scenarios';
 
     // Conviction bar (max 90%)
     const fill = document.getElementById('pred-conviction-fill');

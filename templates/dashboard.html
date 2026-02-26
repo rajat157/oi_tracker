@@ -181,27 +181,27 @@
                         <span class="trade-status-badge" id="pred-status-badge">--</span>
                     </div>
                     <div class="pred-metrics">
-                        <div class="pred-metric">
+                        <div class="pred-metric" title="Number of consecutive correct predictions in current path">
                             <span class="pred-metric-label">Depth</span>
                             <span class="pred-metric-value" id="pred-depth">--</span>
                         </div>
-                        <div class="pred-metric">
+                        <div class="pred-metric" title="Confidence level based on depth. Signal emitted at 60%+">
                             <span class="pred-metric-label">Conviction</span>
                             <span class="pred-metric-value" id="pred-conviction">--</span>
                         </div>
-                        <div class="pred-metric">
+                        <div class="pred-metric" id="pred-direction-metric" title="">
                             <span class="pred-metric-label">Direction</span>
                             <span class="pred-metric-value" id="pred-direction">--</span>
                         </div>
                     </div>
-                    <div class="pred-conviction-bar">
+                    <div class="pred-conviction-bar" title="Visual gauge of conviction (max 90%)">
                         <div class="pred-conviction-fill" id="pred-conviction-fill"></div>
                     </div>
-                    <div class="pred-match-row">
+                    <div class="pred-match-row" title="Which scenario (A/B/C) matched last candle and its score (0-1)">
                         <span class="pred-match-label">Last Match:</span>
                         <span id="pred-match-info">--</span>
                     </div>
-                    <div class="pred-match-row">
+                    <div class="pred-match-row" title="Adaptive weight for reversal predictions. Increases when reversals match on strong signals">
                         <span class="pred-match-label">Contrarian Weight:</span>
                         <span id="pred-contrarian">--</span>
                     </div>

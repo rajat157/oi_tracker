@@ -51,6 +51,18 @@ class KiteAuthService:
             await self._set_setting(session, "kite_token_date", today)
             await session.commit()
 
+    async def validate_token(self, access_token: str) -> dict:
+        """Validate an access token by calling kite.profile(). Returns profile on success."""
+        from kiteconnect import KiteConnect
+
+        kite = KiteConnect(api_key=self._api_key)
+        kite.set_access_token(access_token)
+
+        def _profile():
+            return kite.profile()
+
+        return await asyncio.get_running_loop().run_in_executor(None, _profile)
+
     async def exchange_token(self, request_token: str) -> str:
         """Exchange request_token for access_token via Kite API."""
         from kiteconnect import KiteConnect

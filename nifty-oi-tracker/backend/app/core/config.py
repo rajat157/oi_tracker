@@ -11,7 +11,6 @@ class Settings(BaseSettings):
     # Kite Connect
     kite_api_key: str = ""
     kite_api_secret: str = ""
-    kite_access_token: str = ""
 
     # Telegram - Main bot
     telegram_bot_token: str = ""

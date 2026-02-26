@@ -9,6 +9,7 @@ export function KiteDot() {
   const [showLogin, setShowLogin] = useState(false);
   const [token, setToken] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -23,17 +24,24 @@ export function KiteDot() {
   const handleSaveToken = async () => {
     if (!token.trim()) return;
     setSaving(true);
+    setError("");
     try {
-      const res = await fetch(
-        `${apiBase}/kite/callback?request_token=${encodeURIComponent(token.trim())}`
-      );
+      const res = await fetch(`${apiBase}/kite/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ access_token: token.trim() }),
+      });
       const data = await res.json();
-      if (data.success) {
+      if (res.ok && data.success) {
         useDashboardStore.setState({ kiteAuthenticated: true });
         setToken("");
         setShowLogin(false);
+      } else {
+        setError(data.detail || "Failed to save token");
       }
-    } catch { /* ignore */ }
+    } catch {
+      setError("Network error — is the API running?");
+    }
     setSaving(false);
   };
 
@@ -59,7 +67,7 @@ export function KiteDot() {
           <div className="flex gap-2 items-center">
             <input
               type="text"
-              placeholder="Paste request token..."
+              placeholder="Paste access token..."
               value={token}
               onChange={(e) => setToken(e.target.value)}
               className="flex-1 px-2 py-1 text-xs rounded border border-input bg-background font-mono"
@@ -73,6 +81,7 @@ export function KiteDot() {
               {saving ? "..." : "Save"}
             </Button>
           </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
       )}
     </div>

@@ -367,7 +367,7 @@ class DessertTracker:
         return None
 
     def _send_entry_alert(self, strategy, strike, entry, sl, target,
-                           spot, verdict, confidence, iv_skew, vix, max_pain, spot_move):
+                           spot, verdict, confidence, iv_skew, vix, max_pain, spot_move=None):
         """Send Telegram alert for new dessert trade."""
         try:
             from alerts import send_telegram
@@ -392,7 +392,7 @@ class DessertTracker:
                 f"<b>Verdict:</b> {verdict} ({confidence:.0f}%)\n"
                 f"<b>VIX:</b> {vix:.1f} | <b>IV Skew:</b> {iv_skew:.2f}\n"
                 f"<b>Max Pain:</b> {max_pain:.0f}\n"
-                f"<b>Spot 30m:</b> {spot_move:.3f}%\n\n"
+                f"<b>Spot 30m:</b> {(spot_move or 0):.3f}%\n\n"
                 f"<i>This is a 1:2 RR dessert trade. Take it if it looks good!</i>\n"
                 f"<i>Time: {datetime.now().strftime('%H:%M:%S')}</i>"
             )

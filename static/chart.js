@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(fetchMarketStatus, 500);
     setTimeout(fetchLatestData, 1000);
     setTimeout(checkKiteStatus, 1500);
+    setTimeout(fetchPredictionTree, 2000);
 
     setInterval(fetchMarketStatus, 60000);
     setInterval(checkKiteStatus, 300000); // Check Kite auth every 5 min
@@ -457,6 +458,9 @@ function updateDashboard(data) {
         ivSkewElem.textContent = (skew > 0 ? '+' : '') + skew.toFixed(2) + '%';
         ivSkewElem.style.color = skew > 2 ? '#f87171' : skew < -2 ? '#22c55e' : '#a1a1b5';
     }
+
+    // Update Prediction Tree
+    updatePredictionTree(data.prediction_tree);
 
     // Update Sell Trade Card
     updateSellTrade(data);
@@ -1361,7 +1365,7 @@ function checkKiteStatus() {
 function saveKiteToken() {
     const token = document.getElementById('kite-token-field').value.trim();
     if (!token) { alert('Please paste a token'); return; }
-    
+
     fetch('/kite/save-token', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
@@ -1377,4 +1381,119 @@ function saveKiteToken() {
             alert('Error: ' + (data.error || 'Unknown'));
         }
     });
+}
+
+// ===== Prediction Tree =====
+
+function fetchPredictionTree() {
+    fetch('/api/prediction-tree')
+        .then(r => r.json())
+        .then(state => renderPredictionTreeFull(state))
+        .catch(() => {}); // silently fail if endpoint not ready
+}
+
+function renderPredictionTreeFull(state) {
+    if (!state || (!state.path && !state.signal)) return;
+
+    // Build lightweight summary from full state for updatePredictionTree
+    const path = state.path || {};
+    const node = state.latest_node || {};
+    const summary = {
+        depth: path.depth || 0,
+        conviction: path.conviction || 0,
+        direction: path.direction || '--',
+        matched_scenario: node.matched_scenario || '--',
+        match_score: node['match_score_' + (node.matched_scenario || 'a').toLowerCase()] || 0,
+        contrarian_weight: path.contrarian_weight || 0,
+        signal: state.signal || null
+    };
+    updatePredictionTree(summary);
+
+    // Render history
+    const historyList = document.getElementById('pred-history-list');
+    if (historyList && state.history && state.history.length > 0) {
+        const last5 = state.history.slice(-5).reverse();
+        historyList.innerHTML = last5.map(h => {
+            const scenario = h.matched_scenario || '--';
+            const score = h['match_score_' + (scenario || 'a').toLowerCase()];
+            const icon = h.status === 'matched' ? '&#10003;' : h.status === 'missed' ? '&#10007;' : '--';
+            return `<div class="pred-history-item">
+                <span>Candle ${h.depth || '?'}:</span>
+                <span><strong>${scenario}</strong></span>
+                <span>${icon}</span>
+                <span>${score != null ? score.toFixed(2) : '--'}</span>
+            </div>`;
+        }).join('');
+    }
+
+    // Footer stats from path
+    setText('pred-accuracy', path.accuracy != null ? path.accuracy.toFixed(0) + '%' : '--');
+    setText('pred-total-paths', path.total != null ? path.total : '--');
+}
+
+function updatePredictionTree(pt) {
+    const card = document.getElementById('prediction-card');
+    if (!card) return;
+
+    if (!pt) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = 'block';
+
+    // Status badge
+    const badge = document.getElementById('pred-status-badge');
+    if (badge) {
+        const dir = (pt.direction || '').toUpperCase();
+        const label = dir === 'CONTINUATION' ? 'CONT' : dir === 'CONTRARIAN' ? 'CONTRA' : dir || '--';
+        badge.textContent = label;
+        badge.className = 'trade-status-badge';
+        if (pt.conviction >= 60) {
+            badge.classList.add('status-active');
+        } else if (pt.depth > 0) {
+            badge.classList.add('status-new');
+        }
+    }
+
+    // Primary metrics
+    setText('pred-depth', pt.depth != null ? pt.depth : '--');
+    setText('pred-conviction', pt.conviction != null ? pt.conviction.toFixed(0) + '%' : '--');
+    const dirShort = (pt.direction || '--').substring(0, 4).toUpperCase();
+    setText('pred-direction', dirShort);
+
+    // Conviction bar (max 90%)
+    const fill = document.getElementById('pred-conviction-fill');
+    if (fill) {
+        const pct = Math.min((pt.conviction || 0) / 90 * 100, 100);
+        fill.style.width = pct + '%';
+        fill.classList.toggle('high', pt.conviction >= 55);
+    }
+
+    // Match info
+    const scenario = pt.matched_scenario || '--';
+    const scoreVal = pt.match_score != null ? pt.match_score.toFixed(2) : '--';
+    const scenarioLabels = { A: 'Continuation', B: 'Reversal', C: 'Breakout' };
+    const label = scenarioLabels[scenario] || '';
+    setText('pred-match-info', `${scenario} (${label}) ${scoreVal}`);
+
+    // Contrarian weight
+    setText('pred-contrarian', pt.contrarian_weight != null ? pt.contrarian_weight.toFixed(2) : '--');
+
+    // Signal block
+    const signalDiv = document.getElementById('pred-signal');
+    if (signalDiv) {
+        if (pt.signal) {
+            signalDiv.style.display = 'block';
+            const s = pt.signal;
+            setText('pred-for-direction', s.for?.direction || '--');
+            setText('pred-for-prob', s.for?.probability != null ? s.for.probability.toFixed(0) + '%' : '--');
+            setText('pred-for-target', s.for?.target != null ? formatNumber(s.for.target) : '--');
+            setText('pred-against-direction', s.against?.direction || '--');
+            setText('pred-against-prob', s.against?.probability != null ? s.against.probability.toFixed(0) + '%' : '--');
+            setText('pred-against-target', s.against?.target != null ? formatNumber(s.against.target) : '--');
+            setText('pred-recommended', s.recommended || '--');
+        } else {
+            signalDiv.style.display = 'none';
+        }
+    }
 }

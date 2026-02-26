@@ -286,6 +286,14 @@ class PredictionEngine:
                     else:
                         self._pending_node_id = node["id"]
 
+                # Set _today so _check_day_reset doesn't re-expire same-day paths
+                started = path.get("started_at", "")
+                if started:
+                    try:
+                        self._today = datetime.fromisoformat(started).date()
+                    except (ValueError, TypeError):
+                        pass
+
                 log.info("Loaded prediction state",
                          path_id=self._active_path_id,
                          pending_node=self._pending_node_id,
@@ -303,11 +311,12 @@ class PredictionEngine:
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Find any active paths from previous days
+            # Find active paths from previous days only
+            today_str = today.isoformat()
             cursor.execute("""
                 SELECT id, contrarian_weight FROM prediction_paths
-                WHERE status = 'ACTIVE'
-            """)
+                WHERE status = 'ACTIVE' AND started_at < ?
+            """, (today_str,))
             rows = cursor.fetchall()
             for row in rows:
                 old_path = dict(row)

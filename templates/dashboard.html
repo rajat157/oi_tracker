@@ -174,6 +174,67 @@
                     </div>
                 </div>
 
+                <!-- Prediction Tree Card -->
+                <div class="card prediction-card" id="prediction-card" style="display: none;">
+                    <div class="trade-setup-title-row">
+                        <h3 class="card-title">Prediction Tree</h3>
+                        <span class="trade-status-badge" id="pred-status-badge">--</span>
+                    </div>
+                    <div class="pred-metrics">
+                        <div class="pred-metric">
+                            <span class="pred-metric-label">Depth</span>
+                            <span class="pred-metric-value" id="pred-depth">--</span>
+                        </div>
+                        <div class="pred-metric">
+                            <span class="pred-metric-label">Conviction</span>
+                            <span class="pred-metric-value" id="pred-conviction">--</span>
+                        </div>
+                        <div class="pred-metric">
+                            <span class="pred-metric-label">Direction</span>
+                            <span class="pred-metric-value" id="pred-direction">--</span>
+                        </div>
+                    </div>
+                    <div class="pred-conviction-bar">
+                        <div class="pred-conviction-fill" id="pred-conviction-fill"></div>
+                    </div>
+                    <div class="pred-match-row">
+                        <span class="pred-match-label">Last Match:</span>
+                        <span id="pred-match-info">--</span>
+                    </div>
+                    <div class="pred-match-row">
+                        <span class="pred-match-label">Contrarian Weight:</span>
+                        <span id="pred-contrarian">--</span>
+                    </div>
+                    <div class="pred-signal" id="pred-signal" style="display: none;">
+                        <div class="pred-signal-header">Signal (conviction &ge; 60%)</div>
+                        <div class="pred-signal-row for-row">
+                            <span class="pred-signal-label">FOR:</span>
+                            <span id="pred-for-direction">--</span>
+                            <span id="pred-for-prob">--</span>
+                            <span id="pred-for-target">--</span>
+                        </div>
+                        <div class="pred-signal-row against-row">
+                            <span class="pred-signal-label">AGAINST:</span>
+                            <span id="pred-against-direction">--</span>
+                            <span id="pred-against-prob">--</span>
+                            <span id="pred-against-target">--</span>
+                        </div>
+                        <div class="pred-recommended">
+                            Recommended: <strong id="pred-recommended">--</strong>
+                        </div>
+                    </div>
+                    <details class="pred-history">
+                        <summary>Path History</summary>
+                        <div class="pred-history-list" id="pred-history-list">
+                            <span class="pred-history-empty">No history yet</span>
+                        </div>
+                    </details>
+                    <div class="pred-footer">
+                        <span>Accuracy: <strong id="pred-accuracy">--</strong></span>
+                        <span>Paths: <strong id="pred-total-paths">--</strong></span>
+                    </div>
+                </div>
+
                 <!-- Sell Trade Card -->
                 <div class="card trade-setup-card sell-trade-card" id="sell-trade-card" style="display: none;">
                     <div class="trade-setup-title-row">

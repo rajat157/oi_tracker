@@ -459,8 +459,8 @@ function updateDashboard(data) {
         ivSkewElem.style.color = skew > 2 ? '#f87171' : skew < -2 ? '#22c55e' : '#a1a1b5';
     }
 
-    // Update Prediction Tree
-    updatePredictionTree(data.prediction_tree);
+    // Update Prediction Tree (full fetch to include history)
+    if (data.prediction_tree) fetchPredictionTree();
 
     // Update Sell Trade Card
     updateSellTrade(data);

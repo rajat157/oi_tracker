@@ -1,17 +1,16 @@
 """
-Prediction Tree Engine — Proactive multi-scenario prediction system.
+Prediction Engine V2 — Hypothesis-Based Directional Predictor.
 
-Generates 3 scenario predictions before each candle, validates them against
-actual data, and builds conviction through consecutive correct predictions.
-Only when a prediction path is deep enough do we emit a directional signal —
-and even then, we provide both FOR (continuation) and AGAINST (reversal)
-outcomes with probabilities.
+Makes ONE specific directional bet before each candle, validates it
+forward-looking (did price actually move in that direction?), and builds
+conviction only through consecutive correct predictions.
 
-Replaces the reactive "signal → trade" flow with a proactive
-"predict → validate → predict deeper → trade with conviction" flow.
+State machine: OBSERVING → HYPOTHESIS → SIGNAL
+One wrong prediction = immediate break back to OBSERVING.
 """
 
 import json
+import math
 from datetime import datetime, date, timedelta
 from typing import Optional
 
@@ -24,124 +23,110 @@ log = get_logger("prediction")
 # Constants
 # ---------------------------------------------------------------------------
 
-# Conviction lookup by consecutive-match depth
-CONVICTION_MAP = {
-    0: 0,
-    1: 30,
-    2: 55,
-    3: 75,
-    4: 85,
-}
-CONVICTION_MAX = 90  # depth >= 5
+# CDS thresholds
+CDS_PREDICT_THRESHOLD = 15       # |CDS| must exceed this to make a prediction
+CDS_FLIP_THRESHOLD = 22.5        # |CDS| must exceed this to flip direction (1.5x)
 
-# Minimum weighted score (0-1) for a scenario to count as a match
-MATCH_THRESHOLD = 0.40
+# CDS EMA smoothing
+CDS_EMA_ALPHA = 0.3              # Lower = more stable
 
-# Spot step used to build expected ranges (fraction of spot)
-SPOT_STEP_PCT = 0.05  # 0.05%
-SCORE_STEP = 8        # combined_score band half-width
-PCR_STEP = 0.10       # PCR band half-width
+# Directional lock: min candles before direction can flip
+DIRECTION_LOCK_CANDLES = 2
 
-# Signal emission requires at least this conviction
-SIGNAL_CONVICTION_THRESHOLD = 60
+# Validation: spot must move more than this to count
+VALIDATION_THRESHOLD_PTS = 2.0   # points
 
-# Contrarian weight bounds
-CONTRARIAN_WEIGHT_MIN = 0.10
-CONTRARIAN_WEIGHT_MAX = 0.80
-CONTRARIAN_WEIGHT_DEFAULT = 0.30
+# Signal promotion: need this many consecutive correct + conviction
+SIGNAL_MIN_STREAK = 3
+SIGNAL_MIN_CONVICTION = 55
 
-# Stale node threshold (seconds) — if pending node older than this, expire it
-STALE_NODE_SECONDS = 360  # 6 minutes
+# Conviction cap
+CONVICTION_MAX = 95
 
-# Strong signal threshold for contrarian boost
-STRONG_SIGNAL_THRESHOLD = 50
+# CDS component weights
+W_OI_FLOW = 0.30
+W_STRENGTH = 0.20
+W_PREMIUM_FLOW = 0.15
+W_FUTURES = 0.15
+W_STRUCTURAL = 0.10
+W_REGIME = 0.10
 
-# Metric weights for scoring (must sum to 1.0)
-METRIC_WEIGHTS = {
-    "spot":       0.25,
-    "score":      0.20,
-    "oi_dir":     0.15,
-    "prem_dir":   0.15,
-    "pcr":        0.08,
-    "iv_skew":    0.07,
-    "phase":      0.05,
-    "contrarian": 0.05,
-}
+# Stale node threshold (seconds)
+STALE_NODE_SECONDS = 600  # 10 minutes
 
 
 # ---------------------------------------------------------------------------
-# DB Initialisation
+# Table creation
 # ---------------------------------------------------------------------------
 
-def init_prediction_tables():
-    """Create prediction_nodes and prediction_paths tables if they don't exist."""
+def _ensure_v2_tables():
+    """Create v2 prediction tables if they don't exist."""
     with get_connection() as conn:
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_nodes (
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_paths_v2 (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                created_at DATETIME NOT NULL,
-                parent_node_id INTEGER,
-                path_id INTEGER,
-                depth INTEGER DEFAULT 0,
-                scenario_a TEXT,
-                scenario_b TEXT,
-                scenario_c TEXT,
-                matched_scenario TEXT,
-                match_score_a REAL DEFAULT 0,
-                match_score_b REAL DEFAULT 0,
-                match_score_c REAL DEFAULT 0,
-                spot_price REAL,
+                started_at TEXT NOT NULL,
+                ended_at TEXT,
+                status TEXT NOT NULL DEFAULT 'OBSERVING',
+                hypothesis_direction TEXT,
+                hypothesis_started_at TEXT,
+                hypothesis_start_prediction INTEGER,
+                consecutive_correct INTEGER NOT NULL DEFAULT 0,
+                consecutive_wrong INTEGER NOT NULL DEFAULT 0,
+                total_predictions INTEGER NOT NULL DEFAULT 0,
+                correct_predictions INTEGER NOT NULL DEFAULT 0,
+                inconclusive_predictions INTEGER NOT NULL DEFAULT 0,
+                accuracy_pct REAL NOT NULL DEFAULT 0.0,
+                conviction_pct REAL NOT NULL DEFAULT 0.0,
+                current_cds REAL NOT NULL DEFAULT 0.0,
+                cds_ema REAL NOT NULL DEFAULT 0.0,
+                signal_direction TEXT,
+                signal_target REAL,
+                signal_emitted_at TEXT,
+                last_prediction_at TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS prediction_nodes_v2 (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                predicted_direction TEXT,
+                predicted_cds REAL,
+                predicted_confidence REAL,
+                predicted_target REAL,
+                spot_at_prediction REAL,
+                cds_components TEXT,
+                actual_spot REAL,
+                actual_direction TEXT,
+                validation_result TEXT NOT NULL DEFAULT 'PENDING',
+                validated_at TEXT,
                 combined_score REAL,
                 verdict TEXT,
                 pcr REAL,
                 iv_skew REAL,
                 vix REAL,
-                status TEXT DEFAULT 'PENDING',
-                FOREIGN KEY (path_id) REFERENCES prediction_paths(id)
+                FOREIGN KEY (path_id) REFERENCES prediction_paths_v2(id)
             )
         """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_paths (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                started_at DATETIME NOT NULL,
-                ended_at DATETIME,
-                current_depth INTEGER DEFAULT 0,
-                max_depth_reached INTEGER DEFAULT 0,
-                current_direction TEXT DEFAULT 'UNKNOWN',
-                conviction_pct REAL DEFAULT 0,
-                consecutive_matches INTEGER DEFAULT 0,
-                consecutive_misses INTEGER DEFAULT 0,
-                contrarian_weight REAL DEFAULT 0.30,
-                signal_emitted INTEGER DEFAULT 0,
-                signal_direction TEXT,
-                signal_target REAL,
-                signal_result TEXT,
-                total_predictions INTEGER DEFAULT 0,
-                correct_predictions INTEGER DEFAULT 0,
-                accuracy_pct REAL DEFAULT 0,
-                status TEXT DEFAULT 'ACTIVE'
-            )
-        """)
-
         conn.commit()
 
 
 # ---------------------------------------------------------------------------
-# API helpers (module-level, importable)
+# Public API: get_prediction_state (used by app.py endpoint)
 # ---------------------------------------------------------------------------
 
 def get_prediction_state() -> Optional[dict]:
     """Return the current prediction tree state for the API endpoint."""
+    _ensure_v2_tables()
+
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # Active path
+        # Active path (today, not BROKEN/EXPIRED)
         cursor.execute("""
-            SELECT * FROM prediction_paths
-            WHERE status = 'ACTIVE'
+            SELECT * FROM prediction_paths_v2
+            WHERE status IN ('OBSERVING', 'HYPOTHESIS', 'SIGNAL')
             ORDER BY id DESC LIMIT 1
         """)
         path_row = cursor.fetchone()
@@ -152,50 +137,36 @@ def get_prediction_state() -> Optional[dict]:
 
         # Latest node on that path
         cursor.execute("""
-            SELECT * FROM prediction_nodes
+            SELECT * FROM prediction_nodes_v2
             WHERE path_id = ? ORDER BY id DESC LIMIT 1
         """, (path["id"],))
         node_row = cursor.fetchone()
         node = dict(node_row) if node_row else None
 
-        # Deserialise scenario JSON blobs in node
-        if node:
-            for key in ("scenario_a", "scenario_b", "scenario_c"):
-                if node.get(key):
-                    try:
-                        node[key] = json.loads(node[key])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
+        # Deserialise cds_components JSON
+        if node and node.get("cds_components"):
+            try:
+                node["cds_components"] = json.loads(node["cds_components"])
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-        # Build bifurcated signal from path data
+        # Build signal dict if in SIGNAL state
         signal = None
-        conviction = path.get("conviction_pct", 0)
-        direction = path.get("current_direction", "UNKNOWN")
-        if conviction >= SIGNAL_CONVICTION_THRESHOLD and path.get("signal_emitted"):
-            sig_dir = path.get("signal_direction", "")
+        if path["status"] == "SIGNAL" and path.get("signal_direction"):
+            sig_dir = path["signal_direction"]
             sig_target = path.get("signal_target", 0)
-            contrarian_w = path.get("contrarian_weight", CONTRARIAN_WEIGHT_DEFAULT)
+            conviction = path["conviction_pct"]
 
-            # Reconstruct FOR/AGAINST probabilities
             for_prob = conviction / 100.0
             against_prob = 1.0 - for_prob
-            if direction == "REVERSAL":
-                for_prob = min(0.95, for_prob + contrarian_w * 0.1)
-                against_prob = 1.0 - for_prob
+            against_direction = "BEARISH" if sig_dir == "BULLISH" else "BULLISH"
 
-            for_direction = sig_dir
-            against_direction = "BEARISH" if for_direction == "BULLISH" else "BULLISH"
-            if for_direction not in ("BULLISH", "BEARISH"):
-                against_direction = "NEUTRAL"
-
-            # Estimate against target (mirror of for target around spot)
-            spot = node.get("spot_price", 0) if node else 0
+            spot = node.get("spot_at_prediction", 0) if node else 0
             against_target = round(2 * spot - sig_target, 2) if spot else sig_target
 
-            recommended = "FOR" if for_prob >= against_prob else "AGAINST"
             signal = {
                 "for": {
-                    "direction": for_direction,
+                    "direction": sig_dir,
                     "probability": round(for_prob * 100, 1),
                     "target": sig_target,
                 },
@@ -204,60 +175,70 @@ def get_prediction_state() -> Optional[dict]:
                     "probability": round(against_prob * 100, 1),
                     "target": against_target,
                 },
-                "recommended": recommended,
+                "recommended": "FOR" if for_prob >= 0.5 else "AGAINST",
                 "conviction": conviction,
-                "path_direction": direction,
+                "path_direction": sig_dir,
             }
 
-        # Last matched node (for "Last Match" display)
+        # Last validated node (for "Last Prediction" display)
         cursor.execute("""
-            SELECT matched_scenario, match_score_a, match_score_b, match_score_c
-            FROM prediction_nodes
-            WHERE path_id = ? AND status = 'MATCHED'
+            SELECT predicted_direction, validation_result, predicted_cds,
+                   spot_at_prediction, actual_spot
+            FROM prediction_nodes_v2
+            WHERE path_id = ? AND validation_result != 'PENDING'
             ORDER BY id DESC LIMIT 1
         """, (path["id"],))
-        last_matched_row = cursor.fetchone()
-        last_matched = dict(last_matched_row) if last_matched_row else None
+        last_validated_row = cursor.fetchone()
+        last_validated = dict(last_validated_row) if last_validated_row else None
 
-        # Recent history (last 10 nodes, exclude current PENDING)
+        # Recent history (last 10 validated nodes)
         cursor.execute("""
-            SELECT id, depth, matched_scenario, match_score_a, match_score_b,
-                   match_score_c, status, created_at
-            FROM prediction_nodes
-            WHERE path_id = ? AND status != 'PENDING'
+            SELECT id, predicted_direction, predicted_cds, validation_result,
+                   spot_at_prediction, actual_spot, created_at, validated_at
+            FROM prediction_nodes_v2
+            WHERE path_id = ? AND validation_result != 'PENDING'
             ORDER BY id DESC LIMIT 10
         """, (path["id"],))
         history = [dict(r) for r in cursor.fetchall()]
 
+        # Map to frontend-compatible format
+        direction = path.get("hypothesis_direction") or "OBSERVING"
+        status = path["status"]
+
         return {
             "path": {
                 "id": path["id"],
-                "depth": path["current_depth"],
-                "max_depth": path["max_depth_reached"],
-                "direction": path["current_direction"],
-                "conviction": conviction,
-                "consecutive_matches": path["consecutive_matches"],
-                "consecutive_misses": path["consecutive_misses"],
-                "contrarian_weight": path["contrarian_weight"],
+                "depth": path["consecutive_correct"],
+                "max_depth": path["consecutive_correct"],
+                "direction": direction,
+                "conviction": path["conviction_pct"],
+                "consecutive_matches": path["consecutive_correct"],
+                "consecutive_misses": path["consecutive_wrong"],
+                "contrarian_weight": path["cds_ema"],
                 "accuracy": path["accuracy_pct"],
                 "total": path["total_predictions"],
                 "correct": path["correct_predictions"],
-                "status": path["status"],
+                "status": status,
             },
             "latest_node": node,
-            "last_matched": last_matched,
+            "last_matched": last_validated,
             "signal": signal,
             "history": history,
         }
 
 
+# ---------------------------------------------------------------------------
+# Public API: get_active_prediction_path
+# ---------------------------------------------------------------------------
+
 def get_active_prediction_path() -> Optional[dict]:
     """Return the currently active prediction path row, or None."""
+    _ensure_v2_tables()
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT * FROM prediction_paths
-            WHERE status = 'ACTIVE'
+            SELECT * FROM prediction_paths_v2
+            WHERE status IN ('OBSERVING', 'HYPOTHESIS', 'SIGNAL')
             ORDER BY id DESC LIMIT 1
         """)
         row = cursor.fetchone()
@@ -265,791 +246,410 @@ def get_active_prediction_path() -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# PredictionEngine
+# PredictionEngine class
 # ---------------------------------------------------------------------------
 
 class PredictionEngine:
-    """
-    Core prediction tree engine.
-
-    Called once per 3-minute candle via ``process_candle(analysis)``.
-    """
+    """Hypothesis-based directional prediction engine."""
 
     def __init__(self):
-        init_prediction_tables()
+        _ensure_v2_tables()
         self._active_path_id: Optional[int] = None
         self._pending_node_id: Optional[int] = None
-        self._contrarian_weight: float = CONTRARIAN_WEIGHT_DEFAULT
-        self._today: Optional[date] = None
-        self._load_state()
+        self._last_reset_date: Optional[date] = None
+        self._load_active_state()
 
-    # ------------------------------------------------------------------
-    # State management
-    # ------------------------------------------------------------------
-
-    def _load_state(self):
-        """Recover state from DB after restart."""
+    def _load_active_state(self):
+        """Load active path and pending node from DB on startup."""
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Find active path
             cursor.execute("""
-                SELECT * FROM prediction_paths
-                WHERE status = 'ACTIVE'
+                SELECT id FROM prediction_paths_v2
+                WHERE status IN ('OBSERVING', 'HYPOTHESIS', 'SIGNAL')
                 ORDER BY id DESC LIMIT 1
             """)
-            path_row = cursor.fetchone()
-            if path_row:
-                path = dict(path_row)
-                self._active_path_id = path["id"]
-                self._contrarian_weight = path.get("contrarian_weight", CONTRARIAN_WEIGHT_DEFAULT)
+            row = cursor.fetchone()
+            if row:
+                self._active_path_id = row["id"]
 
-                # Find last pending node on this path
+                # Find pending node
                 cursor.execute("""
-                    SELECT * FROM prediction_nodes
-                    WHERE path_id = ? AND status = 'PENDING'
+                    SELECT id FROM prediction_nodes_v2
+                    WHERE path_id = ? AND validation_result = 'PENDING'
                     ORDER BY id DESC LIMIT 1
                 """, (self._active_path_id,))
                 node_row = cursor.fetchone()
                 if node_row:
-                    node = dict(node_row)
-                    # Check staleness
-                    created = datetime.fromisoformat(node["created_at"])
-                    age = (datetime.now() - created).total_seconds()
-                    if age > STALE_NODE_SECONDS:
-                        # Expire stale node
-                        cursor.execute(
-                            "UPDATE prediction_nodes SET status='EXPIRED' WHERE id=?",
-                            (node["id"],)
-                        )
-                        conn.commit()
-                        self._pending_node_id = None
-                        log.info("Expired stale pending node", node_id=node["id"], age_s=f"{age:.0f}")
-                    else:
-                        self._pending_node_id = node["id"]
+                    self._pending_node_id = node_row["id"]
 
-                # Set _today so _check_day_reset doesn't re-expire same-day paths
-                started = path.get("started_at", "")
-                if started:
-                    try:
-                        self._today = datetime.fromisoformat(started).date()
-                    except (ValueError, TypeError):
-                        pass
-
-                log.info("Loaded prediction state",
-                         path_id=self._active_path_id,
-                         pending_node=self._pending_node_id,
-                         contrarian_w=f"{self._contrarian_weight:.2f}")
-            else:
-                log.info("No active prediction path found — will create on first candle")
+    # ------------------------------------------------------------------
+    # Day reset
+    # ------------------------------------------------------------------
 
     def _check_day_reset(self):
-        """Expire old paths when a new trading day starts. Carry contrarian weight forward."""
+        """Reset path at the start of each new trading day."""
         today = datetime.now().date()
-        if self._today == today:
+        if self._last_reset_date == today:
             return
-        self._today = today
 
-        with get_connection() as conn:
-            cursor = conn.cursor()
+        self._last_reset_date = today
 
-            # Find active paths from previous days only
-            today_str = today.isoformat()
-            cursor.execute("""
-                SELECT id, contrarian_weight FROM prediction_paths
-                WHERE status = 'ACTIVE' AND started_at < ?
-            """, (today_str,))
-            rows = cursor.fetchall()
-            for row in rows:
-                old_path = dict(row)
-                # Carry contrarian weight forward
-                self._contrarian_weight = old_path.get("contrarian_weight", CONTRARIAN_WEIGHT_DEFAULT)
-                cursor.execute("""
-                    UPDATE prediction_paths
-                    SET status = 'EXPIRED', ended_at = ?
-                    WHERE id = ?
-                """, (datetime.now().isoformat(), old_path["id"]))
-
-            # Expire any stale pending nodes
-            cursor.execute("""
-                UPDATE prediction_nodes SET status = 'EXPIRED'
-                WHERE status = 'PENDING' AND created_at < ?
-            """, ((datetime.now() - timedelta(hours=12)).isoformat(),))
-
-            conn.commit()
-
-        self._active_path_id = None
-        self._pending_node_id = None
-        if rows:
-            log.info("Day reset — expired old paths",
-                     count=len(rows),
-                     carry_contrarian=f"{self._contrarian_weight:.2f}")
+        if self._active_path_id is not None:
+            with get_connection() as conn:
+                # Check if active path is from a previous day
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT started_at FROM prediction_paths_v2 WHERE id = ?",
+                    (self._active_path_id,)
+                )
+                row = cursor.fetchone()
+                if row:
+                    started = datetime.fromisoformat(row["started_at"]).date()
+                    if started < today:
+                        conn.execute("""
+                            UPDATE prediction_paths_v2
+                            SET status = 'EXPIRED', ended_at = ?
+                            WHERE id = ?
+                        """, (datetime.now().isoformat(), self._active_path_id))
+                        conn.commit()
+                        self._active_path_id = None
+                        self._pending_node_id = None
+                        log.info("Path expired (new day)")
 
     # ------------------------------------------------------------------
-    # Main entry point
+    # CDS computation
     # ------------------------------------------------------------------
 
-    def process_candle(self, analysis: dict) -> Optional[dict]:
+    @staticmethod
+    def _compute_cds(analysis: dict) -> tuple[float, dict]:
         """
-        Process a new candle's analysis data.
+        Compute Composite Directional Score from analysis data.
 
-        1. Day-reset check
-        2. If pending node exists → match against actual data
-        3. Update path (deepen or degrade)
-        4. Generate new predictions for next candle
-        5. If conviction >= threshold → emit bifurcated signal
-
-        Returns a summary dict (attached to ``analysis["prediction_tree"]``) or None.
+        Returns (cds_value, components_dict).
         """
-        self._check_day_reset()
+        # 1. OI Flow (combined_score is already -100 to +100)
+        oi_flow = analysis.get("combined_score", 0)
 
-        now = datetime.now()
-        spot = analysis.get("spot_price", 0)
-        score = analysis.get("combined_score", 0)
-        verdict = analysis.get("verdict", "")
-        pcr = analysis.get("pcr", 0)
-        iv_skew = analysis.get("iv_skew", 0)
-        vix = analysis.get("vix", 0)
+        # 2. Strength (net_strength is -100 to +100)
+        strength = analysis.get("strength_analysis", {}).get("net_strength", 0)
 
-        matched_scenario = None
-        best_score = 0.0
-
-        # --- Step 1: Match pending predictions against this candle ---
-        if self._pending_node_id:
-            matched_scenario, best_score = self._match_predictions(
-                self._pending_node_id, analysis
-            )
-
-        # --- Step 2: Update path ---
-        if self._active_path_id is None:
-            self._create_path(now)
-
-        if matched_scenario and matched_scenario != "NONE":
-            self._extend_path(matched_scenario, best_score, analysis)
-        else:
-            self._degrade_path()
-
-        # --- Step 3: Generate new predictions ---
-        scenarios = self._generate_predictions(analysis)
-        parent_node = self._pending_node_id  # previous node becomes parent
-        new_node_id = self._save_node(
-            created_at=now,
-            parent_node_id=parent_node,
-            path_id=self._active_path_id,
-            depth=self._get_current_depth(),
-            scenarios=scenarios,
-            analysis=analysis,
-        )
-        self._pending_node_id = new_node_id
-
-        # --- Step 4: Check signal ---
-        signal = None
-        path = self._get_path()
-        conviction = path["conviction_pct"] if path else 0
-        if conviction >= SIGNAL_CONVICTION_THRESHOLD and path:
-            signal = self._generate_bifurcated_signal(path, analysis)
-
-        depth = path["current_depth"] if path else 0
-        direction = path["current_direction"] if path else "UNKNOWN"
-
-        log.info("Prediction tree updated",
-                 depth=depth,
-                 conviction=f"{conviction:.0f}%",
-                 matched=matched_scenario or "FIRST",
-                 match_score=f"{best_score:.2f}",
-                 direction=direction)
-
-        return {
-            "depth": depth,
-            "conviction": conviction,
-            "direction": direction,
-            "matched_scenario": matched_scenario,
-            "match_score": round(best_score, 3),
-            "signal": signal,
-            "contrarian_weight": round(self._contrarian_weight, 3),
-        }
-
-    # ------------------------------------------------------------------
-    # Prediction generation
-    # ------------------------------------------------------------------
-
-    def _generate_predictions(self, analysis: dict) -> dict:
-        """
-        Generate 3 scenarios for the NEXT candle.
-
-        Returns dict with keys 'A', 'B', 'C', each a dict of expected ranges.
-        """
-        spot = analysis.get("spot_price", 0)
-        score = analysis.get("combined_score", 0)
-        pcr = analysis.get("pcr", 1.0)
-        iv_skew = analysis.get("iv_skew", 0)
-        verdict = analysis.get("verdict", "")
-        phase = analysis.get("oi_acceleration", {}).get("phase", "stable")
-
-        is_bullish = score > 0
-        spot_step = spot * SPOT_STEP_PCT / 100  # absolute points
-
-        # Premium momentum direction
+        # 3. Premium Flow
         pm = analysis.get("premium_momentum", {})
         call_pm = pm.get("call_premium_change_pct", 0)
         put_pm = pm.get("put_premium_change_pct", 0)
+        premium_flow = max(-100, min(100, (call_pm - put_pm) * 5))
 
-        # OI direction from changes
-        ce_change = analysis.get("call_oi_change", 0)
-        pe_change = analysis.get("put_oi_change", 0)
+        # 4. Futures component
+        futures_oi_change = analysis.get("futures_oi_change", 0)
+        futures_basis = analysis.get("futures_basis", 0) if "futures_basis" in analysis else 0
+        # Normalize: typical futures OI change is ±500K, basis ±50pts
+        norm_foi = max(-100, min(100, futures_oi_change / 5000 * 100)) if futures_oi_change else 0
+        norm_basis = max(-100, min(100, futures_basis / 50 * 100)) if futures_basis else 0
+        futures = 0.6 * norm_foi + 0.4 * norm_basis
 
-        # Contrarian boost for strong signals
-        is_strong = abs(score) > STRONG_SIGNAL_THRESHOLD
-        c_boost = self._contrarian_weight if is_strong else 0.0
+        # 5. Structural (max pain magnet + OI wall proximity)
+        spot = analysis.get("spot_price", 0)
+        max_pain = analysis.get("max_pain", 0)
+        clusters = analysis.get("oi_clusters", {})
+        structural = 0.0
+        if spot and max_pain:
+            # Max pain acts as magnet: positive if spot below max_pain (bullish pull)
+            mp_pull = (max_pain - spot) / spot * 1000 if spot else 0  # scale
+            mp_pull = max(-50, min(50, mp_pull))
 
-        # --- Scenario A: Continuation ---
-        if is_bullish:
-            a_spot = (spot, spot + 2 * spot_step)
-            a_score = (score, score + SCORE_STEP)
-            a_oi_dir = "PE_RISING"
-            a_prem_dir = "CALL_UP"
-            a_pcr = (pcr, pcr + PCR_STEP)
-            a_iv_skew = "NEGATIVE"  # call IV higher = bullish
-            a_phase = "accumulation"
+            # OI wall proximity: nearest resistance above vs support below
+            nearest_res = None
+            for r in (clusters.get("resistance") or []):
+                s = r.get("strike", 0)
+                if s > spot:
+                    nearest_res = s
+                    break
+            nearest_sup = None
+            for s_item in (clusters.get("support") or []):
+                s = s_item.get("strike", 0)
+                if s < spot:
+                    nearest_sup = s
+                    break
+
+            wall_bias = 0.0
+            if nearest_res and nearest_sup:
+                dist_res = nearest_res - spot
+                dist_sup = spot - nearest_sup
+                # Closer to support = more bullish (support holds), closer to resistance = more bearish
+                if dist_res + dist_sup > 0:
+                    wall_bias = ((dist_res - dist_sup) / (dist_res + dist_sup)) * 50
+
+            structural = max(-100, min(100, mp_pull + wall_bias))
+
+        # 6. Regime score
+        regime = analysis.get("market_regime", {}).get("regime", "range_bound")
+        phase = analysis.get("oi_acceleration", {}).get("phase", "stable")
+        vix = analysis.get("vix", 0)
+
+        phase_scores = {
+            "accumulation": 40,    # bullish accumulation
+            "distribution": -40,   # bearish distribution
+            "unwinding": 0,
+            "stable": 0,
+        }
+        phase_score = phase_scores.get(phase, 0)
+
+        # Regime direction modifier
+        if regime == "trending_up":
+            phase_score = abs(phase_score) if phase_score >= 0 else phase_score * 0.5
+        elif regime == "trending_down":
+            phase_score = -abs(phase_score) if phase_score <= 0 else phase_score * 0.5
+
+        # VIX dampener: high VIX = less confident in direction
+        vix_dampener = 1.0
+        if vix > 20:
+            vix_dampener = max(0.5, 1.0 - (vix - 20) / 40)
+
+        regime_score = max(-100, min(100, phase_score * vix_dampener))
+
+        # Composite
+        cds = (
+            W_OI_FLOW * oi_flow
+            + W_STRENGTH * strength
+            + W_PREMIUM_FLOW * premium_flow
+            + W_FUTURES * futures
+            + W_STRUCTURAL * structural
+            + W_REGIME * regime_score
+        )
+        cds = max(-100, min(100, cds))
+
+        components = {
+            "oi_flow": round(oi_flow, 1),
+            "strength": round(strength, 1),
+            "premium_flow": round(premium_flow, 1),
+            "futures": round(futures, 1),
+            "structural": round(structural, 1),
+            "regime": round(regime_score, 1),
+        }
+
+        return round(cds, 2), components
+
+    # ------------------------------------------------------------------
+    # Smart targets (OI-derived)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_target(direction: str, analysis: dict) -> float:
+        """Compute OI-derived target for a directional hypothesis."""
+        spot = analysis.get("spot_price", 0)
+        if not spot:
+            return 0
+
+        max_pain = analysis.get("max_pain", 0)
+        clusters = analysis.get("oi_clusters", {})
+        vix = analysis.get("vix", 13)
+
+        # VIX-implied 3-minute move (annualized vol → 3 min)
+        # Trading minutes per year ≈ 375 * 252 = 94500
+        vix_move = spot * (vix / 100) * math.sqrt(3 / 94500) if vix > 0 else spot * 0.001
+
+        if direction == "BULLISH":
+            # Find nearest resistance above spot
+            candidates = []
+            for r in (clusters.get("resistance") or []):
+                s = r.get("strike", 0)
+                if s > spot:
+                    candidates.append(s)
+            if max_pain and max_pain > spot:
+                candidates.append(max_pain)
+
+            if candidates:
+                target = min(candidates)
+                # Cap to 2-sigma of VIX-implied move
+                max_target = spot + 2 * vix_move
+                target = min(target, max_target)
+            else:
+                target = spot + vix_move * 0.7
         else:
-            a_spot = (spot - 2 * spot_step, spot)
-            a_score = (score - SCORE_STEP, score)
-            a_oi_dir = "CE_RISING"
-            a_prem_dir = "PUT_UP"
-            a_pcr = (pcr - PCR_STEP, pcr)
-            a_iv_skew = "POSITIVE"  # put IV higher = bearish
-            a_phase = "distribution"
+            # BEARISH: find nearest support below spot
+            candidates = []
+            for s_item in (clusters.get("support") or []):
+                s = s_item.get("strike", 0)
+                if s < spot:
+                    candidates.append(s)
+            if max_pain and max_pain < spot:
+                candidates.append(max_pain)
 
-        scenario_a = {
-            "label": "Continuation",
-            "spot_range": [round(a_spot[0], 2), round(a_spot[1], 2)],
-            "score_range": [round(a_score[0], 1), round(a_score[1], 1)],
-            "oi_direction": a_oi_dir,
-            "premium_direction": a_prem_dir,
-            "pcr_range": [round(a_pcr[0], 2), round(a_pcr[1], 2)],
-            "iv_skew_direction": a_iv_skew,
-            "phase_expected": a_phase,
-            "contrarian_boost": 0.0,
-        }
+            if candidates:
+                target = max(candidates)
+                min_target = spot - 2 * vix_move
+                target = max(target, min_target)
+            else:
+                target = spot - vix_move * 0.7
 
-        # --- Scenario B: Reversal ---
-        if is_bullish:
-            b_spot = (spot - 2 * spot_step, spot)
-            b_score = (score - 2 * SCORE_STEP, max(score - SCORE_STEP, -100))
-            b_oi_dir = "CE_RISING"
-            b_prem_dir = "PUT_UP"
-            b_pcr = (pcr - PCR_STEP, pcr)
-            b_iv_skew = "POSITIVE"
-            b_phase = "distribution"
+        return round(target, 2)
+
+    # ------------------------------------------------------------------
+    # Conviction formula
+    # ------------------------------------------------------------------
+
+    def _compute_conviction(self, path: dict, cds: float, cds_ema: float) -> float:
+        """
+        Multi-factor conviction score.
+
+        streak_factor:      min(1, streak/5) with diminishing returns
+        cds_factor:         min(1, |CDS|/60)
+        consistency_factor: CDS EMA same sign as current CDS
+        accuracy_factor:    accuracy_pct (needs ≥3 predictions)
+        """
+        streak = path.get("consecutive_correct", 0)
+        total = path.get("total_predictions", 0)
+        correct = path.get("correct_predictions", 0)
+        accuracy = (correct / total * 100) if total >= 3 else 50.0
+
+        # Streak factor with diminishing returns
+        streak_raw = min(1.0, streak / 5)
+        streak_factor = streak_raw * (1.0 - 0.1 * max(0, streak - 5))  # diminish after 5
+        streak_factor = max(0, streak_factor)
+
+        # CDS magnitude factor
+        cds_factor = min(1.0, abs(cds) / 60)
+
+        # Consistency: EMA agrees with current direction
+        if cds != 0 and cds_ema != 0:
+            same_sign = (cds > 0) == (cds_ema > 0)
+            consistency_factor = 1.0 if same_sign else 0.0
         else:
-            b_spot = (spot, spot + 2 * spot_step)
-            b_score = (min(score + SCORE_STEP, 100), score + 2 * SCORE_STEP)
-            b_oi_dir = "PE_RISING"
-            b_prem_dir = "CALL_UP"
-            b_pcr = (pcr, pcr + PCR_STEP)
-            b_iv_skew = "NEGATIVE"
-            b_phase = "accumulation"
+            consistency_factor = 0.5
 
-        scenario_b = {
-            "label": "Reversal",
-            "spot_range": [round(b_spot[0], 2), round(b_spot[1], 2)],
-            "score_range": [round(b_score[0], 1), round(b_score[1], 1)],
-            "oi_direction": b_oi_dir,
-            "premium_direction": b_prem_dir,
-            "pcr_range": [round(b_pcr[0], 2), round(b_pcr[1], 2)],
-            "iv_skew_direction": b_iv_skew,
-            "phase_expected": b_phase,
-            "contrarian_boost": round(c_boost, 3),
-        }
+        # Accuracy factor (only meaningful with ≥3 predictions)
+        accuracy_factor = accuracy / 100.0 if total >= 3 else 0.5
 
-        # --- Scenario C: Consolidation ---
-        scenario_c = {
-            "label": "Consolidation",
-            "spot_range": [round(spot - spot_step, 2), round(spot + spot_step, 2)],
-            "score_range": [round(score - SCORE_STEP / 2, 1), round(score + SCORE_STEP / 2, 1)],
-            "oi_direction": "BOTH",
-            "premium_direction": "FLAT",
-            "pcr_range": [round(pcr - PCR_STEP / 2, 2), round(pcr + PCR_STEP / 2, 2)],
-            "iv_skew_direction": "FLAT",
-            "phase_expected": "stable",
-            "contrarian_boost": 0.0,
-        }
+        conviction = (
+            0.35 * streak_factor
+            + 0.25 * cds_factor
+            + 0.25 * consistency_factor
+            + 0.15 * accuracy_factor
+        ) * 100
 
-        return {"A": scenario_a, "B": scenario_b, "C": scenario_c}
+        return min(CONVICTION_MAX, round(conviction, 1))
 
     # ------------------------------------------------------------------
-    # Matching logic
+    # Direction flip logic (stability)
     # ------------------------------------------------------------------
 
-    def _match_predictions(self, node_id: int, actual: dict) -> tuple:
+    def _should_flip_direction(self, path: dict, cds: float, cds_ema: float) -> bool:
         """
-        Score each pending scenario against actual candle data.
-
-        Returns (best_scenario_letter, best_score) or ("NONE", 0.0).
+        Check if direction should flip. Requires ALL:
+        1. CDS EMA has changed sign vs current hypothesis
+        2. |CDS| > FLIP_THRESHOLD in new direction
+        3. At least DIRECTION_LOCK_CANDLES since hypothesis started
         """
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM prediction_nodes WHERE id = ?", (node_id,))
-            row = cursor.fetchone()
-            if not row:
-                return ("NONE", 0.0)
-            node = dict(row)
+        hyp_dir = path.get("hypothesis_direction")
+        if not hyp_dir:
+            return True  # no hypothesis yet, free to set
 
-        if node["status"] != "PENDING":
-            return ("NONE", 0.0)
+        # Check EMA sign vs hypothesis
+        ema_bullish = cds_ema > 0
+        hyp_bullish = hyp_dir == "BULLISH"
+        if ema_bullish == hyp_bullish:
+            return False  # EMA still agrees with hypothesis
 
-        scores = {}
-        for letter in ("A", "B", "C"):
-            blob = node.get(f"scenario_{letter.lower()}")
-            if not blob:
-                scores[letter] = 0.0
-                continue
-            try:
-                scenario = json.loads(blob) if isinstance(blob, str) else blob
-            except (json.JSONDecodeError, TypeError):
-                scores[letter] = 0.0
-                continue
-            scores[letter] = self._score_scenario(scenario, actual)
+        # Check CDS magnitude
+        if abs(cds) < CDS_FLIP_THRESHOLD:
+            return False  # not strong enough
 
-        # Pick best
-        best_letter = max(scores, key=scores.get)
-        best_score = scores[best_letter]
+        # Check CDS direction is opposite to hypothesis
+        cds_bullish = cds > 0
+        if cds_bullish == hyp_bullish:
+            return False  # CDS still same direction
 
-        # Update node in DB
-        status = "MATCHED" if best_score >= MATCH_THRESHOLD else "BROKEN"
-        matched = best_letter if best_score >= MATCH_THRESHOLD else "NONE"
+        # Check directional lock
+        hyp_started = path.get("hypothesis_started_at")
+        hyp_start_pred = path.get("hypothesis_start_prediction", 0)
+        total_preds = path.get("total_predictions", 0)
+        candles_since = total_preds - hyp_start_pred if hyp_start_pred else total_preds
 
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
-                UPDATE prediction_nodes
-                SET matched_scenario = ?, match_score_a = ?, match_score_b = ?,
-                    match_score_c = ?, status = ?
-                WHERE id = ?
-            """, (matched, scores["A"], scores["B"], scores["C"], status, node_id))
-            conn.commit()
+        if candles_since < DIRECTION_LOCK_CANDLES:
+            return False  # too soon
 
-        # Update contrarian weight learning
-        if matched != "NONE":
-            was_strong = abs(node.get("combined_score", 0)) > STRONG_SIGNAL_THRESHOLD
-            self._update_contrarian_weight(matched, was_strong)
-
-        return (matched, best_score)
-
-    def _score_scenario(self, scenario: dict, actual: dict) -> float:
-        """
-        Score a single scenario against actual data.
-
-        Each metric scored 0.0–1.0, then weighted.
-        """
-        total = 0.0
-
-        # 1. Spot range
-        spot = actual.get("spot_price", 0)
-        sr = scenario.get("spot_range", [0, 0])
-        total += METRIC_WEIGHTS["spot"] * self._range_score(spot, sr[0], sr[1])
-
-        # 2. Combined score range
-        score = actual.get("combined_score", 0)
-        scr = scenario.get("score_range", [0, 0])
-        total += METRIC_WEIGHTS["score"] * self._range_score(score, scr[0], scr[1])
-
-        # 3. OI direction
-        ce_change = actual.get("call_oi_change", 0)
-        pe_change = actual.get("put_oi_change", 0)
-        actual_oi_dir = self._classify_oi_direction(ce_change, pe_change)
-        expected_oi_dir = scenario.get("oi_direction", "BOTH")
-        total += METRIC_WEIGHTS["oi_dir"] * self._categorical_score(actual_oi_dir, expected_oi_dir)
-
-        # 4. Premium direction
-        pm = actual.get("premium_momentum", {})
-        call_pm = pm.get("call_premium_change_pct", 0)
-        put_pm = pm.get("put_premium_change_pct", 0)
-        actual_prem_dir = self._classify_premium_direction(call_pm, put_pm)
-        expected_prem_dir = scenario.get("premium_direction", "FLAT")
-        total += METRIC_WEIGHTS["prem_dir"] * self._categorical_score(actual_prem_dir, expected_prem_dir)
-
-        # 5. PCR range
-        pcr = actual.get("pcr", 1.0)
-        pcr_r = scenario.get("pcr_range", [0.8, 1.2])
-        total += METRIC_WEIGHTS["pcr"] * self._range_score(pcr, pcr_r[0], pcr_r[1])
-
-        # 6. IV skew direction
-        iv_skew = actual.get("iv_skew", 0)
-        actual_iv_dir = self._classify_iv_skew(iv_skew)
-        expected_iv_dir = scenario.get("iv_skew_direction", "FLAT")
-        total += METRIC_WEIGHTS["iv_skew"] * self._categorical_score(actual_iv_dir, expected_iv_dir)
-
-        # 7. Phase
-        actual_phase = actual.get("oi_acceleration", {}).get("phase", "stable")
-        expected_phase = scenario.get("phase_expected", "stable")
-        total += METRIC_WEIGHTS["phase"] * (1.0 if actual_phase == expected_phase else 0.0)
-
-        # 8. Contrarian boost (added to scenario B's score when applicable)
-        c_boost = scenario.get("contrarian_boost", 0.0)
-        total += METRIC_WEIGHTS["contrarian"] * c_boost
-
-        return round(total, 4)
-
-    # ------------------------------------------------------------------
-    # Scoring helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _range_score(value: float, lo: float, hi: float) -> float:
-        """Score 1.0 if value in [lo, hi], partial decay outside."""
-        if lo <= value <= hi:
-            return 1.0
-        band = max(hi - lo, 0.001)
-        distance = min(abs(value - lo), abs(value - hi))
-        # Linear decay: 0.0 at 2x band width away
-        return max(0.0, 1.0 - distance / (2 * band))
-
-    @staticmethod
-    def _classify_oi_direction(ce_change: float, pe_change: float) -> str:
-        if ce_change > 0 and pe_change <= 0:
-            return "CE_RISING"
-        if pe_change > 0 and ce_change <= 0:
-            return "PE_RISING"
-        if ce_change > 0 and pe_change > 0:
-            return "BOTH"
-        return "NEITHER"
-
-    @staticmethod
-    def _classify_premium_direction(call_pm: float, put_pm: float) -> str:
-        if call_pm > 1.0 and call_pm > put_pm:
-            return "CALL_UP"
-        if put_pm > 1.0 and put_pm > call_pm:
-            return "PUT_UP"
-        return "FLAT"
-
-    @staticmethod
-    def _classify_iv_skew(iv_skew: float) -> str:
-        if iv_skew > 2.0:
-            return "POSITIVE"
-        if iv_skew < -2.0:
-            return "NEGATIVE"
-        return "FLAT"
-
-    @staticmethod
-    def _categorical_score(actual: str, expected: str) -> float:
-        if actual == expected:
-            return 1.0
-        # Partial credit for related categories
-        if expected == "BOTH" or actual == "BOTH":
-            return 0.4
-        if expected == "FLAT" or actual == "FLAT":
-            return 0.3
-        return 0.0
+        return True
 
     # ------------------------------------------------------------------
     # Path management
     # ------------------------------------------------------------------
 
-    def _create_path(self, now: datetime):
-        """Start a new prediction path."""
+    def _create_path(self, now: datetime) -> int:
+        """Create a new OBSERVING path."""
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO prediction_paths
-                    (started_at, contrarian_weight, status)
-                VALUES (?, ?, 'ACTIVE')
-            """, (now.isoformat(), self._contrarian_weight))
+                INSERT INTO prediction_paths_v2
+                (started_at, status, consecutive_correct, consecutive_wrong,
+                 total_predictions, correct_predictions, inconclusive_predictions,
+                 accuracy_pct, conviction_pct, current_cds, cds_ema)
+                VALUES (?, 'OBSERVING', 0, 0, 0, 0, 0, 0.0, 0.0, 0.0, 0.0)
+            """, (now.isoformat(),))
             conn.commit()
-            self._active_path_id = cursor.lastrowid
-
-        log.info("New prediction path created",
-                 path_id=self._active_path_id,
-                 contrarian_w=f"{self._contrarian_weight:.2f}")
-
-    def _extend_path(self, matched: str, score: float, analysis: dict):
-        """Deepen path on a successful match."""
-        if not self._active_path_id:
-            return
-
-        # Determine direction from matched scenario
-        direction_map = {"A": "CONTINUATION", "B": "REVERSAL", "C": "CONSOLIDATION"}
-        direction = direction_map.get(matched, "UNKNOWN")
-
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM prediction_paths WHERE id = ?", (self._active_path_id,))
-            row = cursor.fetchone()
-            if not row:
-                return
-            path = dict(row)
-
-            new_depth = path["current_depth"] + 1
-            new_consec = path["consecutive_matches"] + 1
-            new_max = max(path["max_depth_reached"], new_depth)
-            total = path["total_predictions"] + 1
-            correct = path["correct_predictions"] + 1
-            accuracy = (correct / total * 100) if total > 0 else 0
-            conviction = self._get_conviction(new_depth)
-
-            cursor.execute("""
-                UPDATE prediction_paths
-                SET current_depth = ?, max_depth_reached = ?,
-                    current_direction = ?, conviction_pct = ?,
-                    consecutive_matches = ?, consecutive_misses = 0,
-                    total_predictions = ?, correct_predictions = ?,
-                    accuracy_pct = ?, contrarian_weight = ?
-                WHERE id = ?
-            """, (new_depth, new_max, direction, conviction,
-                  new_consec, total, correct, accuracy,
-                  self._contrarian_weight, self._active_path_id))
-            conn.commit()
-
-    def _degrade_path(self):
-        """Handle a miss: tolerate 1 miss, break on 2 consecutive."""
-        if not self._active_path_id:
-            return
-
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM prediction_paths WHERE id = ?", (self._active_path_id,))
-            row = cursor.fetchone()
-            if not row:
-                return
-            path = dict(row)
-
-            consec_misses = path["consecutive_misses"] + 1
-            total = path["total_predictions"] + 1
-            accuracy = (path["correct_predictions"] / total * 100) if total > 0 else 0
-
-            if consec_misses >= 2:
-                # Break path
-                self._break_path(path, total, accuracy)
-            else:
-                # Tolerate single miss — drop conviction by 10
-                new_conviction = max(0, path["conviction_pct"] - 10)
-                cursor.execute("""
-                    UPDATE prediction_paths
-                    SET consecutive_misses = ?, conviction_pct = ?,
-                        total_predictions = ?, accuracy_pct = ?
-                    WHERE id = ?
-                """, (consec_misses, new_conviction, total, accuracy,
-                      self._active_path_id))
-                conn.commit()
-                log.info("Prediction miss tolerated",
-                         misses=consec_misses,
-                         conviction=f"{new_conviction:.0f}%")
-
-    def _break_path(self, path: Optional[dict] = None, total: int = 0, accuracy: float = 0):
-        """Break the active path and start fresh next cycle."""
-        if not self._active_path_id:
-            return
-
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            if not path:
-                cursor.execute("SELECT * FROM prediction_paths WHERE id = ?", (self._active_path_id,))
-                row = cursor.fetchone()
-                if row:
-                    path = dict(row)
-                    total = path["total_predictions"]
-                    accuracy = path["accuracy_pct"]
-
-            cursor.execute("""
-                UPDATE prediction_paths
-                SET status = 'BROKEN', ended_at = ?,
-                    total_predictions = ?, accuracy_pct = ?
-                WHERE id = ?
-            """, (datetime.now().isoformat(), total, accuracy,
-                  self._active_path_id))
-
-            # Expire any lingering pending nodes
-            cursor.execute("""
-                UPDATE prediction_nodes SET status = 'EXPIRED'
-                WHERE path_id = ? AND status = 'PENDING'
-            """, (self._active_path_id,))
-
-            conn.commit()
-
-        old_id = self._active_path_id
-        max_depth = path["max_depth_reached"] if path else 0
-        log.info("Prediction path broken",
-                 path_id=old_id,
-                 max_depth=max_depth,
-                 accuracy=f"{accuracy:.1f}%")
-
-        self._active_path_id = None
-        self._pending_node_id = None
+            path_id = cursor.lastrowid
+            self._active_path_id = path_id
+            self._pending_node_id = None
+            log.info("New path created", path_id=path_id)
+            return path_id
 
     def _get_path(self) -> Optional[dict]:
-        """Get the active path dict."""
+        """Get current active path."""
         if not self._active_path_id:
             return None
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM prediction_paths WHERE id = ?", (self._active_path_id,))
+            cursor.execute(
+                "SELECT * FROM prediction_paths_v2 WHERE id = ?",
+                (self._active_path_id,)
+            )
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def _get_current_depth(self) -> int:
-        path = self._get_path()
-        return path["current_depth"] if path else 0
-
-    @staticmethod
-    def _get_conviction(depth: int) -> float:
-        if depth >= 5:
-            return CONVICTION_MAX
-        return CONVICTION_MAP.get(depth, 0)
-
-    # ------------------------------------------------------------------
-    # Contrarian weight learning
-    # ------------------------------------------------------------------
-
-    def _get_learned_contrarian_weight(self) -> float:
-        return self._contrarian_weight
-
-    def _update_contrarian_weight(self, matched_scenario: str, was_strong: bool):
-        """
-        Learn the contrarian pattern over time.
-
-        If B (reversal) matches on a strong signal → increase weight.
-        If A (continuation) matches on a strong signal → decrease weight.
-        """
-        if not was_strong:
+    def _break_path(self, reason: str = "WRONG"):
+        """Break current path → OBSERVING reset."""
+        if not self._active_path_id:
             return
-
-        if matched_scenario == "B":
-            self._contrarian_weight = min(
-                CONTRARIAN_WEIGHT_MAX,
-                self._contrarian_weight + 0.05
-            )
-        elif matched_scenario == "A":
-            self._contrarian_weight = max(
-                CONTRARIAN_WEIGHT_MIN,
-                self._contrarian_weight - 0.03
-            )
-
-        # Persist to active path
-        if self._active_path_id:
-            with get_connection() as conn:
-                conn.execute("""
-                    UPDATE prediction_paths SET contrarian_weight = ?
-                    WHERE id = ?
-                """, (self._contrarian_weight, self._active_path_id))
-                conn.commit()
-
-    # ------------------------------------------------------------------
-    # Bifurcated FOR/AGAINST signal
-    # ------------------------------------------------------------------
-
-    def _generate_bifurcated_signal(self, path: dict, analysis: dict) -> Optional[dict]:
-        """
-        When conviction is high enough, generate both FOR and AGAINST predictions.
-        """
-        conviction = path.get("conviction_pct", 0)
-        direction = path.get("current_direction", "UNKNOWN")
-        spot = analysis.get("spot_price", 0)
-
-        if conviction < SIGNAL_CONVICTION_THRESHOLD:
-            return None
-
-        spot_step = spot * SPOT_STEP_PCT / 100
-
-        # Base probabilities from conviction
-        # Higher conviction = higher probability for the path direction
-        for_prob = conviction / 100.0
-        against_prob = 1.0 - for_prob
-
-        # Adjust by contrarian weight for reversal scenarios
-        if direction == "REVERSAL":
-            # Reversal path: contrarian weight boosts the reversal probability
-            for_prob = min(0.95, for_prob + self._contrarian_weight * 0.1)
-            against_prob = 1.0 - for_prob
-
-        # Determine actual market direction from path
-        score = analysis.get("combined_score", 0)
-        if direction == "CONTINUATION":
-            for_direction = "BULLISH" if score > 0 else "BEARISH"
-        elif direction == "REVERSAL":
-            for_direction = "BEARISH" if score > 0 else "BULLISH"
-        else:
-            for_direction = "NEUTRAL"
-
-        against_direction = "BEARISH" if for_direction == "BULLISH" else "BULLISH"
-        if for_direction == "NEUTRAL":
-            against_direction = "NEUTRAL"
-
-        # Spot targets
-        if for_direction == "BULLISH":
-            for_target = round(spot + 3 * spot_step, 2)
-            against_target = round(spot - 3 * spot_step, 2)
-        elif for_direction == "BEARISH":
-            for_target = round(spot - 3 * spot_step, 2)
-            against_target = round(spot + 3 * spot_step, 2)
-        else:
-            for_target = round(spot, 2)
-            against_target = round(spot, 2)
-
-        # Recommend the higher probability side
-        recommended = "FOR" if for_prob >= against_prob else "AGAINST"
-
-        signal = {
-            "for": {
-                "direction": for_direction,
-                "probability": round(for_prob * 100, 1),
-                "target": for_target,
-            },
-            "against": {
-                "direction": against_direction,
-                "probability": round(against_prob * 100, 1),
-                "target": against_target,
-            },
-            "recommended": recommended,
-            "conviction": conviction,
-            "path_direction": direction,
-        }
-
-        # Persist signal to path
         with get_connection() as conn:
-            rec_dir = signal["for"]["direction"] if recommended == "FOR" else signal["against"]["direction"]
-            rec_target = signal["for"]["target"] if recommended == "FOR" else signal["against"]["target"]
+            now = datetime.now().isoformat()
             conn.execute("""
-                UPDATE prediction_paths
-                SET signal_emitted = 1, signal_direction = ?, signal_target = ?
+                UPDATE prediction_paths_v2
+                SET status = 'BROKEN', ended_at = ?
                 WHERE id = ?
-            """, (rec_dir, rec_target, self._active_path_id))
+            """, (now, self._active_path_id))
             conn.commit()
-
-        log.info("Bifurcated signal emitted",
-                 recommended=recommended,
-                 for_dir=signal["for"]["direction"],
-                 for_prob=f"{signal['for']['probability']:.0f}%",
-                 against_dir=signal["against"]["direction"],
-                 against_prob=f"{signal['against']['probability']:.0f}%")
-
-        return signal
+        log.info("Path broken", path_id=self._active_path_id, reason=reason)
+        self._active_path_id = None
+        self._pending_node_id = None
 
     # ------------------------------------------------------------------
-    # DB persistence helpers
+    # Node management
     # ------------------------------------------------------------------
 
-    def _save_node(self, created_at: datetime, parent_node_id: Optional[int],
-                   path_id: Optional[int], depth: int,
-                   scenarios: dict, analysis: dict) -> int:
-        """Save a new prediction node and return its ID."""
+    def _save_node(self, path_id: int, created_at: datetime,
+                   predicted_direction: Optional[str], predicted_cds: float,
+                   predicted_confidence: float, predicted_target: float,
+                   spot: float, cds_components: dict,
+                   analysis: dict) -> int:
+        """Save a new prediction node."""
         with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO prediction_nodes
-                    (created_at, parent_node_id, path_id, depth,
-                     scenario_a, scenario_b, scenario_c,
-                     spot_price, combined_score, verdict, pcr, iv_skew, vix,
-                     status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+                INSERT INTO prediction_nodes_v2
+                (path_id, created_at, predicted_direction, predicted_cds,
+                 predicted_confidence, predicted_target, spot_at_prediction,
+                 cds_components, validation_result,
+                 combined_score, verdict, pcr, iv_skew, vix)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?, ?, ?)
             """, (
-                created_at.isoformat(),
-                parent_node_id,
                 path_id,
-                depth,
-                json.dumps(scenarios.get("A", {})),
-                json.dumps(scenarios.get("B", {})),
-                json.dumps(scenarios.get("C", {})),
-                analysis.get("spot_price", 0),
+                created_at.isoformat(),
+                predicted_direction,
+                predicted_cds,
+                predicted_confidence,
+                predicted_target,
+                spot,
+                json.dumps(cds_components),
                 analysis.get("combined_score", 0),
                 analysis.get("verdict", ""),
                 analysis.get("pcr", 0),
@@ -1059,25 +659,368 @@ class PredictionEngine:
             conn.commit()
             return cursor.lastrowid
 
+    def _validate_pending_node(self, analysis: dict) -> Optional[str]:
+        """
+        Validate the pending prediction node against actual data.
+
+        Returns: 'CORRECT', 'WRONG', 'INCONCLUSIVE', or None if no pending.
+        """
+        if not self._pending_node_id:
+            return None
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM prediction_nodes_v2 WHERE id = ?",
+                (self._pending_node_id,)
+            )
+            node = cursor.fetchone()
+            if not node:
+                self._pending_node_id = None
+                return None
+
+            node = dict(node)
+            predicted_dir = node.get("predicted_direction")
+            spot_at_pred = node.get("spot_at_prediction", 0)
+            actual_spot = analysis.get("spot_price", 0)
+
+            # No prediction was made (OBSERVING state)
+            if not predicted_dir or predicted_dir == "OBSERVING":
+                conn.execute("""
+                    UPDATE prediction_nodes_v2
+                    SET actual_spot = ?, actual_direction = 'NONE',
+                        validation_result = 'INCONCLUSIVE', validated_at = ?
+                    WHERE id = ?
+                """, (actual_spot, datetime.now().isoformat(), self._pending_node_id))
+                conn.commit()
+                self._pending_node_id = None
+                return "INCONCLUSIVE"
+
+            # Check stale node
+            created = datetime.fromisoformat(node["created_at"])
+            elapsed = (datetime.now() - created).total_seconds()
+            if elapsed > STALE_NODE_SECONDS:
+                conn.execute("""
+                    UPDATE prediction_nodes_v2
+                    SET actual_spot = ?, actual_direction = 'STALE',
+                        validation_result = 'INCONCLUSIVE', validated_at = ?
+                    WHERE id = ?
+                """, (actual_spot, datetime.now().isoformat(), self._pending_node_id))
+                conn.commit()
+                self._pending_node_id = None
+                return "INCONCLUSIVE"
+
+            # Determine actual direction
+            move = actual_spot - spot_at_pred
+            if abs(move) <= VALIDATION_THRESHOLD_PTS:
+                actual_dir = "FLAT"
+                result = "INCONCLUSIVE"
+            elif move > 0:
+                actual_dir = "BULLISH"
+                result = "CORRECT" if predicted_dir == "BULLISH" else "WRONG"
+            else:
+                actual_dir = "BEARISH"
+                result = "CORRECT" if predicted_dir == "BEARISH" else "WRONG"
+
+            conn.execute("""
+                UPDATE prediction_nodes_v2
+                SET actual_spot = ?, actual_direction = ?,
+                    validation_result = ?, validated_at = ?
+                WHERE id = ?
+            """, (actual_spot, actual_dir, result,
+                  datetime.now().isoformat(), self._pending_node_id))
+            conn.commit()
+
+            self._pending_node_id = None
+            return result
+
     # ------------------------------------------------------------------
-    # Stats for API
+    # State machine transitions
+    # ------------------------------------------------------------------
+
+    def _update_path_after_validation(self, path: dict, result: str,
+                                       cds: float, cds_ema: float,
+                                       conviction: float):
+        """Update path state based on validation result."""
+        status = path["status"]
+        streak = path["consecutive_correct"]
+        total = path["total_predictions"]
+        correct = path["correct_predictions"]
+        inconclusive = path["inconclusive_predictions"]
+
+        if result == "CORRECT":
+            streak += 1
+            total += 1
+            correct += 1
+            accuracy = (correct / total * 100) if total > 0 else 0
+
+            # Determine new status
+            if status == "OBSERVING":
+                new_status = "HYPOTHESIS"
+            elif status == "HYPOTHESIS":
+                if streak >= SIGNAL_MIN_STREAK and conviction >= SIGNAL_MIN_CONVICTION:
+                    new_status = "SIGNAL"
+                else:
+                    new_status = "HYPOTHESIS"
+            else:  # SIGNAL
+                new_status = "SIGNAL"
+
+        elif result == "WRONG":
+            total += 1
+            accuracy = (correct / total * 100) if total > 0 else 0
+
+            if status in ("HYPOTHESIS", "SIGNAL"):
+                # Break: wrong prediction kills hypothesis/signal
+                with get_connection() as conn:
+                    conn.execute("""
+                        UPDATE prediction_paths_v2
+                        SET status = 'BROKEN', ended_at = ?,
+                            consecutive_correct = 0, consecutive_wrong = ?,
+                            total_predictions = ?, correct_predictions = ?,
+                            accuracy_pct = ?, conviction_pct = 0,
+                            current_cds = ?, cds_ema = ?
+                        WHERE id = ?
+                    """, (
+                        datetime.now().isoformat(),
+                        path["consecutive_wrong"] + 1,
+                        total, correct, accuracy, cds, cds_ema,
+                        self._active_path_id
+                    ))
+                    conn.commit()
+                log.info("Hypothesis broken (WRONG)", path_id=self._active_path_id, streak_was=path["consecutive_correct"])
+                self._active_path_id = None
+                self._pending_node_id = None
+                return
+            else:
+                # OBSERVING: just record the miss
+                new_status = "OBSERVING"
+                streak = 0
+
+        else:  # INCONCLUSIVE
+            inconclusive += 1
+            accuracy = (correct / total * 100) if total > 0 else 0
+            new_status = status  # unchanged
+
+        # Signal management
+        signal_dir = path.get("signal_direction")
+        signal_target = path.get("signal_target")
+        signal_emitted = path.get("signal_emitted_at")
+
+        if new_status == "SIGNAL" and not signal_emitted:
+            signal_dir = path.get("hypothesis_direction")
+            signal_emitted = datetime.now().isoformat()
+
+        with get_connection() as conn:
+            conn.execute("""
+                UPDATE prediction_paths_v2
+                SET status = ?, consecutive_correct = ?,
+                    total_predictions = ?, correct_predictions = ?,
+                    inconclusive_predictions = ?, accuracy_pct = ?,
+                    conviction_pct = ?, current_cds = ?, cds_ema = ?,
+                    signal_direction = ?, signal_target = ?,
+                    signal_emitted_at = ?, last_prediction_at = ?
+                WHERE id = ?
+            """, (
+                new_status, streak, total, correct, inconclusive,
+                round(accuracy, 1), conviction, cds, cds_ema,
+                signal_dir, signal_target, signal_emitted,
+                datetime.now().isoformat(),
+                self._active_path_id
+            ))
+            conn.commit()
+
+        if new_status != status:
+            log.info("Path state transition", old=status, new=new_status,
+                     streak=streak, conviction=f"{conviction:.0f}%")
+
+    # ------------------------------------------------------------------
+    # Main processing
+    # ------------------------------------------------------------------
+
+    def process_candle(self, analysis: dict) -> Optional[dict]:
+        """
+        Process a new candle's analysis data.
+
+        1. Day-reset check
+        2. Validate pending prediction against actual data
+        3. Compute CDS
+        4. Update CDS EMA + check direction flip
+        5. Make new prediction (or abstain)
+        6. Update path state
+        7. Return summary for dashboard
+
+        Returns a summary dict attached to analysis["prediction_tree"].
+        """
+        self._check_day_reset()
+        now = datetime.now()
+        spot = analysis.get("spot_price", 0)
+
+        # --- Step 1: Validate pending prediction ---
+        validation_result = self._validate_pending_node(analysis)
+
+        # --- Step 2: Compute CDS ---
+        cds, components = self._compute_cds(analysis)
+
+        # --- Step 3: Ensure active path ---
+        if self._active_path_id is None:
+            self._create_path(now)
+
+        path = self._get_path()
+        if not path:
+            self._create_path(now)
+            path = self._get_path()
+
+        # --- Step 4: Update CDS EMA ---
+        old_ema = path.get("cds_ema", 0)
+        cds_ema = CDS_EMA_ALPHA * cds + (1 - CDS_EMA_ALPHA) * old_ema
+
+        # --- Step 5: Check direction flip ---
+        current_hyp_dir = path.get("hypothesis_direction")
+
+        if current_hyp_dir and self._should_flip_direction(path, cds, cds_ema):
+            # Direction flip → break path and start fresh
+            log.info("Direction flip detected", old=current_hyp_dir,
+                     cds=f"{cds:.1f}", cds_ema=f"{cds_ema:.1f}")
+            self._break_path("DIRECTION_FLIP")
+            self._create_path(now)
+            path = self._get_path()
+            cds_ema = cds  # reset EMA
+            validation_result = None  # don't apply old validation to new path
+
+        # --- Step 6: Compute conviction ---
+        conviction = self._compute_conviction(path, cds, cds_ema)
+
+        # --- Step 7: Apply validation result to path ---
+        if validation_result:
+            self._update_path_after_validation(path, validation_result, cds, cds_ema, conviction)
+            # Re-fetch path (may have been broken)
+            if self._active_path_id is None:
+                self._create_path(now)
+                path = self._get_path()
+                cds_ema = cds
+                conviction = self._compute_conviction(path, cds, cds_ema)
+            else:
+                path = self._get_path()
+
+        # --- Step 8: Make new prediction ---
+        if abs(cds) >= CDS_PREDICT_THRESHOLD:
+            predicted_dir = "BULLISH" if cds > 0 else "BEARISH"
+            target = self._compute_target(predicted_dir, analysis)
+
+            # Set hypothesis direction if not set
+            if not path.get("hypothesis_direction"):
+                with get_connection() as conn:
+                    conn.execute("""
+                        UPDATE prediction_paths_v2
+                        SET hypothesis_direction = ?, hypothesis_started_at = ?,
+                            hypothesis_start_prediction = ?, status = ?
+                        WHERE id = ?
+                    """, (
+                        predicted_dir,
+                        now.isoformat(),
+                        path.get("total_predictions", 0),
+                        "HYPOTHESIS" if path["status"] == "OBSERVING" else path["status"],
+                        self._active_path_id
+                    ))
+                    conn.commit()
+                path = self._get_path()
+        else:
+            predicted_dir = None
+            target = 0
+
+        # Update signal target if in SIGNAL state
+        if path and path["status"] == "SIGNAL" and predicted_dir and target:
+            with get_connection() as conn:
+                conn.execute("""
+                    UPDATE prediction_paths_v2
+                    SET signal_target = ?, current_cds = ?, cds_ema = ?
+                    WHERE id = ?
+                """, (target, cds, cds_ema, self._active_path_id))
+                conn.commit()
+        elif path:
+            with get_connection() as conn:
+                conn.execute("""
+                    UPDATE prediction_paths_v2
+                    SET current_cds = ?, cds_ema = ?
+                    WHERE id = ?
+                """, (cds, cds_ema, self._active_path_id))
+                conn.commit()
+
+        # --- Step 9: Save new prediction node ---
+        new_node_id = self._save_node(
+            path_id=self._active_path_id,
+            created_at=now,
+            predicted_direction=predicted_dir or "OBSERVING",
+            predicted_cds=cds,
+            predicted_confidence=conviction,
+            predicted_target=target,
+            spot=spot,
+            cds_components=components,
+            analysis=analysis,
+        )
+        self._pending_node_id = new_node_id
+
+        # --- Build return summary ---
+        path = self._get_path()
+        status = path["status"] if path else "OBSERVING"
+        direction = path.get("hypothesis_direction") or "OBSERVING"
+        depth = path.get("consecutive_correct", 0) if path else 0
+
+        signal = None
+        if status == "SIGNAL" and path.get("signal_direction"):
+            signal = {
+                "for": {
+                    "direction": path["signal_direction"],
+                    "probability": round(conviction, 1),
+                    "target": path.get("signal_target", 0),
+                },
+                "against": {
+                    "direction": "BEARISH" if path["signal_direction"] == "BULLISH" else "BULLISH",
+                    "probability": round(100 - conviction, 1),
+                    "target": round(2 * spot - (path.get("signal_target", 0) or spot), 2),
+                },
+                "recommended": "FOR",
+                "conviction": conviction,
+                "path_direction": direction,
+            }
+
+        log.info("Prediction engine updated",
+                 status=status,
+                 direction=direction or "OBS",
+                 depth=depth,
+                 conviction=f"{conviction:.0f}%",
+                 cds=f"{cds:.1f}",
+                 validation=validation_result or "FIRST",
+                 predicted=predicted_dir or "ABSTAIN")
+
+        return {
+            "depth": depth,
+            "conviction": conviction,
+            "direction": direction,
+            "matched_scenario": validation_result or "FIRST",
+            "match_score": round(abs(cds) / 100, 3),
+            "signal": signal,
+            "contrarian_weight": round(cds_ema, 3),
+        }
+
+    # ------------------------------------------------------------------
+    # Stats
     # ------------------------------------------------------------------
 
     def get_prediction_stats(self) -> dict:
-        """Aggregate accuracy stats across all paths."""
+        """Aggregate accuracy stats across all v2 paths."""
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Overall stats
             cursor.execute("""
                 SELECT
                     COUNT(*) as total_paths,
                     AVG(accuracy_pct) as avg_accuracy,
-                    MAX(max_depth_reached) as best_depth,
-                    AVG(max_depth_reached) as avg_depth,
+                    MAX(consecutive_correct) as best_streak,
+                    AVG(consecutive_correct) as avg_streak,
                     SUM(total_predictions) as total_predictions,
                     SUM(correct_predictions) as total_correct
-                FROM prediction_paths
+                FROM prediction_paths_v2
                 WHERE total_predictions > 0
             """)
             row = cursor.fetchone()
@@ -1089,25 +1032,25 @@ class PredictionEngine:
                 SELECT
                     COUNT(*) as paths_today,
                     AVG(accuracy_pct) as accuracy_today,
-                    MAX(max_depth_reached) as best_depth_today
-                FROM prediction_paths
+                    MAX(consecutive_correct) as best_streak_today
+                FROM prediction_paths_v2
                 WHERE started_at >= ?
             """, (today_str,))
             today_row = cursor.fetchone()
             stats["today"] = dict(today_row) if today_row else {}
 
-            # Contrarian effectiveness
+            # Validation breakdown
             cursor.execute("""
                 SELECT
-                    COUNT(*) as total_strong_matches,
-                    SUM(CASE WHEN matched_scenario = 'B' THEN 1 ELSE 0 END) as reversal_matches,
-                    SUM(CASE WHEN matched_scenario = 'A' THEN 1 ELSE 0 END) as continuation_matches
-                FROM prediction_nodes
-                WHERE status = 'MATCHED'
-                  AND ABS(combined_score) > ?
-            """, (STRONG_SIGNAL_THRESHOLD,))
-            contrarian_row = cursor.fetchone()
-            stats["contrarian"] = dict(contrarian_row) if contrarian_row else {}
-            stats["contrarian_weight"] = self._contrarian_weight
+                    validation_result,
+                    COUNT(*) as count
+                FROM prediction_nodes_v2
+                WHERE validation_result != 'PENDING'
+                GROUP BY validation_result
+            """)
+            breakdown = {}
+            for r in cursor.fetchall():
+                breakdown[r["validation_result"]] = r["count"]
+            stats["validation_breakdown"] = breakdown
 
             return stats

@@ -1398,15 +1398,15 @@ function renderPredictionTreeFull(state) {
     // Build lightweight summary from full state for updatePredictionTree
     const path = state.path || {};
     const lm = state.last_matched || {};
-    const lmScenario = lm.matched_scenario && lm.matched_scenario !== 'NONE' ? lm.matched_scenario : null;
     const summary = {
         depth: path.depth || 0,
         conviction: path.conviction || 0,
         direction: path.direction || '--',
-        matched_scenario: lmScenario || '--',
-        match_score: lmScenario ? (lm['match_score_' + lmScenario.toLowerCase()] || 0) : 0,
+        validation_result: lm.validation_result || '--',
+        predicted_direction: lm.predicted_direction || '--',
         contrarian_weight: path.contrarian_weight || 0,
-        signal: state.signal || null
+        signal: state.signal || null,
+        status: path.status || 'OBSERVING'
     };
     updatePredictionTree(summary);
 
@@ -1415,14 +1415,15 @@ function renderPredictionTreeFull(state) {
     if (historyList && state.history && state.history.length > 0) {
         const last5 = state.history.slice(0, 5).reverse();
         historyList.innerHTML = last5.map(h => {
-            const sc = h.matched_scenario && h.matched_scenario !== 'NONE' ? h.matched_scenario : null;
-            const score = sc ? h['match_score_' + sc.toLowerCase()] : null;
-            const icon = h.status === 'MATCHED' ? '&#10003;' : h.status === 'BROKEN' ? '&#10007;' : '&#8212;';
+            const dir = h.predicted_direction || '--';
+            const result = h.validation_result || '--';
+            const icon = result === 'CORRECT' ? '&#10003;' : result === 'WRONG' ? '&#10007;' : '&#8212;';
+            const cds = h.predicted_cds != null ? h.predicted_cds.toFixed(1) : '--';
             return `<div class="pred-history-item">
-                <span>Candle ${h.depth != null ? h.depth : '?'}:</span>
-                <span><strong>${sc || '--'}</strong></span>
+                <span>${dir.substring(0, 4)}:</span>
+                <span><strong>${result}</strong></span>
                 <span>${icon}</span>
-                <span>${score != null ? score.toFixed(2) : '--'}</span>
+                <span>CDS ${cds}</span>
             </div>`;
         }).join('');
     }
@@ -1442,16 +1443,16 @@ function updatePredictionTree(pt) {
     }
     card.style.display = 'block';
 
-    // Status badge
+    // Status badge: OBS / HYP / SIG
     const badge = document.getElementById('pred-status-badge');
     if (badge) {
-        const dir = (pt.direction || '').toUpperCase();
-        const label = dir === 'CONTINUATION' ? 'CONT' : dir === 'CONTRARIAN' ? 'CONTRA' : dir || '--';
-        badge.textContent = label;
+        const status = (pt.status || '').toUpperCase();
+        const statusLabels = { 'OBSERVING': 'OBS', 'HYPOTHESIS': 'HYP', 'SIGNAL': 'SIG' };
+        badge.textContent = statusLabels[status] || status.substring(0, 3) || '--';
         badge.className = 'trade-status-badge';
-        if (pt.conviction >= 60) {
+        if (status === 'SIGNAL') {
             badge.classList.add('status-active');
-        } else if (pt.depth > 0) {
+        } else if (status === 'HYPOTHESIS') {
             badge.classList.add('status-new');
         }
     }
@@ -1460,33 +1461,40 @@ function updatePredictionTree(pt) {
     setText('pred-depth', pt.depth != null ? pt.depth : '--');
     setText('pred-conviction', pt.conviction != null ? pt.conviction.toFixed(0) + '%' : '--');
     const dirFull = (pt.direction || '').toUpperCase();
-    const dirShort = dirFull.substring(0, 4) || '--';
+    const dirShort = dirFull === 'OBSERVING' ? 'OBS' : dirFull.substring(0, 4) || '--';
     setText('pred-direction', dirShort);
     const dirTooltips = {
-        'CONTINUATION': 'Market is following the current trend. Predictions align with the prevailing direction.',
-        'REVERSAL': 'Market is moving against the prior trend. Predictions expect a direction change.',
-        'CONSOLIDATION': 'Market is range-bound. Neither bulls nor bears have control.',
+        'BULLISH': 'Engine predicts upward movement. CDS is positive — OI flow, strength, and structure favor bulls.',
+        'BEARISH': 'Engine predicts downward movement. CDS is negative — OI flow, strength, and structure favor bears.',
+        'OBSERVING': 'No directional prediction. CDS is too weak (|CDS| < 15) to form a hypothesis.',
     };
     const dirMetric = document.getElementById('pred-direction-metric');
-    if (dirMetric) dirMetric.title = dirTooltips[dirFull] || 'Predicted market direction based on matched scenarios';
+    if (dirMetric) dirMetric.title = dirTooltips[dirFull] || 'Predicted market direction based on CDS';
 
-    // Conviction bar (max 90%)
+    // Conviction bar (max 95%)
     const fill = document.getElementById('pred-conviction-fill');
     if (fill) {
-        const pct = Math.min((pt.conviction || 0) / 90 * 100, 100);
+        const pct = Math.min((pt.conviction || 0) / 95 * 100, 100);
         fill.style.width = pct + '%';
         fill.classList.toggle('high', pt.conviction >= 55);
     }
 
-    // Match info
-    const scenario = pt.matched_scenario || '--';
-    const scoreVal = pt.match_score != null ? pt.match_score.toFixed(2) : '--';
-    const scenarioLabels = { A: 'Continuation', B: 'Reversal', C: 'Breakout' };
-    const label = scenarioLabels[scenario] || '';
-    setText('pred-match-info', `${scenario} (${label}) ${scoreVal}`);
+    // Last Prediction info: CORRECT ✓ / WRONG ✗ / PENDING
+    const result = pt.validation_result || '--';
+    const predDir = pt.predicted_direction || '';
+    const resultIcons = { 'CORRECT': '✓', 'WRONG': '✗', 'INCONCLUSIVE': '—' };
+    const icon = resultIcons[result] || '';
+    const matchDisplay = result === '--' ? '--' : `${result} ${icon}`;
+    setText('pred-match-info', matchDisplay);
 
-    // Contrarian weight
-    setText('pred-contrarian', pt.contrarian_weight != null ? pt.contrarian_weight.toFixed(2) : '--');
+    // CDS Trend (EMA)
+    const ema = pt.contrarian_weight;
+    if (ema != null) {
+        const sign = ema > 0 ? '+' : '';
+        setText('pred-contrarian', `${sign}${ema.toFixed(1)}`);
+    } else {
+        setText('pred-contrarian', '--');
+    }
 
     // Signal block
     const signalDiv = document.getElementById('pred-signal');

@@ -1397,14 +1397,14 @@ function renderPredictionTreeFull(state) {
 
     // Build lightweight summary from full state for updatePredictionTree
     const path = state.path || {};
-    const node = state.latest_node || {};
-    const nodeScenario = node.matched_scenario && node.matched_scenario !== 'NONE' ? node.matched_scenario : null;
+    const lm = state.last_matched || {};
+    const lmScenario = lm.matched_scenario && lm.matched_scenario !== 'NONE' ? lm.matched_scenario : null;
     const summary = {
         depth: path.depth || 0,
         conviction: path.conviction || 0,
         direction: path.direction || '--',
-        matched_scenario: nodeScenario || '--',
-        match_score: nodeScenario ? (node['match_score_' + nodeScenario.toLowerCase()] || 0) : 0,
+        matched_scenario: lmScenario || '--',
+        match_score: lmScenario ? (lm['match_score_' + lmScenario.toLowerCase()] || 0) : 0,
         contrarian_weight: path.contrarian_weight || 0,
         signal: state.signal || null
     };
@@ -1413,7 +1413,7 @@ function renderPredictionTreeFull(state) {
     // Render history
     const historyList = document.getElementById('pred-history-list');
     if (historyList && state.history && state.history.length > 0) {
-        const last5 = state.history.slice(-5).reverse();
+        const last5 = state.history.slice(0, 5).reverse();
         historyList.innerHTML = last5.map(h => {
             const sc = h.matched_scenario && h.matched_scenario !== 'NONE' ? h.matched_scenario : null;
             const score = sc ? h['match_score_' + sc.toLowerCase()] : null;

@@ -167,23 +167,64 @@ def get_prediction_state() -> Optional[dict]:
                     except (json.JSONDecodeError, TypeError):
                         pass
 
-        # Build signal info
+        # Build bifurcated signal from path data
         signal = None
         conviction = path.get("conviction_pct", 0)
+        direction = path.get("current_direction", "UNKNOWN")
         if conviction >= SIGNAL_CONVICTION_THRESHOLD and path.get("signal_emitted"):
+            sig_dir = path.get("signal_direction", "")
+            sig_target = path.get("signal_target", 0)
+            contrarian_w = path.get("contrarian_weight", CONTRARIAN_WEIGHT_DEFAULT)
+
+            # Reconstruct FOR/AGAINST probabilities
+            for_prob = conviction / 100.0
+            against_prob = 1.0 - for_prob
+            if direction == "REVERSAL":
+                for_prob = min(0.95, for_prob + contrarian_w * 0.1)
+                against_prob = 1.0 - for_prob
+
+            for_direction = sig_dir
+            against_direction = "BEARISH" if for_direction == "BULLISH" else "BULLISH"
+            if for_direction not in ("BULLISH", "BEARISH"):
+                against_direction = "NEUTRAL"
+
+            # Estimate against target (mirror of for target around spot)
+            spot = node.get("spot_price", 0) if node else 0
+            against_target = round(2 * spot - sig_target, 2) if spot else sig_target
+
+            recommended = "FOR" if for_prob >= against_prob else "AGAINST"
             signal = {
-                "direction": path.get("signal_direction"),
-                "target": path.get("signal_target"),
-                "result": path.get("signal_result"),
+                "for": {
+                    "direction": for_direction,
+                    "probability": round(for_prob * 100, 1),
+                    "target": sig_target,
+                },
+                "against": {
+                    "direction": against_direction,
+                    "probability": round(against_prob * 100, 1),
+                    "target": against_target,
+                },
+                "recommended": recommended,
                 "conviction": conviction,
+                "path_direction": direction,
             }
 
-        # Recent history (last 10 nodes on this path)
+        # Last matched node (for "Last Match" display)
+        cursor.execute("""
+            SELECT matched_scenario, match_score_a, match_score_b, match_score_c
+            FROM prediction_nodes
+            WHERE path_id = ? AND status = 'MATCHED'
+            ORDER BY id DESC LIMIT 1
+        """, (path["id"],))
+        last_matched_row = cursor.fetchone()
+        last_matched = dict(last_matched_row) if last_matched_row else None
+
+        # Recent history (last 10 nodes, exclude current PENDING)
         cursor.execute("""
             SELECT id, depth, matched_scenario, match_score_a, match_score_b,
                    match_score_c, status, created_at
             FROM prediction_nodes
-            WHERE path_id = ?
+            WHERE path_id = ? AND status != 'PENDING'
             ORDER BY id DESC LIMIT 10
         """, (path["id"],))
         history = [dict(r) for r in cursor.fetchall()]
@@ -204,6 +245,7 @@ def get_prediction_state() -> Optional[dict]:
                 "status": path["status"],
             },
             "latest_node": node,
+            "last_matched": last_matched,
             "signal": signal,
             "history": history,
         }

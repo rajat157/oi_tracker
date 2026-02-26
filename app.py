@@ -305,6 +305,22 @@ def api_momentum_stats():
     return jsonify(tracker.get_momentum_stats())
 
 
+@app.route("/api/prediction-tree")
+def api_prediction_tree():
+    """Get current prediction tree state."""
+    from prediction_engine import get_prediction_state
+    state = get_prediction_state()
+    return jsonify(state or {})
+
+
+@app.route("/api/prediction-stats")
+def api_prediction_stats():
+    """Get prediction accuracy stats."""
+    from prediction_engine import PredictionEngine
+    engine = PredictionEngine()
+    return jsonify(engine.get_prediction_stats())
+
+
 @app.route("/api/logs")
 def api_logs():
     """

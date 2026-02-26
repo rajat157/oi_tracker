@@ -1398,12 +1398,13 @@ function renderPredictionTreeFull(state) {
     // Build lightweight summary from full state for updatePredictionTree
     const path = state.path || {};
     const node = state.latest_node || {};
+    const nodeScenario = node.matched_scenario && node.matched_scenario !== 'NONE' ? node.matched_scenario : null;
     const summary = {
         depth: path.depth || 0,
         conviction: path.conviction || 0,
         direction: path.direction || '--',
-        matched_scenario: node.matched_scenario || '--',
-        match_score: node['match_score_' + (node.matched_scenario || 'a').toLowerCase()] || 0,
+        matched_scenario: nodeScenario || '--',
+        match_score: nodeScenario ? (node['match_score_' + nodeScenario.toLowerCase()] || 0) : 0,
         contrarian_weight: path.contrarian_weight || 0,
         signal: state.signal || null
     };
@@ -1414,12 +1415,12 @@ function renderPredictionTreeFull(state) {
     if (historyList && state.history && state.history.length > 0) {
         const last5 = state.history.slice(-5).reverse();
         historyList.innerHTML = last5.map(h => {
-            const scenario = h.matched_scenario || '--';
-            const score = h['match_score_' + (scenario || 'a').toLowerCase()];
-            const icon = h.status === 'matched' ? '&#10003;' : h.status === 'missed' ? '&#10007;' : '--';
+            const sc = h.matched_scenario && h.matched_scenario !== 'NONE' ? h.matched_scenario : null;
+            const score = sc ? h['match_score_' + sc.toLowerCase()] : null;
+            const icon = h.status === 'MATCHED' ? '&#10003;' : h.status === 'BROKEN' ? '&#10007;' : '&#8212;';
             return `<div class="pred-history-item">
-                <span>Candle ${h.depth || '?'}:</span>
-                <span><strong>${scenario}</strong></span>
+                <span>Candle ${h.depth != null ? h.depth : '?'}:</span>
+                <span><strong>${sc || '--'}</strong></span>
                 <span>${icon}</span>
                 <span>${score != null ? score.toFixed(2) : '--'}</span>
             </div>`;

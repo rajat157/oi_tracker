@@ -356,6 +356,43 @@
                     </div>
                 </div>
 
+                <!-- Price Action Trade Card (CHC-3 premium momentum) -->
+                <div class="card trade-setup-card pa-trade-card" id="pa-trade-card" style="display: none;">
+                    <div class="trade-setup-title-row">
+                        <h3 class="card-title" id="pa-strategy-name">📈 Price Action</h3>
+                        <span class="trade-status-badge" id="pa-status-badge">ACTIVE</span>
+                    </div>
+                    <div class="trade-setup-header">
+                        <span class="trade-direction" id="pa-direction">--</span>
+                        <span class="trade-strike" id="pa-strike">--</span>
+                        <span class="trade-confidence" id="pa-rr">RR: 1:1</span>
+                    </div>
+                    <div class="trade-live-pnl" id="pa-live-pnl" style="display: none;">
+                        <span class="pnl-label">Live P/L</span>
+                        <span class="pnl-value" id="pa-pnl-value">--</span>
+                        <span class="pnl-current">Current: <strong id="pa-current-premium">--</strong></span>
+                    </div>
+                    <div class="trade-levels">
+                        <div class="trade-level entry">
+                            <span class="level-label">Entry Premium</span>
+                            <span class="level-value" id="pa-entry">--</span>
+                        </div>
+                        <div class="trade-level sl">
+                            <span class="level-label">Stop Loss (-15%)</span>
+                            <span class="level-value" id="pa-sl">--</span>
+                        </div>
+                        <div class="trade-level target">
+                            <span class="level-label">Target (+15%)</span>
+                            <span class="level-value" id="pa-target">--</span>
+                        </div>
+                    </div>
+                    <div class="trade-meta">
+                        <span>Spot: <strong id="pa-spot">--</strong></span>
+                        <span>Verdict: <strong id="pa-verdict">--</strong></span>
+                        <span>CHC: <strong id="pa-chc">--</strong></span>
+                    </div>
+                </div>
+
                 <!-- Kite Auth Card -->
                 <div class="card" id="kite-auth-card" style="margin-bottom: 10px;">
                     <div style="display: flex; align-items: center; justify-content: space-between;">

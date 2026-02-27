@@ -18,6 +18,7 @@ from database import get_active_trade_setup
 from selling_tracker import get_active_sell_setup
 from dessert_tracker import get_active_dessert
 from momentum_tracker import get_active_momentum
+from pa_tracker import get_active_pa
 from logger import get_logger
 
 log = get_logger("premium_monitor")
@@ -427,6 +428,17 @@ class PremiumMonitor:
                     count += 1
         except Exception as e:
             log.error("Error scanning momentum trades", error=str(e))
+
+        # Price Action (PA)
+        try:
+            setup = get_active_pa()
+            if setup:
+                trade = self._db_trade_to_active(setup, "pa", expiry, is_selling=False)
+                if trade:
+                    self.register_trade(trade)
+                    count += 1
+        except Exception as e:
+            log.error("Error scanning PA trades", error=str(e))
 
         log.info("Scanned existing trades", found=count)
 

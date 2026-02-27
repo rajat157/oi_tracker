@@ -23,6 +23,7 @@ from trade_tracker import get_trade_tracker
 from selling_tracker import SellingTracker
 from dessert_tracker import DessertTracker
 from momentum_tracker import MomentumTracker
+from pa_tracker import PulseRiderTracker
 from pattern_tracker import check_patterns, log_failed_entry
 from prediction_engine import PredictionEngine
 from logger import get_logger
@@ -57,6 +58,7 @@ class OIScheduler:
         self.selling_tracker = SellingTracker()
         self.dessert_tracker = DessertTracker()
         self.momentum_tracker = MomentumTracker()
+        self.pa_tracker = PulseRiderTracker()
         self.prediction_engine = PredictionEngine()
         self.force_enabled = False
         self.last_iron_pulse_time = None  # Track when Iron Pulse enters for selling decoupling
@@ -331,6 +333,37 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in momentum tracker", error=str(e))
 
+            # ===== PRICE ACTION TRACKER (CHC-3 premium momentum) =====
+            try:
+                # Check/update active PA trade
+                pa_update = self.pa_tracker.check_and_update_trade(strikes_data, timestamp)
+                if pa_update:
+                    log.info("PA trade updated",
+                             action=pa_update['action'],
+                             pnl=f"{pa_update['pnl']:.2f}%",
+                             reason=pa_update['reason'])
+
+                # Create new PA trade if conditions met
+                pa_side = self.pa_tracker.should_create_trade(analysis, strikes_data)
+                if pa_side:
+                    pa_trade_id = self.pa_tracker.create_trade(pa_side, analysis, strikes_data)
+                    if pa_trade_id:
+                        # Register with premium monitor
+                        try:
+                            from pa_tracker import get_active_pa
+                            pa_setup = get_active_pa()
+                            if pa_setup and self.premium_monitor._instrument_map:
+                                expiry = self.premium_monitor._instrument_map.get_current_expiry()
+                                if expiry:
+                                    trade_obj = self.premium_monitor._db_trade_to_active(
+                                        pa_setup, "pa", expiry, is_selling=False)
+                                    if trade_obj:
+                                        self.premium_monitor.register_trade(trade_obj)
+                        except Exception as e:
+                            log.error("Error registering PA with premium monitor", error=str(e))
+            except Exception as e:
+                log.error("Error in PA tracker", error=str(e))
+
             # 6. Add trade tracker data to analysis for dashboard
             tracker_data = self.trade_tracker.get_stats()
             active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
@@ -393,6 +426,25 @@ class OIScheduler:
                 log.error("Error getting momentum data for dashboard", error=str(e))
                 analysis["active_momentum_trade"] = None
                 analysis["momentum_stats"] = {}
+
+            # Add PA tracker data
+            try:
+                from pa_tracker import get_active_pa
+                active_pa = get_active_pa()
+                if active_pa:
+                    strike_pa = strikes_data.get(active_pa["strike"], {})
+                    key = "pe_ltp" if active_pa["option_type"] == "PE" else "ce_ltp"
+                    cur_prem = strike_pa.get(key, 0)
+                    if cur_prem > 0:
+                        pa_pnl = ((cur_prem - active_pa["entry_premium"]) / active_pa["entry_premium"]) * 100
+                        active_pa["current_premium"] = cur_prem
+                        active_pa["current_pnl"] = pa_pnl
+                analysis["active_pa_trade"] = active_pa
+                analysis["pa_stats"] = self.pa_tracker.get_pa_stats()
+            except Exception as e:
+                log.error("Error getting PA data for dashboard", error=str(e))
+                analysis["active_pa_trade"] = None
+                analysis["pa_stats"] = {}
 
             # Run daily learning update at market close
             self._check_daily_learning_update()
@@ -566,6 +618,17 @@ class OIScheduler:
                     pnl = exit_info.get("pnl_pct", 0)
                     conn.execute("""
                         UPDATE momentum_trades SET status=?, resolved_at=?,
+                        exit_premium=?, exit_reason=?, profit_loss_pct=?
+                        WHERE id=?
+                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
+                    conn.commit()
+            elif tracker_type == "pa":
+                from database import get_connection
+                with get_connection() as conn:
+                    status = "WON" if action == "WON" else "LOST"
+                    pnl = exit_info.get("pnl_pct", 0)
+                    conn.execute("""
+                        UPDATE pa_trades SET status=?, resolved_at=?,
                         exit_premium=?, exit_reason=?, profit_loss_pct=?
                         WHERE id=?
                     """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))

@@ -150,6 +150,24 @@ def api_latest():
             analysis["active_momentum_trade"] = None
             analysis["momentum_stats"] = {}
 
+        # Add PA trade data
+        try:
+            from pa_tracker import get_active_pa, PulseRiderTracker
+            active_pa = get_active_pa()
+            if active_pa and snapshot and snapshot.get("strikes"):
+                strike_pa = snapshot["strikes"].get(active_pa["strike"], {})
+                key = "pe_ltp" if active_pa["option_type"] == "PE" else "ce_ltp"
+                cur_prem = strike_pa.get(key, 0)
+                if cur_prem and cur_prem > 0:
+                    pa_pnl = ((cur_prem - active_pa["entry_premium"]) / active_pa["entry_premium"]) * 100
+                    active_pa["current_premium"] = cur_prem
+                    active_pa["current_pnl"] = pa_pnl
+            analysis["active_pa_trade"] = active_pa
+            analysis["pa_stats"] = PulseRiderTracker().get_pa_stats()
+        except Exception:
+            analysis["active_pa_trade"] = None
+            analysis["pa_stats"] = {}
+
         # Add chart history for frontend sync (last 30 data points)
         analysis["chart_history"] = get_analysis_history(limit=30)
 
@@ -303,6 +321,30 @@ def api_momentum_stats():
     from momentum_tracker import MomentumTracker
     tracker = MomentumTracker()
     return jsonify(tracker.get_momentum_stats())
+
+
+@app.route("/api/pa-trades")
+def api_pa_trades():
+    """Get PA trade history."""
+    from database import get_connection
+    days = request.args.get("days", 30, type=int)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM pa_trades
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at DESC
+        """, (f"-{days} days",))
+        trades = [dict(r) for r in cursor.fetchall()]
+    return jsonify({"trades": trades})
+
+
+@app.route("/api/pa-stats")
+def api_pa_stats():
+    """Get PA trade statistics."""
+    from pa_tracker import PulseRiderTracker
+    tracker = PulseRiderTracker()
+    return jsonify(tracker.get_pa_stats())
 
 
 @app.route("/api/prediction-tree")

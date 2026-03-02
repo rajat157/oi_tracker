@@ -185,12 +185,25 @@ R:R = <code>1:{rr_ratio:.1f}</code>
 
 def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "") -> str:
     """
-    Generate Kite trading symbol for NIFTY options.
-    Weekly: NIFTY{YY}{M}{DD}{strike}{CE/PE} (month code: 1-9, O, N, D)
-    Monthly: NIFTY{YY}{MMM}{strike}{CE/PE} (e.g., NIFTY26FEB25600CE)
+    Get Kite trading symbol for NIFTY options.
+
+    Primary: Look up from Kite's cached instrument data (always correct).
+    Fallback: Manual construction using weekly/monthly format rules.
     """
     from datetime import datetime as dt, timedelta
-    
+
+    # --- Primary: look up from instrument data ---
+    try:
+        from kite_instruments import InstrumentMap
+        imap = InstrumentMap._get_shared_instance()
+        if imap and expiry_date:
+            inst = imap.get_option_instrument(strike, option_type, expiry_date)
+            if inst and inst.get('tradingsymbol'):
+                return inst['tradingsymbol']
+    except Exception:
+        pass
+
+    # --- Fallback: manual construction ---
     expiry = None
     if expiry_date:
         for fmt in ['%Y-%m-%d', '%d-%b-%Y', '%d-%m-%Y', '%d %b %Y']:
@@ -199,7 +212,7 @@ def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "
                 break
             except ValueError:
                 continue
-    
+
     if not expiry:
         # Fallback: next Thursday
         today = dt.now()
@@ -207,9 +220,9 @@ def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "
         if days_to_thu == 0 and today.hour >= 15:
             days_to_thu = 7
         expiry = today + timedelta(days=days_to_thu)
-    
+
     yy = expiry.strftime('%y')
-    
+
     # Check if it's a monthly expiry (last Thu of month) — uses MMM format
     # Otherwise weekly — uses M+DD format
     import calendar
@@ -218,14 +231,13 @@ def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "
     last_thu = last_day
     while dt(expiry.year, expiry.month, last_thu).weekday() != 3:  # Thursday
         last_thu -= 1
-    
+
     is_monthly = (expiry.day == last_thu) or (expiry.day > last_thu - 3 and expiry.weekday() != 3)
-    # Also check: if expiry matches the monthly expiry date from instruments
     month_names = {1:'JAN', 2:'FEB', 3:'MAR', 4:'APR', 5:'MAY', 6:'JUN',
                    7:'JUL', 8:'AUG', 9:'SEP', 10:'OCT', 11:'NOV', 12:'DEC'}
     month_codes = {1:'1', 2:'2', 3:'3', 4:'4', 5:'5', 6:'6',
                    7:'7', 8:'8', 9:'9', 10:'O', 11:'N', 12:'D'}
-    
+
     if is_monthly:
         return f"NIFTY{yy}{month_names[expiry.month]}{strike}{option_type}"
     else:

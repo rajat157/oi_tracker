@@ -20,6 +20,8 @@ INSTRUMENTS_URL = "https://api.kite.trade/instruments/NFO"
 class InstrumentMap:
     """Manages NIFTY instrument token lookups from Kite's instrument CSV."""
 
+    _shared: Optional['InstrumentMap'] = None
+
     def __init__(self, api_key: str, access_token: str = ""):
         self._api_key = api_key
         self._access_token = access_token
@@ -29,6 +31,15 @@ class InstrumentMap:
         self._options: Dict[Tuple[int, str, str], dict] = {}  # (strike, type, expiry) -> instrument
         self._futures: List[dict] = []
         self._expiries: List[str] = []
+        # Register as shared instance for cross-module lookups
+        InstrumentMap._shared = self
+
+    @classmethod
+    def _get_shared_instance(cls) -> Optional['InstrumentMap']:
+        """Get the shared instance (set by the first InstrumentMap created)."""
+        if cls._shared and cls._shared._options:
+            return cls._shared
+        return None
 
     def set_access_token(self, access_token: str):
         """Update the access token (called when token is refreshed)."""

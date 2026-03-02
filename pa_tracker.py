@@ -18,12 +18,18 @@ Config:
 - Filter 2: Choppy — skip if spot range < 0.15% over last 10 candles
 """
 
+import os
 from datetime import datetime, time
 from typing import Optional, Dict, List
 from database import get_connection
 from logger import get_logger
 
 log = get_logger("pa_tracker")
+
+# Order placement config (from .env)
+PA_PLACE_ORDER = os.getenv("PA_PLACE_ORDER", "false").lower() == "true"
+PA_LOTS = int(os.getenv("PA_LOTS", "1"))
+NIFTY_LOT_SIZE = int(os.getenv("NIFTY_LOT_SIZE", "65"))
 
 # Strategy constants
 PA_TIME_START = time(9, 30)
@@ -346,6 +352,14 @@ class PulseRiderTracker:
                                entry_premium, sl_premium, target_premium,
                                spot, verdict, confidence, iv_skew, vix, chc_strength)
 
+        # Auto-place order on Kite if enabled
+        if PA_PLACE_ORDER:
+            self._place_kite_order(
+                trade_id, self.atm_strike, option_type,
+                entry_premium, sl_premium, target_premium,
+                analysis.get("expiry_date", "")
+            )
+
         return trade_id
 
     def check_and_update_trade(self, strikes_data: dict, timestamp: datetime) -> Optional[Dict]:
@@ -463,6 +477,88 @@ class PulseRiderTracker:
             send_telegram(message)
         except Exception as e:
             log.error("Failed to send PA exit alert", error=str(e))
+
+    def _place_kite_order(self, trade_id: int, strike: int, option_type: str,
+                          entry_premium: float, sl_premium: float,
+                          target_premium: float, expiry_date: str):
+        """Place LIMIT BUY + GTT OCO on Kite for a PA trade."""
+        try:
+            from kite_broker import is_authenticated, place_order, place_gtt_oco, round_to_tick
+            from alerts import _get_kite_trading_symbol, send_telegram
+
+            if not is_authenticated():
+                log.warning("PA order skipped: Kite not authenticated")
+                return
+
+            trading_symbol = _get_kite_trading_symbol(strike, option_type, expiry_date)
+            quantity = PA_LOTS * NIFTY_LOT_SIZE
+
+            # Round prices to tick size (0.5)
+            entry = round_to_tick(entry_premium, "nearest")
+            sl = round_to_tick(sl_premium, "down")
+            target = round_to_tick(target_premium, "up")
+
+            log.info("PA auto-placing order", symbol=trading_symbol,
+                     entry=entry, sl=sl, target=target, qty=quantity, lots=PA_LOTS)
+
+            # 1. Place LIMIT BUY order
+            order_result = place_order(
+                trading_symbol=trading_symbol,
+                transaction_type="BUY",
+                quantity=quantity,
+                price=entry,
+                order_type="LIMIT",
+                product="NRML"
+            )
+
+            if order_result.get("status") != "success":
+                log.error("PA buy order failed", result=order_result)
+                send_telegram(
+                    f"<b>\u274c PA Order Failed</b>\n"
+                    f"Symbol: <code>{trading_symbol}</code>\n"
+                    f"Error: {order_result.get('message', 'Unknown')}"
+                )
+                return
+
+            order_id = order_result["data"]["order_id"]
+
+            # 2. Place GTT OCO (SL + Target)
+            gtt_result = place_gtt_oco(
+                trading_symbol=trading_symbol,
+                entry_price=entry,
+                sl_price=sl,
+                target_price=target,
+                quantity=quantity,
+                product="NRML"
+            )
+
+            trigger_id = None
+            if gtt_result.get("status") == "success":
+                trigger_id = gtt_result["data"]["trigger_id"]
+            else:
+                log.error("PA GTT failed — order is live without SL!", result=gtt_result)
+
+            # Send confirmation alert
+            order_msg = (
+                f"<b>\u2705 PA Order Placed on Kite!</b>\n\n"
+                f"<b>Symbol:</b> <code>{trading_symbol}</code>\n"
+                f"<b>Order:</b> BUY LIMIT @ Rs {entry:.1f} | Qty {quantity} ({PA_LOTS} lot{'s' if PA_LOTS > 1 else ''})\n"
+                f"<b>GTT SL:</b> Rs {sl:.1f}\n"
+                f"<b>GTT Target:</b> Rs {target:.1f}\n"
+                f"<b>Order ID:</b> <code>{order_id}</code>\n"
+                f"<b>GTT ID:</b> <code>{trigger_id or 'FAILED'}</code>"
+            )
+            send_telegram(order_msg)
+            log.info("PA order placed", order_id=order_id,
+                     trigger_id=trigger_id, lots=PA_LOTS, qty=quantity)
+
+        except Exception as e:
+            log.error("PA auto order placement error", error=str(e))
+            try:
+                from alerts import send_telegram
+                send_telegram(f"<b>\u274c PA Order Error</b>\n<code>{str(e)}</code>")
+            except Exception:
+                pass
 
     def get_pa_stats(self) -> Dict:
         """Get PA trade statistics."""

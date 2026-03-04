@@ -20,10 +20,11 @@ from database import (
     save_orderflow_depth, purge_old_orderflow
 )
 from trade_tracker import get_trade_tracker
-from selling_tracker import SellingTracker
-from dessert_tracker import DessertTracker
-from momentum_tracker import MomentumTracker
-from pa_tracker import PulseRiderTracker
+from selling_tracker import SellingTracker, get_active_sell_setup
+from dessert_tracker import DessertTracker, get_active_dessert
+from momentum_tracker import MomentumTracker, get_active_momentum
+from pa_tracker import PulseRiderTracker, get_active_pa
+from database import get_active_trade_setup
 from pattern_tracker import check_patterns, log_failed_entry
 from prediction_engine import PredictionEngine
 from logger import get_logger
@@ -71,6 +72,32 @@ class OIScheduler:
     def set_force_enabled(self, enabled: bool):
         """Enable/disable force fetch mode for automatic polling."""
         self.force_enabled = enabled
+
+    def _register_trade_with_monitor(self, tracker_type: str, get_active_fn, is_selling: bool = False):
+        """Register a newly created/activated trade with the WebSocket premium monitor."""
+        try:
+            setup = get_active_fn()
+            if not setup:
+                log.warning("WS registration skipped: no active trade found", tracker=tracker_type)
+                return
+            if not self.premium_monitor._instrument_map:
+                log.warning("WS registration skipped: no instrument map", tracker=tracker_type)
+                return
+            expiry = self.premium_monitor._instrument_map.get_current_expiry()
+            if not expiry:
+                log.warning("WS registration skipped: no current expiry", tracker=tracker_type)
+                return
+            trade_obj = self.premium_monitor._db_trade_to_active(setup, tracker_type, expiry, is_selling=is_selling)
+            if not trade_obj:
+                log.warning("WS registration skipped: instrument token not found",
+                            tracker=tracker_type, strike=setup.get('strike'), type=setup.get('option_type'))
+                return
+            self.premium_monitor.register_trade(trade_obj)
+            log.info("Trade registered with WebSocket monitor",
+                     tracker=tracker_type, trade_id=setup['id'],
+                     strike=setup.get('strike'), type=setup.get('option_type'))
+        except Exception as e:
+            log.error("WS registration failed", tracker=tracker_type, error=str(e))
 
     def is_market_open(self) -> bool:
         """Check if the market is currently open."""
@@ -257,6 +284,12 @@ class OIScheduler:
             if trade_update:
                 log.info("Trade setup updated", setup_id=trade_update['setup_id'],
                          prev_status=trade_update['previous_status'], new_status=trade_update['new_status'])
+                # Register with WebSocket when trade becomes ACTIVE
+                if trade_update.get('new_status') == 'ACTIVE':
+                    self._register_trade_with_monitor("iron_pulse", get_active_trade_setup)
+                elif trade_update.get('new_status') in ('WON', 'LOST'):
+                    log.warning("Exit detected by 3-min poll, not WebSocket",
+                                tracker="iron_pulse", action=trade_update['new_status'])
 
             # 2. Cancel PENDING setup if OI direction flipped
             self.trade_tracker.cancel_on_direction_change(analysis["verdict"], timestamp)
@@ -279,6 +312,10 @@ class OIScheduler:
                 if sell_update:
                     log.info("Sell trade updated", action=sell_update['action'],
                              pnl=f"{sell_update['pnl']:.2f}%", reason=sell_update['reason'])
+                    if sell_update['action'] in ('WON', 'LOST'):
+                        log.warning("Exit detected by 3-min poll, not WebSocket",
+                                    tracker="selling", action=sell_update['action'],
+                                    reason=sell_update['reason'])
 
                 # Selling decoupling: delay 6 minutes after Iron Pulse entry
                 # Prevents both strategies from losing on the same signal
@@ -294,7 +331,9 @@ class OIScheduler:
 
                 # Create new selling setup if conditions met (and not deferred)
                 if not selling_deferred and self.selling_tracker.should_create_sell_setup(analysis):
-                    self.selling_tracker.create_sell_setup(analysis, strikes_data)
+                    sell_id = self.selling_tracker.create_sell_setup(analysis, strikes_data)
+                    if sell_id:
+                        self._register_trade_with_monitor("selling", get_active_sell_setup, is_selling=True)
             except Exception as e:
                 log.error("Error in selling tracker", error=str(e))
 
@@ -308,11 +347,17 @@ class OIScheduler:
                              action=dessert_update['action'],
                              pnl=f"{dessert_update['pnl']:.2f}%",
                              reason=dessert_update['reason'])
+                    if dessert_update['action'] in ('WON', 'LOST'):
+                        log.warning("Exit detected by 3-min poll, not WebSocket",
+                                    tracker="dessert", action=dessert_update['action'],
+                                    reason=dessert_update['reason'])
 
                 # Create new dessert trade if conditions met
                 strategy = self.dessert_tracker.should_create_dessert(analysis)
                 if strategy:
-                    self.dessert_tracker.create_dessert_trade(strategy, analysis, strikes_data)
+                    dessert_id = self.dessert_tracker.create_dessert_trade(strategy, analysis, strikes_data)
+                    if dessert_id:
+                        self._register_trade_with_monitor("dessert", get_active_dessert)
             except Exception as e:
                 log.error("Error in dessert tracker", error=str(e))
 
@@ -325,11 +370,17 @@ class OIScheduler:
                              action=momentum_update['action'],
                              pnl=f"{momentum_update['pnl']:.2f}%",
                              reason=momentum_update['reason'])
+                    if momentum_update['action'] in ('WON', 'LOST'):
+                        log.warning("Exit detected by 3-min poll, not WebSocket",
+                                    tracker="momentum", action=momentum_update['action'],
+                                    reason=momentum_update['reason'])
 
                 # Create new momentum trade if conditions met
                 direction = self.momentum_tracker.should_create_momentum(analysis)
                 if direction:
-                    self.momentum_tracker.create_momentum_trade(direction, analysis, strikes_data)
+                    mom_id = self.momentum_tracker.create_momentum_trade(direction, analysis, strikes_data)
+                    if mom_id:
+                        self._register_trade_with_monitor("momentum", get_active_momentum)
             except Exception as e:
                 log.error("Error in momentum tracker", error=str(e))
 
@@ -342,25 +393,17 @@ class OIScheduler:
                              action=pa_update['action'],
                              pnl=f"{pa_update['pnl']:.2f}%",
                              reason=pa_update['reason'])
+                    if pa_update['action'] in ('WON', 'LOST'):
+                        log.warning("Exit detected by 3-min poll, not WebSocket",
+                                    tracker="pa", action=pa_update['action'],
+                                    reason=pa_update['reason'])
 
                 # Create new PA trade if conditions met
                 pa_side = self.pa_tracker.should_create_trade(analysis, strikes_data)
                 if pa_side:
                     pa_trade_id = self.pa_tracker.create_trade(pa_side, analysis, strikes_data)
                     if pa_trade_id:
-                        # Register with premium monitor
-                        try:
-                            from pa_tracker import get_active_pa
-                            pa_setup = get_active_pa()
-                            if pa_setup and self.premium_monitor._instrument_map:
-                                expiry = self.premium_monitor._instrument_map.get_current_expiry()
-                                if expiry:
-                                    trade_obj = self.premium_monitor._db_trade_to_active(
-                                        pa_setup, "pa", expiry, is_selling=False)
-                                    if trade_obj:
-                                        self.premium_monitor.register_trade(trade_obj)
-                        except Exception as e:
-                            log.error("Error registering PA with premium monitor", error=str(e))
+                        self._register_trade_with_monitor("pa", get_active_pa)
             except Exception as e:
                 log.error("Error in PA tracker", error=str(e))
 
@@ -372,7 +415,6 @@ class OIScheduler:
 
             # Add selling tracker data
             try:
-                from selling_tracker import get_active_sell_setup
                 active_sell = get_active_sell_setup()
                 if active_sell:
                     # Calculate current P&L for active sell
@@ -392,7 +434,6 @@ class OIScheduler:
 
             # Add dessert tracker data
             try:
-                from dessert_tracker import get_active_dessert
                 active_dessert = get_active_dessert()
                 if active_dessert:
                     strike_d = strikes_data.get(active_dessert["strike"], {})
@@ -410,7 +451,6 @@ class OIScheduler:
 
             # Add momentum tracker data
             try:
-                from momentum_tracker import get_active_momentum
                 active_momentum = get_active_momentum()
                 if active_momentum:
                     strike_m = strikes_data.get(active_momentum["strike"], {})
@@ -429,7 +469,6 @@ class OIScheduler:
 
             # Add PA tracker data
             try:
-                from pa_tracker import get_active_pa
                 active_pa = get_active_pa()
                 if active_pa:
                     strike_pa = strikes_data.get(active_pa["strike"], {})

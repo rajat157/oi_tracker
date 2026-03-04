@@ -10,6 +10,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
 </head>
 <body>
     <div class="app">
@@ -23,6 +25,23 @@
                 <div id="market-badge" class="badge badge-closed">
                     <span class="badge-dot"></span>
                     <span id="market-text">Market Closed</span>
+                </div>
+                <div class="kite-header" id="kite-header">
+                    <button class="kite-header-btn" id="kite-header-btn" onclick="toggleKiteDropdown()">
+                        <span class="kite-dot" id="kite-dot"></span>
+                        <span id="kite-header-status">Kite</span>
+                    </button>
+                    <div class="kite-dropdown" id="kite-dropdown">
+                        <div class="kite-dropdown-status">
+                            <span id="kite-dropdown-text">Checking...</span>
+                        </div>
+                        <button onclick="window.open('/kite/login', '_blank')" class="kite-dropdown-btn kite-login">Login to Kite</button>
+                        <button onclick="toggleKitePasteInput()" class="kite-dropdown-btn kite-paste">Paste Token</button>
+                        <div id="kite-paste-row" style="display:none">
+                            <input type="text" id="kite-token-field" placeholder="Paste access token...">
+                            <button onclick="saveKiteToken()">Save</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="last-update">
                     <span class="label">Updated</span>
@@ -55,6 +74,10 @@
                     <span class="score-value" id="combined-score">--</span>
                     <span class="score-scale">/ 100</span>
                 </div>
+                <div class="hero-verdict-ema">
+                    <span class="ema-label">EMA</span>
+                    <span class="ema-value" id="smoothed-score">--</span>
+                </div>
                 <div class="score-gauge">
                     <div class="gauge-track">
                         <div class="gauge-fill" id="score-gauge-fill"></div>
@@ -70,6 +93,9 @@
                     <span class="confirmation-icon" id="confirmation-icon">--</span>
                     <span class="confirmation-text" id="confirmation-text">Loading...</span>
                 </div>
+                <div class="two-candle-badge" id="two-candle-badge" style="display:none">
+                    <span>2-Candle Confirmed</span>
+                </div>
             </div>
             <div class="hero-metrics">
                 <div class="hero-metric">
@@ -78,7 +104,7 @@
                 </div>
                 <div class="hero-metric">
                     <span class="hero-metric-label">PCR</span>
-                    <span class="hero-metric-value" id="pcr-value">--</span>
+                    <span class="hero-metric-value" id="pcr-value">--</span><span class="pcr-trend-arrow" id="pcr-trend-arrow"></span>
                 </div>
                 <div class="hero-metric">
                     <span class="hero-metric-label">IV Skew</span>
@@ -172,6 +198,7 @@
                         <div class="metric-mini">
                             <span class="metric-label">Max Pain</span>
                             <span class="metric-value" id="max-pain">--</span>
+                            <span class="metric-sub" id="max-pain-drift">--</span>
                         </div>
                         <div class="metric-mini">
                             <span class="metric-label">Volume PCR</span>
@@ -184,6 +211,14 @@
                         <div class="metric-mini">
                             <span class="metric-label">Expiry</span>
                             <span class="metric-value" id="expiry-date">--</span>
+                        </div>
+                        <div class="metric-mini">
+                            <span class="metric-label">Support</span>
+                            <span class="metric-value bullish-text" id="primary-support">--</span>
+                        </div>
+                        <div class="metric-mini">
+                            <span class="metric-label">Resistance</span>
+                            <span class="metric-value bearish-text" id="primary-resistance">--</span>
                         </div>
                     </div>
                 </div>
@@ -453,34 +488,6 @@
                     </div>
                 </div>
 
-                <!-- Kite Auth Card -->
-                <div class="card kite-card" id="kite-auth-card">
-                    <div style="display: flex; align-items: center; justify-content: space-between;">
-                        <div>
-                            <span style="font-weight: bold;">Kite Connect</span>
-                            <span id="kite-status" style="margin-left: 8px; font-size: 0.85em; color: #888;">Checking...</span>
-                        </div>
-                        <div style="display: flex; gap: 8px; align-items: center;">
-                            <button id="kite-login-btn" onclick="window.open('/kite/login', '_blank')"
-                                    style="padding: 6px 16px; border: none; border-radius: 6px; background: #2563eb; color: white; cursor: pointer; font-size: 0.85em;">
-                                Login to Kite
-                            </button>
-                            <button id="kite-manual-btn" onclick="document.getElementById('kite-manual-input').style.display='flex'"
-                                    style="padding: 6px 12px; border: 1px solid #555; border-radius: 6px; background: transparent; color: #aaa; cursor: pointer; font-size: 0.8em;">
-                                Paste Token
-                            </button>
-                        </div>
-                    </div>
-                    <div id="kite-manual-input" style="display: none; margin-top: 8px; gap: 8px; align-items: center;">
-                        <input type="text" id="kite-token-field" placeholder="Paste access token here..."
-                               style="flex: 1; padding: 6px 10px; border: 1px solid #555; border-radius: 6px; background: #1a1a2e; color: #eee; font-family: monospace; font-size: 0.85em;">
-                        <button onclick="saveKiteToken()"
-                                style="padding: 6px 16px; border: none; border-radius: 6px; background: #22c55e; color: white; cursor: pointer; font-size: 0.85em;">
-                            Save
-                        </button>
-                    </div>
-                </div>
-
                 <!-- Iron Pulse Trade Card -->
                 <div class="card trade-setup-card iron-pulse-card" id="trade-setup-card" >
                     <div class="trade-setup-title-row">
@@ -736,6 +743,25 @@
                     </div>
                 </div>
 
+                <!-- OI Flow Classification -->
+                <div class="card flow-card" id="flow-card">
+                    <h3 class="card-title">OI Flow Classification</h3>
+                    <div class="flow-summary">
+                        <div class="flow-dominant" id="flow-dominant">--</div>
+                        <div class="flow-counts">
+                            <div class="flow-row">
+                                <span class="flow-label">Net Bullish Flow</span>
+                                <span class="flow-value bullish-text" id="flow-bullish">0</span>
+                            </div>
+                            <div class="flow-row">
+                                <span class="flow-label">Net Bearish Flow</span>
+                                <span class="flow-value bearish-text" id="flow-bearish">0</span>
+                            </div>
+                        </div>
+                        <div class="flow-zones" id="flow-zones"></div>
+                    </div>
+                </div>
+
                 <!-- Tabbed Tables -->
                 <div class="card table-tabs-card">
                     <div class="table-tabs">
@@ -812,10 +838,11 @@
                                     <th>OI</th>
                                     <th>Change</th>
                                     <th>Force</th>
+                                    <th>Flow</th>
                                 </tr>
                             </thead>
                             <tbody id="otm-puts-tbody">
-                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
+                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
@@ -823,6 +850,7 @@
                                     <td id="otm-puts-total-oi">--</td>
                                     <td id="otm-puts-total-change">--</td>
                                     <td id="otm-puts-total-force">--</td>
+                                    <td></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -837,10 +865,11 @@
                                     <th>OI</th>
                                     <th>Change</th>
                                     <th>Force</th>
+                                    <th>Flow</th>
                                 </tr>
                             </thead>
                             <tbody id="itm-calls-tbody">
-                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
+                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
@@ -848,6 +877,7 @@
                                     <td id="itm-calls-total-oi">--</td>
                                     <td id="itm-calls-total-change">--</td>
                                     <td id="itm-calls-total-force">--</td>
+                                    <td></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -867,10 +897,11 @@
                                     <th>OI</th>
                                     <th>Change</th>
                                     <th>Force</th>
+                                    <th>Flow</th>
                                 </tr>
                             </thead>
                             <tbody id="otm-calls-tbody">
-                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
+                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
@@ -878,6 +909,7 @@
                                     <td id="otm-calls-total-oi">--</td>
                                     <td id="otm-calls-total-change">--</td>
                                     <td id="otm-calls-total-force">--</td>
+                                    <td></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -892,10 +924,11 @@
                                     <th>OI</th>
                                     <th>Change</th>
                                     <th>Force</th>
+                                    <th>Flow</th>
                                 </tr>
                             </thead>
                             <tbody id="itm-puts-tbody">
-                                <tr><td colspan="4" class="loading-cell">Loading...</td></tr>
+                                <tr><td colspan="5" class="loading-cell">Loading...</td></tr>
                             </tbody>
                             <tfoot>
                                 <tr>
@@ -903,6 +936,7 @@
                                     <td id="itm-puts-total-oi">--</td>
                                     <td id="itm-puts-total-change">--</td>
                                     <td id="itm-puts-total-force">--</td>
+                                    <td></td>
                                 </tr>
                             </tfoot>
                         </table>
@@ -924,29 +958,45 @@
                         <button class="period-btn" onclick="setChartPeriod('1h')">1h</button>
                         <button class="period-btn active" onclick="setChartPeriod('all')">All</button>
                     </div>
+                    <div class="chart-controls">
+                        <button class="chart-ctrl-btn" onclick="zoomIn()" title="Zoom In">+</button>
+                        <button class="chart-ctrl-btn" onclick="zoomOut()" title="Zoom Out">&minus;</button>
+                        <button class="chart-ctrl-btn" onclick="resetZoom()" title="Reset Zoom">&#x27F2;</button>
+                    </div>
                 </div>
                 <div class="chart-container">
                     <canvas id="oi-chart"></canvas>
                 </div>
             </div>
 
-            <details class="chart-details" open>
-                <summary>Zone Force Charts</summary>
-                <div class="charts-row">
-                    <div class="card chart-card chart-half">
+            <div class="charts-row">
+                <div class="card chart-card chart-half">
+                    <div class="chart-header">
                         <h3 class="card-title">OTM Force Trend</h3>
-                        <div class="chart-container-small">
-                            <canvas id="otm-chart"></canvas>
+                        <div class="chart-controls">
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="otmChart?.zoom(1.2)" title="Zoom In">+</button>
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="otmChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="otmChart?.resetZoom()" title="Reset">&#x27F2;</button>
                         </div>
                     </div>
-                    <div class="card chart-card chart-half">
-                        <h3 class="card-title">ITM Force Trend</h3>
-                        <div class="chart-container-small">
-                            <canvas id="itm-chart"></canvas>
-                        </div>
+                    <div class="chart-container">
+                        <canvas id="otm-chart"></canvas>
                     </div>
                 </div>
-            </details>
+                <div class="card chart-card chart-half">
+                    <div class="chart-header">
+                        <h3 class="card-title">ITM Force Trend</h3>
+                        <div class="chart-controls">
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="itmChart?.zoom(1.2)" title="Zoom In">+</button>
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="itmChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="itmChart?.resetZoom()" title="Reset">&#x27F2;</button>
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="itm-chart"></canvas>
+                    </div>
+                </div>
+            </div>
         </section>
 
         <!-- Footer -->

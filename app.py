@@ -168,8 +168,10 @@ def api_latest():
             analysis["active_pa_trade"] = None
             analysis["pa_stats"] = {}
 
-        # Add chart history for frontend sync (last 30 data points)
-        analysis["chart_history"] = get_analysis_history(limit=30)
+        # Add chart history for frontend sync (last 30 data points, today only)
+        from datetime import date as date_cls
+        today_str = date_cls.today().strftime("%Y-%m-%d")
+        analysis["chart_history"] = get_analysis_history(limit=30, date=today_str)
 
         return jsonify(analysis)
 
@@ -179,7 +181,12 @@ def api_latest():
 @app.route("/api/history")
 def api_history():
     """Get historical analysis data for charts."""
-    history = get_analysis_history(limit=100)
+    from flask import request as flask_request
+    date = flask_request.args.get("date")
+    if not date:
+        from datetime import date as date_cls
+        date = date_cls.today().strftime("%Y-%m-%d")
+    history = get_analysis_history(limit=200, date=date)
     return jsonify(history)
 
 
@@ -430,8 +437,10 @@ def handle_connect():
             analysis["active_trade"] = None
             analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
 
-        # Add chart history for frontend sync
-        analysis["chart_history"] = get_analysis_history(limit=30)
+        # Add chart history for frontend sync (today only)
+        from datetime import date as date_cls
+        today_str = date_cls.today().strftime("%Y-%m-%d")
+        analysis["chart_history"] = get_analysis_history(limit=30, date=today_str)
 
         socketio.emit("oi_update", analysis)
 
@@ -480,8 +489,10 @@ def handle_request_latest():
             analysis["active_trade"] = None
             analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
 
-        # Add chart history for frontend sync (last 30 data points)
-        analysis["chart_history"] = get_analysis_history(limit=30)
+        # Add chart history for frontend sync (last 30 data points, today only)
+        from datetime import date as date_cls
+        today_str = date_cls.today().strftime("%Y-%m-%d")
+        analysis["chart_history"] = get_analysis_history(limit=30, date=today_str)
 
         emit("oi_update", analysis)
 

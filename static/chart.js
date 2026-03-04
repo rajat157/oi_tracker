@@ -20,6 +20,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(fetchLatestData, 1000);
     setTimeout(checkKiteStatus, 1500);
     setTimeout(fetchPredictionTree, 2000);
+    setTimeout(fetchFullHistory, 2500);
 
     setInterval(fetchMarketStatus, 60000);
     setInterval(checkKiteStatus, 300000); // Check Kite auth every 5 min
@@ -63,12 +64,32 @@ function applyChartPeriod() {
         filtered = fullChartHistory.filter(h => new Date(h.timestamp).getTime() > cutoff);
     }
     if (!filtered.length) filtered = fullChartHistory.slice(-3);
-    oiChart.data.labels = filtered.map(item =>
+
+    const labels = filtered.map(item =>
         new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
     );
+
+    // Main OI chart
+    oiChart.data.labels = labels;
     oiChart.data.datasets[0].data = filtered.map(item => item.call_oi_change);
     oiChart.data.datasets[1].data = filtered.map(item => item.put_oi_change);
     oiChart.update('none');
+
+    // OTM chart
+    if (otmChart) {
+        otmChart.data.labels = labels;
+        otmChart.data.datasets[0].data = filtered.map(item => item.otm_put_force || 0);
+        otmChart.data.datasets[1].data = filtered.map(item => item.otm_call_force || 0);
+        otmChart.update('none');
+    }
+
+    // ITM chart
+    if (itmChart) {
+        itmChart.data.labels = labels;
+        itmChart.data.datasets[0].data = filtered.map(item => item.itm_put_force || 0);
+        itmChart.data.datasets[1].data = filtered.map(item => item.itm_call_force || 0);
+        itmChart.update('none');
+    }
 }
 
 // Update score gauge visualization
@@ -154,6 +175,14 @@ function initChart() {
                     cornerRadius: 8,
                     titleFont: { size: 13, family: 'Inter' },
                     bodyFont: { size: 12, family: 'Inter' }
+                },
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: {
+                        wheel: { enabled: true },
+                        pinch: { enabled: true },
+                        mode: 'x'
+                    }
                 }
             },
             scales: {
@@ -226,7 +255,11 @@ function initOTMChart() {
             animation: false,
             interaction: { intersect: false, mode: 'index' },
             plugins: {
-                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } }
+                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } },
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                }
             },
             scales: {
                 x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
@@ -284,7 +317,11 @@ function initITMChart() {
             animation: false,
             interaction: { intersect: false, mode: 'index' },
             plugins: {
-                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } }
+                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } },
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                }
             },
             scales: {
                 x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
@@ -343,6 +380,19 @@ function fetchLatestData() {
         .catch(e => console.log('Waiting for data:', e));
 }
 
+function fetchFullHistory() {
+    fetch('/api/history')
+        .then(r => r.ok ? r.json() : Promise.reject('No history'))
+        .then(history => {
+            if (history?.length) {
+                fullChartHistory = history;
+                applyChartPeriod();
+                updateZoneChartsFromHistory(history);
+            }
+        })
+        .catch(() => {});
+}
+
 // Update functions
 function updateMarketStatus(data) {
     const badge = document.getElementById('market-badge');
@@ -386,6 +436,9 @@ function updateDashboard(data) {
     // Update scores and gauge
     updateScore('combined-score', data.combined_score);
     updateScoreGauge(data.combined_score);
+
+    // Smoothed (EMA) score
+    updateScore('smoothed-score', data.smoothed_score, true);
 
     // Update weight displays and individual scores for new zone structure
     if (data.weights) {
@@ -538,6 +591,44 @@ function updateDashboard(data) {
         ivSkewElem.style.color = skew > 2 ? '#f87171' : skew < -2 ? '#22c55e' : '#a1a1b5';
     }
 
+    // PCR Trend arrow
+    const pcrArrow = document.getElementById('pcr-trend-arrow');
+    if (pcrArrow && data.pcr_trend) {
+        const trend = data.pcr_trend;
+        if (trend === 'rising') { pcrArrow.textContent = ' \u2191'; pcrArrow.style.color = 'var(--bullish)'; }
+        else if (trend === 'falling') { pcrArrow.textContent = ' \u2193'; pcrArrow.style.color = 'var(--bearish)'; }
+        else { pcrArrow.textContent = ' \u2192'; pcrArrow.style.color = 'var(--text-muted)'; }
+    }
+
+    // Max Pain Drift
+    const driftElem = document.getElementById('max-pain-drift');
+    if (driftElem && data.max_pain_drift != null) {
+        const drift = data.max_pain_drift;
+        if (drift !== 0) {
+            const arrow = drift > 0 ? '\u2191' : '\u2193';
+            driftElem.textContent = `${arrow} ${drift > 0 ? '+' : ''}${drift} pts`;
+            driftElem.style.color = drift > 0 ? 'var(--bullish)' : 'var(--bearish)';
+        } else {
+            driftElem.textContent = '\u2192 0 pts';
+            driftElem.style.color = 'var(--text-muted)';
+        }
+    }
+
+    // 2-Candle Confirmation badge
+    const twoCandleBadge = document.getElementById('two-candle-badge');
+    if (twoCandleBadge) {
+        twoCandleBadge.style.display = data.two_candle_confirmed ? 'inline-flex' : 'none';
+    }
+
+    // Primary S/R
+    if (data.primary_sr) {
+        setText('primary-support', data.primary_sr.support ? formatNumber(data.primary_sr.support) : '--');
+        setText('primary-resistance', data.primary_sr.resistance ? formatNumber(data.primary_sr.resistance) : '--');
+    }
+
+    // OI Flow Summary
+    if (data.oi_flow_summary) updateFlowCard(data.oi_flow_summary);
+
     // Update Prediction Tree (full fetch to include history)
     if (data.prediction_tree) fetchPredictionTree();
 
@@ -588,6 +679,7 @@ function updateOTMITMTables(data) {
                 <td>${formatNumber(s.put_oi)}</td>
                 <td class="positive-change">${formatSigned(s.put_oi_change)}</td>
                 <td class="positive-change">${formatNumber(s.put_force)}</td>
+                <td>${flowBadge(s.flow_type)}</td>
             </tr>
         `).join('');
     }
@@ -608,6 +700,7 @@ function updateOTMITMTables(data) {
                 <td>${formatNumber(s.call_oi)}</td>
                 <td class="negative-change">${formatSigned(s.call_oi_change)}</td>
                 <td class="negative-change">${formatNumber(s.call_force)}</td>
+                <td>${flowBadge(s.flow_type)}</td>
             </tr>
         `).join('');
     }
@@ -628,6 +721,7 @@ function updateOTMITMTables(data) {
                 <td>${formatNumber(s.call_oi)}</td>
                 <td class="negative-change">${formatSigned(s.call_oi_change)}</td>
                 <td class="negative-change">${formatNumber(s.call_force)}</td>
+                <td>${flowBadge(s.flow_type)}</td>
             </tr>
         `).join('');
     }
@@ -648,6 +742,7 @@ function updateOTMITMTables(data) {
                 <td>${formatNumber(s.put_oi)}</td>
                 <td class="positive-change">${formatSigned(s.put_oi_change)}</td>
                 <td class="positive-change">${formatNumber(s.put_force)}</td>
+                <td>${flowBadge(s.flow_type)}</td>
             </tr>
         `).join('');
     }
@@ -1366,11 +1461,17 @@ function updateZoneTable(tbodyId, strikes) {
 function updateChartFromServer(history) {
     if (!history?.length || !oiChart) return;
 
-    fullChartHistory = history;
+    // Merge into fullChartHistory (append new points, deduplicate by timestamp)
+    if (fullChartHistory.length > 0) {
+        const existingTs = new Set(fullChartHistory.map(h => h.timestamp));
+        const newPoints = history.filter(h => !existingTs.has(h.timestamp));
+        if (newPoints.length > 0) {
+            fullChartHistory = fullChartHistory.concat(newPoints);
+        }
+    } else {
+        fullChartHistory = history;
+    }
     applyChartPeriod();
-
-    // Also update OTM/ITM charts from history (zone force data)
-    updateZoneChartsFromHistory(history.slice(-30));
 }
 
 /**
@@ -1522,30 +1623,107 @@ function formatCompact(num) {
     return num.toString();
 }
 
-// ===== Kite Auth =====
+// ===== Chart Zoom Controls =====
+function zoomIn() { oiChart?.zoom(1.2); otmChart?.zoom(1.2); itmChart?.zoom(1.2); }
+function zoomOut() { oiChart?.zoom(0.8); otmChart?.zoom(0.8); itmChart?.zoom(0.8); }
+function resetZoom() { oiChart?.resetZoom(); otmChart?.resetZoom(); itmChart?.resetZoom(); }
+
+// ===== OI Flow Card =====
+function updateFlowCard(flow) {
+    if (!flow) return;
+
+    const dominantEl = document.getElementById('flow-dominant');
+    if (dominantEl) {
+        const dom = flow.dominant || 'Mixed';
+        const icons = { 'Writing': '\u270E', 'Buying': '\u25B2', 'Mixed': '\u25C6' };
+        dominantEl.textContent = (icons[dom] || '') + ' ' + dom;
+        dominantEl.className = 'flow-dominant';
+        if (dom === 'Writing') dominantEl.classList.add('flow-writing');
+        else if (dom === 'Buying') dominantEl.classList.add('flow-buying');
+    }
+
+    setText('flow-bullish', flow.net_bullish || 0);
+    setText('flow-bearish', flow.net_bearish || 0);
+
+    // Zone mini bars
+    const zonesEl = document.getElementById('flow-zones');
+    if (zonesEl && flow.zones) {
+        zonesEl.innerHTML = flow.zones.map(z => {
+            const total = (z.writing || 0) + (z.buying || 0) + (z.unwinding || 0) + (z.covering || 0);
+            if (!total) return '';
+            const wPct = ((z.writing || 0) / total * 100).toFixed(0);
+            const bPct = ((z.buying || 0) / total * 100).toFixed(0);
+            const uPct = ((z.unwinding || 0) / total * 100).toFixed(0);
+            const cPct = ((z.covering || 0) / total * 100).toFixed(0);
+            return `<div class="flow-zone-row">
+                <span class="flow-zone-label">${z.name || ''}</span>
+                <div class="flow-zone-bar">
+                    <div class="flow-seg flow-seg-fw" style="width:${wPct}%" title="Writing ${wPct}%"></div>
+                    <div class="flow-seg flow-seg-fb" style="width:${bPct}%" title="Buying ${bPct}%"></div>
+                    <div class="flow-seg flow-seg-lu" style="width:${uPct}%" title="Unwinding ${uPct}%"></div>
+                    <div class="flow-seg flow-seg-sc" style="width:${cPct}%" title="Covering ${cPct}%"></div>
+                </div>
+            </div>`;
+        }).join('');
+    }
+}
+
+function flowBadge(flowType) {
+    if (!flowType) return '';
+    const map = {
+        'fresh_writing': ['FW', 'flow-fw'],
+        'fresh_buying': ['FB', 'flow-fb'],
+        'long_unwinding': ['LU', 'flow-lu'],
+        'short_covering': ['SC', 'flow-sc']
+    };
+    const [abbr, cls] = map[flowType] || [flowType.substring(0, 2).toUpperCase(), 'flow-n'];
+    return `<span class="flow-badge ${cls}">${abbr}</span>`;
+}
+
+// ===== Kite Auth (Header) =====
 function checkKiteStatus() {
     fetch('/kite/status')
         .then(r => r.json())
         .then(data => {
-            const el = document.getElementById('kite-status');
-            const btn = document.getElementById('kite-login-btn');
+            const dot = document.getElementById('kite-dot');
+            const headerStatus = document.getElementById('kite-header-status');
+            const dropdownText = document.getElementById('kite-dropdown-text');
             if (data.authenticated) {
-                el.textContent = '✅ Connected';
-                el.style.color = '#22c55e';
-                btn.textContent = 'Re-login';
-                btn.style.background = '#555';
+                if (dot) dot.classList.add('connected');
+                if (dot) dot.classList.remove('disconnected');
+                if (headerStatus) headerStatus.textContent = 'Kite';
+                if (dropdownText) dropdownText.textContent = 'Connected — ' + (data.token_preview || '');
             } else {
-                el.textContent = '❌ Not connected';
-                el.style.color = '#ef4444';
-                btn.textContent = 'Login to Kite';
-                btn.style.background = '#2563eb';
+                if (dot) dot.classList.remove('connected');
+                if (dot) dot.classList.add('disconnected');
+                if (headerStatus) headerStatus.textContent = 'Kite';
+                if (dropdownText) dropdownText.textContent = 'Not connected';
             }
         })
         .catch(() => {
-            const el = document.getElementById('kite-status');
-            if (el) { el.textContent = '⚠️ Error'; el.style.color = '#f59e0b'; }
+            const dot = document.getElementById('kite-dot');
+            if (dot) { dot.classList.remove('connected'); dot.classList.add('disconnected'); }
         });
 }
+
+function toggleKiteDropdown() {
+    const dd = document.getElementById('kite-dropdown');
+    if (dd) dd.classList.toggle('open');
+}
+
+function toggleKitePasteInput() {
+    const row = document.getElementById('kite-paste-row');
+    if (row) row.style.display = row.style.display === 'none' ? 'flex' : 'none';
+}
+
+// Close Kite dropdown on outside click
+document.addEventListener('click', function(e) {
+    const kh = document.getElementById('kite-header');
+    const dd = document.getElementById('kite-dropdown');
+    if (kh && dd && !kh.contains(e.target)) {
+        dd.classList.remove('open');
+    }
+});
 
 function saveKiteToken() {
     const token = document.getElementById('kite-token-field').value.trim();
@@ -1559,8 +1737,9 @@ function saveKiteToken() {
     .then(r => r.json())
     .then(data => {
         if (data.status === 'success') {
-            document.getElementById('kite-manual-input').style.display = 'none';
+            document.getElementById('kite-paste-row').style.display = 'none';
             document.getElementById('kite-token-field').value = '';
+            document.getElementById('kite-dropdown').classList.remove('open');
             checkKiteStatus();
         } else {
             alert('Error: ' + (data.error || 'Unknown'));

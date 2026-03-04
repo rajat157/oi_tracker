@@ -868,6 +868,17 @@ function updatePATrade(data) {
         badge.className = 'trade-status-badge status-' + (d.status || 'active').toLowerCase();
     }
 
+    // VIX warning badge for paper trades
+    const vixWarn = document.getElementById('pa-vix-warning');
+    if (vixWarn) {
+        if (d.vix_at_creation > 18) {
+            vixWarn.style.display = 'inline-block';
+            vixWarn.textContent = 'PAPER TRADE \u2014 VIX ' + d.vix_at_creation.toFixed(1);
+        } else {
+            vixWarn.style.display = 'none';
+        }
+    }
+
     // Direction & strike
     const dirText = d.direction === 'BUY_PUT' ? 'BUY PUT' : 'BUY CALL';
     setText('pa-direction', dirText);

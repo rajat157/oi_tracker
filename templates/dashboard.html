@@ -917,26 +917,36 @@
         <!-- Chart Section -->
         <section class="chart-section">
             <div class="card chart-card">
-                <h3 class="card-title">OI Trend (Call vs Put OI Change)</h3>
+                <div class="chart-header">
+                    <h3 class="card-title">OI Trend (Call vs Put OI Change)</h3>
+                    <div class="period-toggle">
+                        <button class="period-btn" onclick="setChartPeriod('30m')">30m</button>
+                        <button class="period-btn" onclick="setChartPeriod('1h')">1h</button>
+                        <button class="period-btn active" onclick="setChartPeriod('all')">All</button>
+                    </div>
+                </div>
                 <div class="chart-container">
                     <canvas id="oi-chart"></canvas>
                 </div>
             </div>
 
-            <div class="charts-row">
-                <div class="card chart-card chart-half">
-                    <h3 class="card-title">OTM Force Trend</h3>
-                    <div class="chart-container-small">
-                        <canvas id="otm-chart"></canvas>
+            <details class="chart-details" open>
+                <summary>Zone Force Charts</summary>
+                <div class="charts-row">
+                    <div class="card chart-card chart-half">
+                        <h3 class="card-title">OTM Force Trend</h3>
+                        <div class="chart-container-small">
+                            <canvas id="otm-chart"></canvas>
+                        </div>
+                    </div>
+                    <div class="card chart-card chart-half">
+                        <h3 class="card-title">ITM Force Trend</h3>
+                        <div class="chart-container-small">
+                            <canvas id="itm-chart"></canvas>
+                        </div>
                     </div>
                 </div>
-                <div class="card chart-card chart-half">
-                    <h3 class="card-title">ITM Force Trend</h3>
-                    <div class="chart-container-small">
-                        <canvas id="itm-chart"></canvas>
-                    </div>
-                </div>
-            </div>
+            </details>
         </section>
 
         <!-- Footer -->

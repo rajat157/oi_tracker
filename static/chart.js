@@ -5,6 +5,8 @@ const socket = io();
 let oiChart = null;
 let otmChart = null;
 let itmChart = null;
+let fullChartHistory = [];
+let chartPeriod = 'all';
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
@@ -44,6 +46,31 @@ function switchTableTab(btn, tabName) {
     if (panel) panel.classList.add('active');
 }
 
+// Chart period toggle
+function setChartPeriod(period) {
+    chartPeriod = period;
+    document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`.period-btn[onclick*="${period}"]`)?.classList.add('active');
+    applyChartPeriod();
+}
+
+function applyChartPeriod() {
+    if (!fullChartHistory.length || !oiChart) return;
+    let filtered = fullChartHistory;
+    if (chartPeriod !== 'all') {
+        const mins = chartPeriod === '30m' ? 30 : 60;
+        const cutoff = Date.now() - mins * 60 * 1000;
+        filtered = fullChartHistory.filter(h => new Date(h.timestamp).getTime() > cutoff);
+    }
+    if (!filtered.length) filtered = fullChartHistory.slice(-3);
+    oiChart.data.labels = filtered.map(item =>
+        new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    );
+    oiChart.data.datasets[0].data = filtered.map(item => item.call_oi_change);
+    oiChart.data.datasets[1].data = filtered.map(item => item.put_oi_change);
+    oiChart.update('none');
+}
+
 // Update score gauge visualization
 function updateScoreGauge(score) {
     const marker = document.getElementById('score-gauge-marker');
@@ -58,6 +85,14 @@ function updateScoreGauge(score) {
 function initChart() {
     const ctx = document.getElementById('oi-chart').getContext('2d');
 
+    // Gradient fills
+    const bearGrad = ctx.createLinearGradient(0, 0, 0, 360);
+    bearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.25)');
+    bearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
+    const bullGrad = ctx.createLinearGradient(0, 0, 0, 360);
+    bullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.25)');
+    bullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
+
     oiChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -67,22 +102,24 @@ function initChart() {
                     label: 'Call OI Change',
                     data: [],
                     borderColor: '#f87171',
-                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+                    backgroundColor: bearGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 3,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
                     pointBackgroundColor: '#f87171'
                 },
                 {
                     label: 'Put OI Change',
                     data: [],
                     borderColor: '#22c55e',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    backgroundColor: bullGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 3,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
                     pointBackgroundColor: '#22c55e'
                 }
             ]
@@ -125,7 +162,11 @@ function initChart() {
                     ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
                 },
                 y: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                    grid: {
+                        color: (ctx) => ctx.tick.value === 0 ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                        lineWidth: (ctx) => ctx.tick.value === 0 ? 1.5 : 1,
+                        drawBorder: false
+                    },
                     ticks: {
                         color: '#6b6b7f',
                         font: { size: 11, family: 'Inter' },
@@ -143,6 +184,13 @@ function initOTMChart() {
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+    const otmBullGrad = ctx.createLinearGradient(0, 0, 0, 260);
+    otmBullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.2)');
+    otmBullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
+    const otmBearGrad = ctx.createLinearGradient(0, 0, 0, 260);
+    otmBearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.2)');
+    otmBearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
+
     otmChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -152,21 +200,23 @@ function initOTMChart() {
                     label: 'OTM Put Force',
                     data: [],
                     borderColor: '#22c55e',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    backgroundColor: otmBullGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 2
+                    pointRadius: 0,
+                    pointHoverRadius: 4
                 },
                 {
                     label: 'OTM Call Force',
                     data: [],
                     borderColor: '#f87171',
-                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+                    backgroundColor: otmBearGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 2
+                    pointRadius: 0,
+                    pointHoverRadius: 4
                 }
             ]
         },
@@ -174,6 +224,7 @@ function initOTMChart() {
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
+            interaction: { intersect: false, mode: 'index' },
             plugins: {
                 legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } }
             },
@@ -191,6 +242,13 @@ function initITMChart() {
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+    const itmBullGrad = ctx.createLinearGradient(0, 0, 0, 260);
+    itmBullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.2)');
+    itmBullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
+    const itmBearGrad = ctx.createLinearGradient(0, 0, 0, 260);
+    itmBearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.2)');
+    itmBearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
+
     itmChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -200,21 +258,23 @@ function initITMChart() {
                     label: 'ITM Put Force',
                     data: [],
                     borderColor: '#22c55e',
-                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    backgroundColor: itmBullGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 2
+                    pointRadius: 0,
+                    pointHoverRadius: 4
                 },
                 {
                     label: 'ITM Call Force',
                     data: [],
                     borderColor: '#f87171',
-                    backgroundColor: 'rgba(248, 113, 113, 0.1)',
+                    backgroundColor: itmBearGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
-                    pointRadius: 2
+                    pointRadius: 0,
+                    pointHoverRadius: 4
                 }
             ]
         },
@@ -222,6 +282,7 @@ function initITMChart() {
             responsive: true,
             maintainAspectRatio: false,
             animation: false,
+            interaction: { intersect: false, mode: 'index' },
             plugins: {
                 legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } }
             },
@@ -1305,18 +1366,11 @@ function updateZoneTable(tbodyId, strikes) {
 function updateChartFromServer(history) {
     if (!history?.length || !oiChart) return;
 
-    const limited = history.slice(-30);
-
-    // Replace all chart data with server data
-    oiChart.data.labels = limited.map(item =>
-        new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-    );
-    oiChart.data.datasets[0].data = limited.map(item => item.call_oi_change);
-    oiChart.data.datasets[1].data = limited.map(item => item.put_oi_change);
-    oiChart.update('none');
+    fullChartHistory = history;
+    applyChartPeriod();
 
     // Also update OTM/ITM charts from history (zone force data)
-    updateZoneChartsFromHistory(limited);
+    updateZoneChartsFromHistory(history.slice(-30));
 }
 
 /**

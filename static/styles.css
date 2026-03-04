@@ -1341,14 +1341,82 @@ body {
 .chart-card.chart-half { /* half-width chart cards */ }
 
 .chart-container {
-    height: 280px;
+    height: 360px;
     position: relative;
 }
 
 .chart-container-small {
-    height: 200px;
+    height: 260px;
     position: relative;
 }
+
+/* Chart period toggle */
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-sm);
+}
+
+.chart-header .card-title { margin-bottom: 0; }
+
+.period-toggle {
+    display: flex;
+    gap: 2px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+}
+
+.period-btn {
+    padding: 3px 10px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: var(--transition);
+}
+
+.period-btn:hover { color: var(--text-secondary); }
+
+.period-btn.active {
+    background: var(--accent);
+    color: var(--text-primary);
+}
+
+/* Collapsible sub-charts */
+.chart-details {
+    border: none;
+    margin-top: var(--space-lg);
+}
+
+.chart-details summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    padding: var(--space-sm) 0;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.chart-details summary::before {
+    content: "\25B6";
+    font-size: 0.6rem;
+    transition: transform 0.2s ease;
+}
+
+.chart-details[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.chart-details summary::-webkit-details-marker { display: none; }
 
 #oi-chart,
 #otm-chart,

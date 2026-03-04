@@ -1400,6 +1400,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     total_below_put_oi = 0
     total_below_call_oi = 0
     total_below_volume = 0
+    total_below_put_volume = 0
+    total_below_call_volume = 0
 
     for strike in below_spot_strikes:
         data = strikes_data.get(strike, {})
@@ -1422,6 +1424,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         total_below_put_oi += pe_oi
         total_below_call_oi += ce_oi
         total_below_volume += pe_volume + ce_volume
+        total_below_put_volume += pe_volume
+        total_below_call_volume += ce_volume
 
         below_spot_data.append({
             "strike": strike,
@@ -1446,6 +1450,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     total_above_put_oi = 0
     total_above_call_oi = 0
     total_above_volume = 0
+    total_above_put_volume = 0
+    total_above_call_volume = 0
 
     for strike in above_spot_strikes:
         data = strikes_data.get(strike, {})
@@ -1468,6 +1474,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         total_above_put_oi += pe_oi
         total_above_call_oi += ce_oi
         total_above_volume += pe_volume + ce_volume
+        total_above_put_volume += pe_volume
+        total_above_call_volume += ce_volume
 
         above_spot_data.append({
             "strike": strike,
@@ -1597,9 +1605,11 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     total_call_oi = total_below_call_oi + total_above_call_oi
     pcr = total_put_oi / total_call_oi if total_call_oi > 0 else 0
 
-    # Volume PCR
+    # Volume PCR (Put Volume / Call Volume)
     total_volume = total_below_volume + total_above_volume
-    volume_pcr = (total_below_bullish + total_above_bullish) / max(total_below_bearish + total_above_bearish, 1)
+    total_put_volume = total_below_put_volume + total_above_put_volume
+    total_call_volume = total_below_call_volume + total_above_call_volume
+    volume_pcr = total_put_volume / max(total_call_volume, 1)
 
     # Average conviction
     all_below_convictions = [d['put_conviction'] for d in below_spot_data] + [d['call_conviction'] for d in below_spot_data]
@@ -1726,8 +1736,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         "strength": strength,
 
         # Volume metrics
-        "total_call_volume": 0,
-        "total_put_volume": 0,
+        "total_call_volume": total_call_volume,
+        "total_put_volume": total_put_volume,
         "volume_pcr": round(volume_pcr, 2),
         "avg_call_conviction": round(avg_conviction, 2),
         "avg_put_conviction": round(avg_conviction, 2),

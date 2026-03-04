@@ -73,6 +73,9 @@ class PremiumMonitor:
         # Depth cache — updated on every MODE_FULL tick
         self._latest_depth: Dict[int, dict] = {}
 
+        # Tick counter for health diagnostics
+        self._tick_count: int = 0
+
     def set_exit_callback(self, callback: Callable):
         """Set the callback for SL/target hit detection.
 
@@ -81,6 +84,10 @@ class PremiumMonitor:
              "exit_premium": float, "reason": str}
         """
         self._exit_callback = callback
+
+    def is_monitoring(self, trade_id: int) -> bool:
+        """Check if a trade is being monitored via WebSocket."""
+        return trade_id in self._all_trades
 
     def register_trade(self, trade: ActiveTrade):
         """Register a trade for real-time monitoring."""
@@ -215,10 +222,16 @@ class PremiumMonitor:
 
     def _on_reconnect(self, ws, attempts_count):
         """WebSocket reconnecting — re-subscribe all tokens."""
-        log.info("WebSocket reconnecting", attempt=attempts_count)
+        log.warning("WebSocket reconnecting", attempt=attempts_count,
+                    tokens_to_resubscribe=len(self._token_to_trades))
 
     def _on_tick_received(self, token: int, current_premium: float):
         """Process a single tick for a token."""
+        self._tick_count += 1
+        if self._tick_count % 500 == 0:
+            log.info("WebSocket health", ticks=self._tick_count,
+                     tokens=len(self._token_to_trades),
+                     trades=len(self._all_trades))
         self._latest_ltp[token] = current_premium
         trades = self._token_to_trades.get(token, [])
 

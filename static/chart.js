@@ -1489,7 +1489,16 @@ function updateConnectionStatus(connected) {
 // Helper functions
 function setText(id, value) {
     const elem = document.getElementById(id);
-    if (elem) elem.textContent = value ?? '--';
+    if (!elem) return;
+    const text = value ?? '--';
+    const prev = elem.textContent;
+    elem.textContent = text;
+    if (prev !== '--' && text !== '--' && prev !== text) {
+        const cls = parseFloat(String(text).replace(/[^0-9.\-+]/g, '')) >= parseFloat(String(prev).replace(/[^0-9.\-+]/g, '')) ? 'flash-green' : 'flash-red';
+        elem.classList.remove('flash-green', 'flash-red');
+        void elem.offsetWidth;
+        elem.classList.add(cls);
+    }
 }
 
 function setWidth(id, percent) {

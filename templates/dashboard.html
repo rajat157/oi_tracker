@@ -137,6 +137,30 @@
                     </div>
                 </div>
 
+                <!-- Trade Dock — compact pill bar showing all active strategies -->
+                <div class="trade-dock" id="trade-dock" style="display: none;">
+                    <div class="dock-pill dock-iron-pulse" id="dock-iron-pulse" style="display: none;" onclick="document.getElementById('trade-setup-card')?.scrollIntoView({behavior:'smooth'})">
+                        <span class="dock-abbr">IP</span>
+                        <span class="dock-pnl" id="dock-ip-pnl">--</span>
+                    </div>
+                    <div class="dock-pill dock-selling" id="dock-selling" style="display: none;" onclick="document.getElementById('sell-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                        <span class="dock-abbr">SELL</span>
+                        <span class="dock-pnl" id="dock-sell-pnl">--</span>
+                    </div>
+                    <div class="dock-pill dock-dessert" id="dock-dessert" style="display: none;" onclick="document.getElementById('dessert-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                        <span class="dock-abbr">DST</span>
+                        <span class="dock-pnl" id="dock-dessert-pnl">--</span>
+                    </div>
+                    <div class="dock-pill dock-momentum" id="dock-momentum" style="display: none;" onclick="document.getElementById('momentum-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                        <span class="dock-abbr">MOM</span>
+                        <span class="dock-pnl" id="dock-mom-pnl">--</span>
+                    </div>
+                    <div class="dock-pill dock-pa" id="dock-pa" style="display: none;" onclick="document.getElementById('pa-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                        <span class="dock-abbr">PA</span>
+                        <span class="dock-pnl" id="dock-pa-pnl">--</span>
+                    </div>
+                </div>
+
                 <!-- Secondary Metrics -->
                 <div class="card metrics-card">
                     <h3 class="card-title">Analysis Details</h3>
@@ -241,6 +265,17 @@
                         <span class="pnl-value" id="sell-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="sell-current-premium">--</strong></span>
                     </div>
+                    <div class="premium-bar-track" id="sell-premium-bar" style="display: none;">
+                        <div class="premium-bar-labels">
+                            <span class="premium-bar-sl" id="sell-bar-sl">SL --</span>
+                            <span class="premium-bar-current" id="sell-bar-current">--</span>
+                            <span class="premium-bar-target" id="sell-bar-t2">T2 --</span>
+                        </div>
+                        <div class="premium-bar-rail">
+                            <div class="premium-bar-fill" id="sell-bar-fill"></div>
+                            <div class="premium-bar-entry-mark" id="sell-bar-entry-mark"></div>
+                        </div>
+                    </div>
                     <div class="trade-levels">
                         <div class="trade-level entry">
                             <span class="level-label">Premium Collected</span>
@@ -289,6 +324,17 @@
                         <span class="pnl-value" id="dessert-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="dessert-current-premium">--</strong></span>
                     </div>
+                    <div class="premium-bar-track" id="dessert-premium-bar" style="display: none;">
+                        <div class="premium-bar-labels">
+                            <span class="premium-bar-sl" id="dessert-bar-sl">SL --</span>
+                            <span class="premium-bar-current" id="dessert-bar-current">--</span>
+                            <span class="premium-bar-target" id="dessert-bar-target">T --</span>
+                        </div>
+                        <div class="premium-bar-rail">
+                            <div class="premium-bar-fill" id="dessert-bar-fill"></div>
+                            <div class="premium-bar-entry-mark" id="dessert-bar-entry-mark"></div>
+                        </div>
+                    </div>
                     <div class="trade-levels">
                         <div class="trade-level entry">
                             <span class="level-label">Entry Premium</span>
@@ -325,6 +371,17 @@
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="momentum-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="momentum-current-premium">--</strong></span>
+                    </div>
+                    <div class="premium-bar-track" id="momentum-premium-bar" style="display: none;">
+                        <div class="premium-bar-labels">
+                            <span class="premium-bar-sl" id="momentum-bar-sl">SL --</span>
+                            <span class="premium-bar-current" id="momentum-bar-current">--</span>
+                            <span class="premium-bar-target" id="momentum-bar-target">T --</span>
+                        </div>
+                        <div class="premium-bar-rail">
+                            <div class="premium-bar-fill" id="momentum-bar-fill"></div>
+                            <div class="premium-bar-entry-mark" id="momentum-bar-entry-mark"></div>
+                        </div>
                     </div>
                     <div class="trade-levels">
                         <div class="trade-level entry">
@@ -363,6 +420,17 @@
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="pa-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="pa-current-premium">--</strong></span>
+                    </div>
+                    <div class="premium-bar-track" id="pa-premium-bar" style="display: none;">
+                        <div class="premium-bar-labels">
+                            <span class="premium-bar-sl" id="pa-bar-sl">SL --</span>
+                            <span class="premium-bar-current" id="pa-bar-current">--</span>
+                            <span class="premium-bar-target" id="pa-bar-target">T --</span>
+                        </div>
+                        <div class="premium-bar-rail">
+                            <div class="premium-bar-fill" id="pa-bar-fill"></div>
+                            <div class="premium-bar-entry-mark" id="pa-bar-entry-mark"></div>
+                        </div>
                     </div>
                     <div class="trade-levels">
                         <div class="trade-level entry">
@@ -428,6 +496,17 @@
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="trade-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="trade-current-premium">--</strong></span>
+                    </div>
+                    <div class="premium-bar-track" id="ip-premium-bar" style="display: none;">
+                        <div class="premium-bar-labels">
+                            <span class="premium-bar-sl" id="ip-bar-sl">SL --</span>
+                            <span class="premium-bar-current" id="ip-bar-current">--</span>
+                            <span class="premium-bar-target" id="ip-bar-target">T1 --</span>
+                        </div>
+                        <div class="premium-bar-rail">
+                            <div class="premium-bar-fill" id="ip-bar-fill"></div>
+                            <div class="premium-bar-entry-mark" id="ip-bar-entry-mark"></div>
+                        </div>
                     </div>
                     <div class="trade-levels">
                         <div class="trade-level entry">

@@ -494,6 +494,9 @@ function updateDashboard(data) {
 
     // Update zone charts
     updateZoneCharts(data);
+
+    // Update trade dock after all trade cards have been updated
+    updateTradeDock();
 }
 
 function updateOTMITMTables(data) {
@@ -725,6 +728,9 @@ function updateLivePnl(data) {
         }
         setText('pa-current-premium', p.current_premium.toFixed(2));
     }
+
+    // Refresh dock P&L after live update
+    updateTradeDock();
 }
 
 function updateDessertTrade(data) {
@@ -784,6 +790,10 @@ function updateDessertTrade(data) {
     setText('dessert-spot', (d.spot_at_creation || 0).toFixed(2));
     setText('dessert-verdict', d.verdict_at_creation || '--');
     setText('dessert-vix', (d.vix_at_creation || 0).toFixed(1));
+
+    // Premium bar
+    const dessertCur = d.current_premium || d.last_premium || 0;
+    positionPremiumBar('dessert', d.sl_premium, d.entry_premium, dessertCur, d.target_premium, { targetLabel: 'T' });
 }
 
 function updateMomentumTrade(data) {
@@ -840,6 +850,9 @@ function updateMomentumTrade(data) {
     setText('momentum-spot', (d.spot_at_creation || 0).toFixed(2));
     setText('momentum-verdict', d.verdict_at_creation || '--');
     setText('momentum-score', (d.combined_score || 0).toFixed(1));
+
+    // Premium bar
+    positionPremiumBar('momentum', d.sl_premium, d.entry_premium, d.current_premium, d.target_premium, { targetLabel: 'T' });
 }
 
 function updatePATrade(data) {
@@ -907,6 +920,9 @@ function updatePATrade(data) {
     setText('pa-spot', (d.spot_at_creation || 0).toFixed(2));
     setText('pa-verdict', d.verdict_at_creation || '--');
     setText('pa-chc', d.chc_strength ? (d.chc_strength * 100).toFixed(1) + '%' : '--');
+
+    // Premium bar
+    positionPremiumBar('pa', d.sl_premium, d.entry_premium, d.current_premium, d.target_premium, { targetLabel: 'T' });
 }
 
 function updateSellTrade(data) {
@@ -988,6 +1004,10 @@ function updateSellTrade(data) {
     // Meta
     setText('sell-spot', (sell.spot_at_creation || 0).toFixed(2));
     setText('sell-verdict', sell.verdict_at_creation || '--');
+
+    // Premium bar (selling: SL is higher, target is lower - reverse for display)
+    const sellCur = sell.current_premium || sell.last_premium || 0;
+    positionPremiumBar('sell', sell.sl_premium, sell.entry_premium, sellCur, sell.target2_premium || sell.target_premium, { slLabel: 'SL', targetLabel: 'T2' });
 }
 
 function updateTradeSetup(data) {
@@ -1136,6 +1156,9 @@ function updateTradeSetup(data) {
     setText('trade-risk-rs', riskAmountRs > 0 ? '₹' + formatNumber(Math.round(riskAmountRs)) : '--');
     setText('trade-profit-t1-rs', profitT1Rs > 0 ? '₹' + formatNumber(Math.round(profitT1Rs)) : '--');
     setText('trade-profit-t2-rs', profitT2Rs > 0 ? '₹' + formatNumber(Math.round(profitT2Rs)) : '--');
+
+    // Premium bar
+    positionPremiumBar('ip', slPremium, entryPremium, currentPremium, t1Premium, { targetLabel: 'T1' });
 }
 
 function updateWinRate(tradeStats) {
@@ -1594,4 +1617,80 @@ function updatePredictionTree(pt) {
             signalDiv.style.display = 'none';
         }
     }
+}
+
+// ===== Premium Bar Visualization =====
+
+/**
+ * Position the premium bar fill and entry marker between SL and Target.
+ * @param {string} prefix - DOM ID prefix (e.g., 'sell', 'dessert', 'momentum', 'pa', 'ip')
+ * @param {number} sl - Stop loss premium
+ * @param {number} entry - Entry premium
+ * @param {number} current - Current premium
+ * @param {number} target - Target premium
+ * @param {object} opts - Options: { slLabel, targetLabel }
+ */
+function positionPremiumBar(prefix, sl, entry, current, target, opts = {}) {
+    const barTrack = document.getElementById(prefix + '-premium-bar');
+    if (!barTrack || !sl || !entry || !target) return;
+
+    if (!current || current <= 0) {
+        barTrack.style.display = 'none';
+        return;
+    }
+
+    barTrack.style.display = 'block';
+
+    setText(prefix + '-bar-sl', (opts.slLabel || 'SL') + ' ' + sl.toFixed(1));
+    setText(prefix + '-bar-current', current.toFixed(1));
+    setText(prefix + '-bar-target', (opts.targetLabel || 'T') + ' ' + target.toFixed(1));
+
+    const range = target - sl;
+    if (range === 0) return;
+
+    const currentPct = Math.max(0, Math.min(100, ((current - sl) / range) * 100));
+    const entryPct = Math.max(0, Math.min(100, ((entry - sl) / range) * 100));
+
+    const fill = document.getElementById(prefix + '-bar-fill');
+    const entryMark = document.getElementById(prefix + '-bar-entry-mark');
+
+    if (fill) fill.style.width = currentPct + '%';
+    if (entryMark) entryMark.style.left = entryPct + '%';
+}
+
+// ===== Trade Dock =====
+
+function updateTradeDock() {
+    const dock = document.getElementById('trade-dock');
+    if (!dock) return;
+
+    let anyVisible = false;
+    const cards = [
+        { card: 'trade-setup-card', pill: 'dock-iron-pulse', pnl: 'dock-ip-pnl', pnlSrc: 'trade-pnl-value' },
+        { card: 'sell-trade-card', pill: 'dock-selling', pnl: 'dock-sell-pnl', pnlSrc: 'sell-pnl-value' },
+        { card: 'dessert-trade-card', pill: 'dock-dessert', pnl: 'dock-dessert-pnl', pnlSrc: 'dessert-pnl-value' },
+        { card: 'momentum-trade-card', pill: 'dock-momentum', pnl: 'dock-mom-pnl', pnlSrc: 'momentum-pnl-value' },
+        { card: 'pa-trade-card', pill: 'dock-pa', pnl: 'dock-pa-pnl', pnlSrc: 'pa-pnl-value' }
+    ];
+
+    cards.forEach(({ card, pill, pnl, pnlSrc }) => {
+        const cardEl = document.getElementById(card);
+        const pillEl = document.getElementById(pill);
+        const pnlEl = document.getElementById(pnl);
+        const srcEl = document.getElementById(pnlSrc);
+
+        if (cardEl && pillEl) {
+            const visible = cardEl.style.display !== 'none';
+            pillEl.style.display = visible ? 'flex' : 'none';
+            if (visible) anyVisible = true;
+
+            if (pnlEl && srcEl && visible) {
+                pnlEl.textContent = srcEl.textContent || '--';
+                pnlEl.style.color = srcEl.classList.contains('positive') || srcEl.classList.contains('pnl-positive') ? 'var(--bullish)' :
+                                    srcEl.classList.contains('negative') || srcEl.classList.contains('pnl-negative') ? 'var(--bearish)' : '';
+            }
+        }
+    });
+
+    dock.style.display = anyVisible ? 'flex' : 'none';
 }

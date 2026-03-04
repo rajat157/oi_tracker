@@ -136,18 +136,16 @@ class OIScheduler:
 
         self.last_purge_date = today
 
-    def fetch_and_analyze(self, force: bool = False):
+    def fetch_and_analyze(self):
         """
         Main job: Fetch data, analyze, save, and broadcast.
-
-        Args:
-            force: If True, fetch even if market is closed (for testing)
+        Only runs during market hours (9:15 AM - 3:30 PM IST, weekdays).
         """
         # Check and purge old data at start of new day
         self.check_and_purge_old_data()
 
-        # Check if market is open OR force is enabled
-        if not force and not self.force_enabled and not self.is_market_open():
+        # Hard guard: NEVER fetch outside market hours
+        if not self.is_market_open():
             log.debug("Market is closed, skipping fetch")
             return
 
@@ -619,14 +617,9 @@ class OIScheduler:
         """Get the most recent analysis result."""
         return self.last_analysis
 
-    def trigger_now(self, force: bool = True):
-        """
-        Manually trigger a fetch (useful for testing).
-
-        Args:
-            force: If True, fetch even if market is closed
-        """
-        self.fetch_and_analyze(force=force)
+    def trigger_now(self):
+        """Manually trigger a fetch. Still respects market hours guard."""
+        self.fetch_and_analyze()
 
     def _handle_premium_exit(self, exit_info: dict):
         """

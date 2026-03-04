@@ -194,7 +194,7 @@ def api_history():
 def api_refresh():
     """Manually trigger a data refresh."""
     try:
-        oi_scheduler.trigger_now(force=True)
+        oi_scheduler.trigger_now()
         return jsonify({"status": "success", "message": "Refresh triggered"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

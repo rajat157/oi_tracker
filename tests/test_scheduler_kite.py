@@ -67,7 +67,9 @@ class TestUsesKiteFetcher:
         mock_fetcher = MockKite.return_value
         mock_fetcher.fetch_option_chain.return_value = None
 
-        scheduler.fetch_and_analyze(force=True)
+        # Mock market as open since fetch_and_analyze never runs outside hours
+        scheduler.is_market_open = lambda: True
+        scheduler.fetch_and_analyze()
 
         # Should have called kite_fetcher.fetch_option_chain, not NSEFetcher
         mock_fetcher.fetch_option_chain.assert_called()
@@ -102,7 +104,9 @@ class TestFetchOutputUnchanged:
         socketio_mock = MagicMock()
         scheduler = OIScheduler(socketio=socketio_mock)
 
-        scheduler.fetch_and_analyze(force=True)
+        # Mock market as open since fetch_and_analyze never runs outside hours
+        scheduler.is_market_open = lambda: True
+        scheduler.fetch_and_analyze()
 
         # SocketIO should have been called with analysis data
         if socketio_mock.emit.called:

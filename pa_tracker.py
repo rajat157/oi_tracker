@@ -42,6 +42,7 @@ NIFTY_STEP = 50
 CHC_LOOKBACK = 3       # 3 consecutive higher closes
 CHOPPY_LOOKBACK = 10   # 10 candles for choppy detection
 CHOPPY_THRESHOLD = 0.15  # 0.15% spot range = choppy
+PA_VIX_WARN_THRESHOLD = 18.0  # Paper trade only when VIX above this
 
 STRATEGY_NAME = "Price Action"
 
@@ -352,13 +353,16 @@ class PulseRiderTracker:
                                entry_premium, sl_premium, target_premium,
                                spot, verdict, confidence, iv_skew, vix, chc_strength)
 
-        # Auto-place order on Kite if enabled
-        if PA_PLACE_ORDER:
+        # Auto-place order on Kite if enabled (skip on high VIX — paper trade)
+        is_paper = vix > PA_VIX_WARN_THRESHOLD
+        if PA_PLACE_ORDER and not is_paper:
             self._place_kite_order(
                 trade_id, self.atm_strike, option_type,
                 entry_premium, sl_premium, target_premium,
                 analysis.get("expiry_date", "")
             )
+        elif is_paper:
+            log.info("PA paper trade: VIX too high, skipping Kite order", vix=f"{vix:.1f}")
 
         return trade_id
 
@@ -435,8 +439,16 @@ class PulseRiderTracker:
             from alerts import send_telegram
 
             side_emoji = "\U0001f7e2" if option_type == "CE" else "\U0001f534"
+            vix_warning = ""
+            if vix > PA_VIX_WARN_THRESHOLD:
+                vix_warning = (
+                    f"\n\u26a0\ufe0f <b>HIGH VIX ({vix:.1f}) — PAPER TRADE ONLY</b>\n"
+                    f"<i>Kite order NOT placed. Tracking for data collection.</i>\n"
+                )
+
             message = (
-                f"<b>{side_emoji} PRICE ACTION: {direction}</b>\n\n"
+                f"<b>{side_emoji} PRICE ACTION: {direction}</b>\n"
+                f"{vix_warning}\n"
                 f"<b>Signal:</b> CHC(3) on {option_type} ({chc_strength:.1%} move)\n"
                 f"<b>Strike:</b> <code>{strike} {option_type}</code>\n"
                 f"<b>Spot:</b> <code>{spot:.2f}</code>\n"

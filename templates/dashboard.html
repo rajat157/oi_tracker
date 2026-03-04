@@ -969,6 +969,20 @@
                 </div>
             </div>
 
+            <div class="card chart-card">
+                <div class="chart-header">
+                    <h3 class="card-title">Cumulative OI Build-up (from Day Start)</h3>
+                    <div class="chart-controls">
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="cumulativeChart?.zoom(1.2)" title="Zoom In">+</button>
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="cumulativeChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="cumulativeChart?.resetZoom()" title="Reset">&#x27F2;</button>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="cumulative-oi-chart"></canvas>
+                </div>
+            </div>
+
             <div class="charts-row">
                 <div class="card chart-card chart-half">
                     <div class="chart-header">

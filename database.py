@@ -814,7 +814,7 @@ def get_analysis_history(limit: int = 50, date: Optional[str] = None) -> list:
         results = []
         for row in reversed(rows):  # Chronological order
             item = dict(row)
-            # Extract zone force data from analysis_json if present
+            # Extract zone force data and cumulative OI from analysis_json if present
             if item.get('analysis_json'):
                 try:
                     full = json_module.loads(item['analysis_json'])
@@ -822,6 +822,15 @@ def get_analysis_history(limit: int = 50, date: Optional[str] = None) -> list:
                     item['otm_call_force'] = full.get('otm_calls', {}).get('total_force', 0)
                     item['itm_put_force'] = full.get('itm_puts', {}).get('total_force', 0)
                     item['itm_call_force'] = full.get('itm_calls', {}).get('total_force', 0)
+                    # Cumulative OI change from day start (sum of OTM + ITM per side)
+                    item['cumulative_call_oi_change'] = (
+                        full.get('otm_calls', {}).get('total_oi_change', 0) +
+                        full.get('itm_calls', {}).get('total_oi_change', 0)
+                    )
+                    item['cumulative_put_oi_change'] = (
+                        full.get('otm_puts', {}).get('total_oi_change', 0) +
+                        full.get('itm_puts', {}).get('total_oi_change', 0)
+                    )
                 except (json_module.JSONDecodeError, TypeError):
                     pass
             # Remove bulky analysis_json from response
@@ -863,14 +872,17 @@ def get_recent_oi_changes(lookback: int = 3) -> list:
     Returns:
         List of (call_oi_change, put_oi_change) tuples, oldest first
     """
+    from datetime import date
+    today = date.today().isoformat()
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT call_oi_change, put_oi_change
             FROM analysis_history
+            WHERE DATE(timestamp) = ?
             ORDER BY timestamp DESC
             LIMIT ?
-        """, (lookback,))
+        """, (today, lookback))
 
         rows = cursor.fetchall()
         # Reverse to get oldest first

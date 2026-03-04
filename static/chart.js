@@ -5,12 +5,14 @@ const socket = io();
 let oiChart = null;
 let otmChart = null;
 let itmChart = null;
+let cumulativeChart = null;
 let fullChartHistory = [];
 let chartPeriod = 'all';
 
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     initChart();
+    initCumulativeChart();
     initOTMChart();
     initITMChart();
     initToggles();
@@ -89,6 +91,14 @@ function applyChartPeriod() {
         itmChart.data.datasets[0].data = filtered.map(item => item.itm_put_force || 0);
         itmChart.data.datasets[1].data = filtered.map(item => item.itm_call_force || 0);
         itmChart.update('none');
+    }
+
+    // Cumulative OI chart
+    if (cumulativeChart) {
+        cumulativeChart.data.labels = labels;
+        cumulativeChart.data.datasets[0].data = filtered.map(item => item.cumulative_call_oi_change || 0);
+        cumulativeChart.data.datasets[1].data = filtered.map(item => item.cumulative_put_oi_change || 0);
+        cumulativeChart.update('none');
     }
 }
 
@@ -183,6 +193,99 @@ function initChart() {
                         pinch: { enabled: true },
                         mode: 'x'
                     }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
+                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                },
+                y: {
+                    grid: {
+                        color: (ctx) => ctx.tick.value === 0 ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                        lineWidth: (ctx) => ctx.tick.value === 0 ? 1.5 : 1,
+                        drawBorder: false
+                    },
+                    ticks: {
+                        color: '#6b6b7f',
+                        font: { size: 11, family: 'Inter' },
+                        callback: value => formatCompact(value)
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Initialize Cumulative OI Chart (day start build-up)
+function initCumulativeChart() {
+    const canvas = document.getElementById('cumulative-oi-chart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const bearGrad = ctx.createLinearGradient(0, 0, 0, 360);
+    bearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.25)');
+    bearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
+    const bullGrad = ctx.createLinearGradient(0, 0, 0, 360);
+    bullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.25)');
+    bullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
+
+    cumulativeChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Call OI Build-up',
+                    data: [],
+                    borderColor: '#f87171',
+                    backgroundColor: bearGrad,
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#f87171'
+                },
+                {
+                    label: 'Put OI Build-up',
+                    data: [],
+                    borderColor: '#22c55e',
+                    backgroundColor: bullGrad,
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#22c55e'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: {
+                    position: 'top',
+                    align: 'end',
+                    labels: { color: '#a1a1b5', usePointStyle: true, pointStyle: 'circle', padding: 20, font: { size: 12, family: 'Inter' } }
+                },
+                tooltip: {
+                    backgroundColor: '#1a1a24',
+                    titleColor: '#ffffff',
+                    bodyColor: '#a1a1b5',
+                    borderColor: '#2a2a3a',
+                    borderWidth: 1,
+                    padding: 12,
+                    cornerRadius: 8,
+                    titleFont: { size: 13, family: 'Inter' },
+                    bodyFont: { size: 12, family: 'Inter' }
+                },
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
                 }
             },
             scales: {
@@ -594,7 +697,7 @@ function updateDashboard(data) {
     // PCR Trend arrow
     const pcrArrow = document.getElementById('pcr-trend-arrow');
     if (pcrArrow && data.pcr_trend) {
-        const trend = data.pcr_trend;
+        const trend = data.pcr_trend.trend;
         if (trend === 'rising') { pcrArrow.textContent = ' \u2191'; pcrArrow.style.color = 'var(--bullish)'; }
         else if (trend === 'falling') { pcrArrow.textContent = ' \u2193'; pcrArrow.style.color = 'var(--bearish)'; }
         else { pcrArrow.textContent = ' \u2192'; pcrArrow.style.color = 'var(--text-muted)'; }
@@ -603,7 +706,7 @@ function updateDashboard(data) {
     // Max Pain Drift
     const driftElem = document.getElementById('max-pain-drift');
     if (driftElem && data.max_pain_drift != null) {
-        const drift = data.max_pain_drift;
+        const drift = data.max_pain_drift.drift_points;
         if (drift !== 0) {
             const arrow = drift > 0 ? '\u2191' : '\u2193';
             driftElem.textContent = `${arrow} ${drift > 0 ? '+' : ''}${drift} pts`;
@@ -622,8 +725,8 @@ function updateDashboard(data) {
 
     // Primary S/R
     if (data.primary_sr) {
-        setText('primary-support', data.primary_sr.support ? formatNumber(data.primary_sr.support) : '--');
-        setText('primary-resistance', data.primary_sr.resistance ? formatNumber(data.primary_sr.resistance) : '--');
+        setText('primary-support', data.primary_sr.support ? formatNumber(data.primary_sr.support.strike) : '--');
+        setText('primary-resistance', data.primary_sr.resistance ? formatNumber(data.primary_sr.resistance.strike) : '--');
     }
 
     // OI Flow Summary
@@ -1479,32 +1582,35 @@ function updateChartFromServer(history) {
  * Called on page load and socket updates to restore chart state.
  */
 function updateZoneChartsFromHistory(history) {
-    if (!history?.length || !otmChart || !itmChart) return;
+    if (!history?.length) return;
 
-    // Debug: log the zone force data
-    console.log('Zone chart history sample:', history.slice(0, 2).map(h => ({
-        ts: h.timestamp,
-        otm_put: h.otm_put_force,
-        otm_call: h.otm_call_force,
-        itm_put: h.itm_put_force,
-        itm_call: h.itm_call_force
-    })));
+    const labels = history.map(item =>
+        new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
+    );
 
     // Populate OTM chart (OTM Puts vs OTM Calls)
-    otmChart.data.labels = history.map(item =>
-        new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-    );
-    otmChart.data.datasets[0].data = history.map(item => item.otm_put_force || 0);
-    otmChart.data.datasets[1].data = history.map(item => item.otm_call_force || 0);
-    otmChart.update('none');
+    if (otmChart) {
+        otmChart.data.labels = labels;
+        otmChart.data.datasets[0].data = history.map(item => item.otm_put_force || 0);
+        otmChart.data.datasets[1].data = history.map(item => item.otm_call_force || 0);
+        otmChart.update('none');
+    }
 
     // Populate ITM chart (ITM Puts vs ITM Calls)
-    itmChart.data.labels = history.map(item =>
-        new Date(item.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })
-    );
-    itmChart.data.datasets[0].data = history.map(item => item.itm_put_force || 0);
-    itmChart.data.datasets[1].data = history.map(item => item.itm_call_force || 0);
-    itmChart.update('none');
+    if (itmChart) {
+        itmChart.data.labels = labels;
+        itmChart.data.datasets[0].data = history.map(item => item.itm_put_force || 0);
+        itmChart.data.datasets[1].data = history.map(item => item.itm_call_force || 0);
+        itmChart.update('none');
+    }
+
+    // Populate Cumulative OI chart
+    if (cumulativeChart) {
+        cumulativeChart.data.labels = labels;
+        cumulativeChart.data.datasets[0].data = history.map(item => item.cumulative_call_oi_change || 0);
+        cumulativeChart.data.datasets[1].data = history.map(item => item.cumulative_put_oi_change || 0);
+        cumulativeChart.update('none');
+    }
 }
 
 /**
@@ -1634,7 +1740,8 @@ function updateFlowCard(flow) {
 
     const dominantEl = document.getElementById('flow-dominant');
     if (dominantEl) {
-        const dom = flow.dominant || 'Mixed';
+        const raw = flow.dominant_flow || 'mixed';
+        const dom = raw.charAt(0).toUpperCase() + raw.slice(1);
         const icons = { 'Writing': '\u270E', 'Buying': '\u25B2', 'Mixed': '\u25C6' };
         dominantEl.textContent = (icons[dom] || '') + ' ' + dom;
         dominantEl.className = 'flow-dominant';
@@ -1642,21 +1749,33 @@ function updateFlowCard(flow) {
         else if (dom === 'Buying') dominantEl.classList.add('flow-buying');
     }
 
-    setText('flow-bullish', flow.net_bullish || 0);
-    setText('flow-bearish', flow.net_bearish || 0);
+    setText('flow-bullish', flow.net_bullish_flow || 0);
+    setText('flow-bearish', flow.net_bearish_flow || 0);
 
-    // Zone mini bars
+    // Zone mini bars — build from zone flow count dicts
     const zonesEl = document.getElementById('flow-zones');
-    if (zonesEl && flow.zones) {
-        zonesEl.innerHTML = flow.zones.map(z => {
-            const total = (z.writing || 0) + (z.buying || 0) + (z.unwinding || 0) + (z.covering || 0);
+    if (zonesEl) {
+        const zoneKeys = [
+            { key: 'otm_puts', name: 'OTM Puts' },
+            { key: 'otm_calls', name: 'OTM Calls' },
+            { key: 'itm_calls', name: 'ITM Calls' },
+            { key: 'itm_puts', name: 'ITM Puts' }
+        ];
+        zonesEl.innerHTML = zoneKeys.map(({ key, name }) => {
+            const z = flow[key];
+            if (!z) return '';
+            const writing = z.fresh_writing || 0;
+            const buying = z.fresh_buying || 0;
+            const unwinding = z.long_unwinding || 0;
+            const covering = z.short_covering || 0;
+            const total = writing + buying + unwinding + covering;
             if (!total) return '';
-            const wPct = ((z.writing || 0) / total * 100).toFixed(0);
-            const bPct = ((z.buying || 0) / total * 100).toFixed(0);
-            const uPct = ((z.unwinding || 0) / total * 100).toFixed(0);
-            const cPct = ((z.covering || 0) / total * 100).toFixed(0);
+            const wPct = (writing / total * 100).toFixed(0);
+            const bPct = (buying / total * 100).toFixed(0);
+            const uPct = (unwinding / total * 100).toFixed(0);
+            const cPct = (covering / total * 100).toFixed(0);
             return `<div class="flow-zone-row">
-                <span class="flow-zone-label">${z.name || ''}</span>
+                <span class="flow-zone-label">${name}</span>
                 <div class="flow-zone-bar">
                     <div class="flow-seg flow-seg-fw" style="width:${wPct}%" title="Writing ${wPct}%"></div>
                     <div class="flow-seg flow-seg-fb" style="width:${bPct}%" title="Buying ${bPct}%"></div>

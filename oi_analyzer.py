@@ -3,6 +3,7 @@ OI Analyzer - Tug-of-War Analysis Logic
 Analyzes option chain OI to determine market sentiment with self-learning capabilities
 """
 
+import math
 from typing import Tuple, Optional, List, Dict
 
 
@@ -22,7 +23,7 @@ def find_atm_strike(spot_price: float, strikes: list) -> int:
     return min(strikes, key=lambda x: abs(x - spot_price))
 
 
-def get_otm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) -> Tuple[list, list]:
+def get_otm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 5) -> Tuple[list, list]:
     """
     Get OTM strikes on both sides of ATM.
 
@@ -368,6 +369,23 @@ def calculate_conviction_multiplier(volume: int, oi_change: int) -> float:
         return 0.5
 
 
+def distance_decay_weight(distance_idx: int, decay_lambda: float = 0.3) -> float:
+    """
+    Exponential decay weight based on distance from ATM.
+
+    Gives weights: [1.0, 0.74, 0.55, 0.41, 0.30] for 5 strikes.
+    The nearest 3 strikes retain ~77% of total weight.
+
+    Args:
+        distance_idx: 0 = closest to ATM, increasing = farther away
+        decay_lambda: Decay rate (default 0.3)
+
+    Returns:
+        Weight between 0 and 1
+    """
+    return math.exp(-decay_lambda * distance_idx)
+
+
 def calculate_dynamic_sl_pct(strikes_data: dict, strike: int, option_type: str) -> float:
     """
     Calculate IV-based stop loss percentage (15-25% range).
@@ -572,7 +590,7 @@ def calculate_premium_momentum(current_strikes: dict, prev_strikes: Optional[dic
     }
 
 
-def calculate_iv_skew(strikes_data: dict, spot_price: float, num_strikes: int = 3) -> float:
+def calculate_iv_skew(strikes_data: dict, spot_price: float, num_strikes: int = 5) -> float:
     """
     Calculate IV Skew = avg(Put IV) - avg(Call IV) for OTM strikes.
 
@@ -600,12 +618,30 @@ def calculate_iv_skew(strikes_data: dict, spot_price: float, num_strikes: int = 
     start_idx = max(0, atm_idx - num_strikes)
     otm_put_strikes = all_strikes[start_idx:atm_idx]
 
-    # Calculate average IVs
-    call_ivs = [strikes_data[s].get("ce_iv", 0) for s in otm_call_strikes if strikes_data[s].get("ce_iv", 0) > 0]
-    put_ivs = [strikes_data[s].get("pe_iv", 0) for s in otm_put_strikes if strikes_data[s].get("pe_iv", 0) > 0]
+    # Calculate decay-weighted average IVs
+    # OTM Calls: first = closest to ATM (distance_idx = i)
+    call_iv_weighted_sum = 0.0
+    call_weight_sum = 0.0
+    for i, s in enumerate(otm_call_strikes):
+        iv = strikes_data[s].get("ce_iv", 0)
+        if iv > 0:
+            w = distance_decay_weight(i)
+            call_iv_weighted_sum += iv * w
+            call_weight_sum += w
 
-    avg_call_iv = sum(call_ivs) / len(call_ivs) if call_ivs else 0
-    avg_put_iv = sum(put_ivs) / len(put_ivs) if put_ivs else 0
+    # OTM Puts: last = closest to ATM (distance_idx = len - 1 - i)
+    put_iv_weighted_sum = 0.0
+    put_weight_sum = 0.0
+    for i, s in enumerate(otm_put_strikes):
+        iv = strikes_data[s].get("pe_iv", 0)
+        if iv > 0:
+            dist_idx = len(otm_put_strikes) - 1 - i
+            w = distance_decay_weight(dist_idx)
+            put_iv_weighted_sum += iv * w
+            put_weight_sum += w
+
+    avg_call_iv = call_iv_weighted_sum / call_weight_sum if call_weight_sum > 0 else 0
+    avg_put_iv = put_iv_weighted_sum / put_weight_sum if put_weight_sum > 0 else 0
 
     return avg_put_iv - avg_call_iv
 
@@ -1000,7 +1036,7 @@ def detect_trap(strikes_data: dict, spot_price: float, price_direction: str,
     return None
 
 
-def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) -> Tuple[list, list]:
+def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 5) -> Tuple[list, list]:
     """
     Get ITM strikes on both sides of ATM.
 
@@ -1411,7 +1447,7 @@ def composite_flow_confidence(flow_type: str, bid_ask_ratio: float) -> float:
 
 
 def analyze_tug_of_war(strikes_data: dict, spot_price: float,
-                        num_strikes: int = 3,
+                        num_strikes: int = 5,
                         momentum_score: Optional[float] = None,
                         price_history: Optional[List[dict]] = None,
                         vix: float = 0.0,
@@ -1467,16 +1503,27 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     above_spot_strikes = all_strikes[atm_idx + 1:atm_idx + 1 + num_strikes]
 
     # Calculate scale factor for Total OI (normalize to OI change magnitude)
-    # Use average OI change as baseline to scale Total OI contribution
-    all_oi_changes = []
-    all_total_oi = []
-    for strike in below_spot_strikes + above_spot_strikes:
+    # Use decay-weighted average to prevent far strikes from distorting the ratio
+    weighted_oi_changes = []
+    weighted_total_oi = []
+    total_weight = 0.0
+    for i, strike in enumerate(below_spot_strikes):
+        dist_idx = len(below_spot_strikes) - 1 - i  # last = closest to ATM
+        w = distance_decay_weight(dist_idx)
         data = strikes_data.get(strike, {})
-        all_oi_changes.extend([abs(data.get("pe_oi_change", 0)), abs(data.get("ce_oi_change", 0))])
-        all_total_oi.extend([data.get("pe_oi", 0), data.get("ce_oi", 0)])
+        weighted_oi_changes.extend([abs(data.get("pe_oi_change", 0)) * w, abs(data.get("ce_oi_change", 0)) * w])
+        weighted_total_oi.extend([data.get("pe_oi", 0) * w, data.get("ce_oi", 0) * w])
+        total_weight += w * 2  # 2 entries per strike (pe + ce)
+    for i, strike in enumerate(above_spot_strikes):
+        dist_idx = i  # first = closest to ATM
+        w = distance_decay_weight(dist_idx)
+        data = strikes_data.get(strike, {})
+        weighted_oi_changes.extend([abs(data.get("pe_oi_change", 0)) * w, abs(data.get("ce_oi_change", 0)) * w])
+        weighted_total_oi.extend([data.get("pe_oi", 0) * w, data.get("ce_oi", 0) * w])
+        total_weight += w * 2
 
-    avg_oi_change = sum(all_oi_changes) / len(all_oi_changes) if all_oi_changes else 1
-    avg_total_oi = sum(all_total_oi) / len(all_total_oi) if all_total_oi else 1
+    avg_oi_change = sum(weighted_oi_changes) / total_weight if total_weight > 0 else 1
+    avg_total_oi = sum(weighted_total_oi) / total_weight if total_weight > 0 else 1
     scale_factor = avg_total_oi / avg_oi_change if avg_oi_change > 0 else 1
 
     oi_change_weight = 1.0 - total_oi_weight
@@ -1498,7 +1545,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     otm_puts_total_force = 0
     otm_puts_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
-    for strike in below_spot_strikes:
+    for i, strike in enumerate(below_spot_strikes):
+        dist_idx = len(below_spot_strikes) - 1 - i  # last = closest to ATM
+        decay_w = distance_decay_weight(dist_idx)
         data = strikes_data.get(strike, {})
         pe_oi = data.get("pe_oi", 0)
         pe_oi_change = data.get("pe_oi_change", 0)
@@ -1520,7 +1569,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
         put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
         put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
-        put_force *= flow_weight(pe_flow)
+        put_force *= flow_weight(pe_flow) * decay_w
 
         otm_puts_total_oi += pe_oi
         otm_puts_total_oi_change += pe_oi_change
@@ -1547,7 +1596,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     itm_calls_total_force = 0
     itm_calls_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
-    for strike in below_spot_strikes:
+    for i, strike in enumerate(below_spot_strikes):
+        dist_idx = len(below_spot_strikes) - 1 - i  # last = closest to ATM
+        decay_w = distance_decay_weight(dist_idx)
         data = strikes_data.get(strike, {})
         ce_oi = data.get("ce_oi", 0)
         ce_oi_change = data.get("ce_oi_change", 0)
@@ -1569,7 +1620,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
         call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
         call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
-        call_force *= flow_weight(ce_flow)
+        call_force *= flow_weight(ce_flow) * decay_w
 
         itm_calls_total_oi += ce_oi
         itm_calls_total_oi_change += ce_oi_change
@@ -1596,7 +1647,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     otm_calls_total_force = 0
     otm_calls_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
-    for strike in above_spot_strikes:
+    for i, strike in enumerate(above_spot_strikes):
+        dist_idx = i  # first = closest to ATM
+        decay_w = distance_decay_weight(dist_idx)
         data = strikes_data.get(strike, {})
         ce_oi = data.get("ce_oi", 0)
         ce_oi_change = data.get("ce_oi_change", 0)
@@ -1618,7 +1671,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
         call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
         call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
-        call_force *= flow_weight(ce_flow)
+        call_force *= flow_weight(ce_flow) * decay_w
 
         otm_calls_total_oi += ce_oi
         otm_calls_total_oi_change += ce_oi_change
@@ -1645,7 +1698,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     itm_puts_total_force = 0
     itm_puts_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
-    for strike in above_spot_strikes:
+    for i, strike in enumerate(above_spot_strikes):
+        dist_idx = i  # first = closest to ATM
+        decay_w = distance_decay_weight(dist_idx)
         data = strikes_data.get(strike, {})
         pe_oi = data.get("pe_oi", 0)
         pe_oi_change = data.get("pe_oi_change", 0)
@@ -1667,7 +1722,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
         put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
         put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
-        put_force *= flow_weight(pe_flow)
+        put_force *= flow_weight(pe_flow) * decay_w
 
         itm_puts_total_oi += pe_oi
         itm_puts_total_oi_change += pe_oi_change
@@ -1728,7 +1783,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     total_below_put_volume = 0
     total_below_call_volume = 0
 
-    for strike in below_spot_strikes:
+    for i, strike in enumerate(below_spot_strikes):
+        dist_idx = len(below_spot_strikes) - 1 - i  # last = closest to ATM
+        decay_w = distance_decay_weight(dist_idx)
         data = strikes_data.get(strike, {})
         pe_oi = data.get("pe_oi", 0)
         pe_oi_change = data.get("pe_oi_change", 0)
@@ -1740,8 +1797,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
         call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
 
-        weighted_put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
-        weighted_call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+        weighted_put_force = calculate_force(pe_oi_change, pe_oi, put_conviction) * decay_w
+        weighted_call_force = calculate_force(ce_oi_change, ce_oi, call_conviction) * decay_w
         net_force = weighted_put_force - weighted_call_force
 
         total_below_bullish += weighted_put_force
@@ -1778,7 +1835,9 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     total_above_put_volume = 0
     total_above_call_volume = 0
 
-    for strike in above_spot_strikes:
+    for i, strike in enumerate(above_spot_strikes):
+        dist_idx = i  # first = closest to ATM
+        decay_w = distance_decay_weight(dist_idx)
         data = strikes_data.get(strike, {})
         pe_oi = data.get("pe_oi", 0)
         pe_oi_change = data.get("pe_oi_change", 0)
@@ -1790,8 +1849,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
         call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
 
-        weighted_put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
-        weighted_call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+        weighted_put_force = calculate_force(pe_oi_change, pe_oi, put_conviction) * decay_w
+        weighted_call_force = calculate_force(ce_oi_change, ce_oi, call_conviction) * decay_w
         net_force = weighted_put_force - weighted_call_force
 
         total_above_bullish += weighted_put_force
@@ -2128,11 +2187,13 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             "itm_calls": itm_calls_flow_counts,
             "itm_puts": itm_puts_flow_counts,
             "net_bullish_flow": (
-                otm_puts_flow_counts["fresh_writing"] + otm_puts_flow_counts["fresh_buying"] +
+                otm_puts_flow_counts["fresh_writing"] +
+                otm_calls_flow_counts["fresh_buying"] +
                 itm_puts_flow_counts["short_covering"]
             ),
             "net_bearish_flow": (
-                otm_calls_flow_counts["fresh_writing"] + otm_calls_flow_counts["fresh_buying"] +
+                otm_calls_flow_counts["fresh_writing"] +
+                otm_puts_flow_counts["fresh_buying"] +
                 itm_calls_flow_counts["short_covering"]
             ),
             "dominant_flow": (

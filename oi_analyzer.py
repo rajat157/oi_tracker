@@ -1040,6 +1040,113 @@ def get_itm_strikes(atm_strike: int, all_strikes: list, num_strikes: int = 3) ->
     return itm_calls, itm_puts
 
 
+def find_primary_sr_levels(strikes_data: dict, spot_price: float) -> dict:
+    """Find primary support and resistance from absolute OI levels.
+
+    - Primary support = highest put OI strike below spot
+    - Primary resistance = highest call OI strike above spot
+
+    Returns:
+        Dict with support and resistance strike info
+    """
+    all_strikes = sorted(strikes_data.keys())
+    if not all_strikes:
+        return {"support": None, "resistance": None}
+
+    best_support = None
+    best_support_oi = 0
+    best_resistance = None
+    best_resistance_oi = 0
+
+    for strike in all_strikes:
+        data = strikes_data[strike]
+        if strike < spot_price:
+            pe_oi = data.get("pe_oi", 0)
+            if pe_oi > best_support_oi:
+                best_support_oi = pe_oi
+                best_support = strike
+        elif strike > spot_price:
+            ce_oi = data.get("ce_oi", 0)
+            if ce_oi > best_resistance_oi:
+                best_resistance_oi = ce_oi
+                best_resistance = strike
+
+    return {
+        "support": {"strike": best_support, "put_oi": best_support_oi} if best_support else None,
+        "resistance": {"strike": best_resistance, "call_oi": best_resistance_oi} if best_resistance else None,
+    }
+
+
+def calculate_pcr_trend(pcr_history: list, window: int = 5) -> dict:
+    """Calculate PCR trend via linear regression slope.
+
+    Args:
+        pcr_history: List of recent PCR values (chronological)
+        window: Number of values to use for trend
+
+    Returns:
+        Dict with slope, trend direction, and current PCR
+    """
+    if not pcr_history or len(pcr_history) < 2:
+        return {"slope": 0.0, "trend": "flat", "current_pcr": pcr_history[-1] if pcr_history else 0.0}
+
+    values = pcr_history[-window:]
+    n = len(values)
+    x_mean = (n - 1) / 2
+    y_mean = sum(values) / n
+
+    numerator = sum((i - x_mean) * (v - y_mean) for i, v in enumerate(values))
+    denominator = sum((i - x_mean) ** 2 for i in range(n))
+
+    slope = numerator / denominator if denominator > 0 else 0.0
+
+    if slope > 0.02:
+        trend = "rising"
+    elif slope < -0.02:
+        trend = "falling"
+    else:
+        trend = "flat"
+
+    return {
+        "slope": round(slope, 4),
+        "trend": trend,
+        "current_pcr": round(values[-1], 2)
+    }
+
+
+def calculate_max_pain_drift(mp_history: list, current_max_pain: int, spot_price: float) -> dict:
+    """Calculate max pain drift during the session.
+
+    Args:
+        mp_history: List of recent max pain values (chronological)
+        current_max_pain: Current max pain strike
+        spot_price: Current spot price
+
+    Returns:
+        Dict with drift metrics
+    """
+    session_start = mp_history[0] if mp_history else current_max_pain
+    drift_points = current_max_pain - session_start
+    spot_distance = current_max_pain - spot_price
+    spot_distance_pct = (spot_distance / spot_price) * 100 if spot_price > 0 else 0.0
+
+    if drift_points > 25:
+        drift_direction = "rising"
+    elif drift_points < -25:
+        drift_direction = "falling"
+    else:
+        drift_direction = "stable"
+
+    return {
+        "current": current_max_pain,
+        "session_start": session_start,
+        "drift_points": drift_points,
+        "drift_direction": drift_direction,
+        "spot_distance": round(spot_distance, 1),
+        "spot_distance_pct": round(spot_distance_pct, 2)
+    }
+
+
 def determine_verdict_with_hysteresis(
     combined_score: float,
     prev_verdict: Optional[str] = None
@@ -1162,6 +1269,147 @@ def determine_verdict_with_hysteresis(
         return "Neutral", "none"
 
 
+def ema_smooth_and_verdict(
+    current_score: float,
+    prev_smoothed: Optional[float] = None,
+    alpha: float = 0.3
+) -> tuple[float, str, str]:
+    """
+    Apply EMA smoothing to combined score and determine verdict.
+
+    Replaces hysteresis-based verdict with EMA-smoothed thresholds.
+    First candle of the day (prev_smoothed=None) uses raw score directly.
+
+    Args:
+        current_score: Raw combined score from tug-of-war calculation
+        prev_smoothed: Previous smoothed score (None on first candle of day)
+        alpha: EMA smoothing factor (0.3 = 30% new, 70% previous)
+
+    Returns:
+        Tuple of (smoothed_score, verdict, strength)
+    """
+    # EMA: smoothed = alpha * current + (1 - alpha) * prev
+    if prev_smoothed is None:
+        smoothed = current_score
+    else:
+        smoothed = alpha * current_score + (1 - alpha) * prev_smoothed
+
+    # Threshold-based verdict on smoothed score
+    NEUTRAL_ZONE = 10
+    SLIGHTLY_THRESHOLD = 25
+    WINNING_THRESHOLD = 50
+
+    if smoothed > WINNING_THRESHOLD:
+        return smoothed, "Bulls Strongly Winning", "strong"
+    elif smoothed > SLIGHTLY_THRESHOLD:
+        return smoothed, "Bulls Winning", "moderate"
+    elif smoothed > NEUTRAL_ZONE:
+        return smoothed, "Slightly Bullish", "weak"
+    elif smoothed < -WINNING_THRESHOLD:
+        return smoothed, "Bears Strongly Winning", "strong"
+    elif smoothed < -SLIGHTLY_THRESHOLD:
+        return smoothed, "Bears Winning", "moderate"
+    elif smoothed < -NEUTRAL_ZONE:
+        return smoothed, "Slightly Bearish", "weak"
+    else:
+        return smoothed, "Neutral", "none"
+
+
+def classify_oi_flow(oi_change: float, premium_change_pct: float) -> str:
+    """Classify OI flow based on OI change and premium direction.
+
+    Args:
+        oi_change: Change in open interest
+        premium_change_pct: Percentage change in option premium
+
+    Returns:
+        Flow type: fresh_writing, fresh_buying, long_unwinding, short_covering, or neutral
+    """
+    # Small changes — not meaningful
+    if abs(oi_change) < 100 and abs(premium_change_pct) < 1.0:
+        return "neutral"
+
+    oi_up = oi_change > 0
+    premium_up = premium_change_pct > 0
+
+    if oi_up and not premium_up:
+        return "fresh_writing"      # New positions opened, premium falling = writers
+    elif oi_up and premium_up:
+        return "fresh_buying"       # New positions opened, premium rising = buyers
+    elif not oi_up and not premium_up:
+        return "long_unwinding"     # Positions closed, premium falling = longs exiting
+    elif not oi_up and premium_up:
+        return "short_covering"     # Positions closed, premium rising = shorts exiting
+    return "neutral"
+
+
+def flow_weight(flow_type: str) -> float:
+    """Return force multiplier based on flow type.
+
+    Fresh positions (writing/buying) carry full weight — new conviction.
+    Exits (unwinding/covering) carry reduced weight — less meaningful for direction.
+    """
+    weights = {
+        "fresh_writing": 1.0,
+        "fresh_buying": 1.0,
+        "long_unwinding": 0.6,
+        "short_covering": 0.6,
+        "neutral": 0.8,
+    }
+    return weights.get(flow_type, 0.8)
+
+
+def calculate_bid_ask_imbalance(buy_qty: int, sell_qty: int) -> float:
+    """Calculate bid-ask imbalance ratio.
+
+    Returns:
+        Ratio > 1 = buy pressure, < 1 = sell pressure, 1.0 = balanced
+    """
+    if sell_qty <= 0:
+        return 2.0 if buy_qty > 0 else 1.0
+    return buy_qty / sell_qty
+
+
+def composite_flow_confidence(flow_type: str, bid_ask_ratio: float) -> float:
+    """Compute confidence that the flow classification is correct using bid-ask confirmation.
+
+    High confidence when bid-ask direction aligns with flow type.
+    Low confidence when they contradict.
+
+    Returns:
+        Confidence score 0.0 to 1.0
+    """
+    if flow_type == "fresh_writing":
+        # Writers → sell pressure expected (ratio < 1)
+        if bid_ask_ratio < 0.8:
+            return 0.9   # Confirmed: sellers dominate
+        elif bid_ask_ratio > 1.2:
+            return 0.5   # Contradicted: buyers present
+        return 0.7
+    elif flow_type == "fresh_buying":
+        # Buyers → buy pressure expected (ratio > 1)
+        if bid_ask_ratio > 1.2:
+            return 0.9   # Confirmed: buyers dominate
+        elif bid_ask_ratio < 0.8:
+            return 0.5   # Contradicted: sellers present
+        return 0.7
+    elif flow_type == "long_unwinding":
+        # Longs exiting → sell pressure expected
+        if bid_ask_ratio < 0.8:
+            return 0.85
+        elif bid_ask_ratio > 1.2:
+            return 0.5
+        return 0.65
+    elif flow_type == "short_covering":
+        # Shorts exiting → buy pressure expected
+        if bid_ask_ratio > 1.2:
+            return 0.85
+        elif bid_ask_ratio < 0.8:
+            return 0.5
+        return 0.65
+    return 0.5  # neutral
+
+
 def analyze_tug_of_war(strikes_data: dict, spot_price: float,
                         num_strikes: int = 3,
                         momentum_score: Optional[float] = None,
@@ -1171,7 +1419,8 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
                         prev_oi_changes: Optional[List[tuple]] = None,
                         prev_strikes_data: Optional[dict] = None,
                         total_oi_weight: float = 0.15,
-                        prev_verdict: Optional[str] = None) -> dict:
+                        prev_verdict: Optional[str] = None,
+                        prev_smoothed_score: Optional[float] = None) -> dict:
     """
     Perform enhanced tug-of-war analysis with OTM/ITM zone separation.
 
@@ -1247,6 +1496,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     otm_puts_total_oi = 0
     otm_puts_total_oi_change = 0
     otm_puts_total_force = 0
+    otm_puts_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
     for strike in below_spot_strikes:
         data = strikes_data.get(strike, {})
@@ -1254,8 +1504,23 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         pe_oi_change = data.get("pe_oi_change", 0)
         pe_volume = data.get("pe_volume", 0)
 
+        # OI flow classification
+        pe_premium_change_pct = 0.0
+        if prev_strikes_data and strike in prev_strikes_data:
+            prev_ltp = prev_strikes_data[strike].get("pe_ltp", 0)
+            curr_ltp = data.get("pe_ltp", 0)
+            if prev_ltp > 0:
+                pe_premium_change_pct = ((curr_ltp - prev_ltp) / prev_ltp) * 100
+        pe_flow = classify_oi_flow(pe_oi_change, pe_premium_change_pct)
+        otm_puts_flow_counts[pe_flow] += 1
+
+        # Bid-ask imbalance
+        pe_ba_ratio = calculate_bid_ask_imbalance(data.get("pe_buy_qty", 0), data.get("pe_sell_qty", 0))
+        pe_flow_conf = composite_flow_confidence(pe_flow, pe_ba_ratio)
+
         put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
         put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
+        put_force *= flow_weight(pe_flow)
 
         otm_puts_total_oi += pe_oi
         otm_puts_total_oi_change += pe_oi_change
@@ -1266,7 +1531,10 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             "put_oi": pe_oi,
             "put_oi_change": pe_oi_change,
             "put_force": round(put_force, 0),
-            "conviction": put_conviction
+            "conviction": put_conviction,
+            "flow_type": pe_flow,
+            "bid_ask_ratio": round(pe_ba_ratio, 2),
+            "flow_confidence": round(pe_flow_conf, 2)
         })
 
     # ========================================
@@ -1277,6 +1545,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     itm_calls_total_oi = 0
     itm_calls_total_oi_change = 0
     itm_calls_total_force = 0
+    itm_calls_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
     for strike in below_spot_strikes:
         data = strikes_data.get(strike, {})
@@ -1284,8 +1553,23 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         ce_oi_change = data.get("ce_oi_change", 0)
         ce_volume = data.get("ce_volume", 0)
 
+        # OI flow classification
+        ce_premium_change_pct = 0.0
+        if prev_strikes_data and strike in prev_strikes_data:
+            prev_ltp = prev_strikes_data[strike].get("ce_ltp", 0)
+            curr_ltp = data.get("ce_ltp", 0)
+            if prev_ltp > 0:
+                ce_premium_change_pct = ((curr_ltp - prev_ltp) / prev_ltp) * 100
+        ce_flow = classify_oi_flow(ce_oi_change, ce_premium_change_pct)
+        itm_calls_flow_counts[ce_flow] += 1
+
+        # Bid-ask imbalance
+        ce_ba_ratio = calculate_bid_ask_imbalance(data.get("ce_buy_qty", 0), data.get("ce_sell_qty", 0))
+        ce_flow_conf = composite_flow_confidence(ce_flow, ce_ba_ratio)
+
         call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
         call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+        call_force *= flow_weight(ce_flow)
 
         itm_calls_total_oi += ce_oi
         itm_calls_total_oi_change += ce_oi_change
@@ -1296,7 +1580,10 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             "call_oi": ce_oi,
             "call_oi_change": ce_oi_change,
             "call_force": round(call_force, 0),
-            "conviction": call_conviction
+            "conviction": call_conviction,
+            "flow_type": ce_flow,
+            "bid_ask_ratio": round(ce_ba_ratio, 2),
+            "flow_confidence": round(ce_flow_conf, 2)
         })
 
     # ========================================
@@ -1307,6 +1594,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     otm_calls_total_oi = 0
     otm_calls_total_oi_change = 0
     otm_calls_total_force = 0
+    otm_calls_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
     for strike in above_spot_strikes:
         data = strikes_data.get(strike, {})
@@ -1314,8 +1602,23 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         ce_oi_change = data.get("ce_oi_change", 0)
         ce_volume = data.get("ce_volume", 0)
 
+        # OI flow classification
+        ce_premium_change_pct = 0.0
+        if prev_strikes_data and strike in prev_strikes_data:
+            prev_ltp = prev_strikes_data[strike].get("ce_ltp", 0)
+            curr_ltp = data.get("ce_ltp", 0)
+            if prev_ltp > 0:
+                ce_premium_change_pct = ((curr_ltp - prev_ltp) / prev_ltp) * 100
+        ce_flow = classify_oi_flow(ce_oi_change, ce_premium_change_pct)
+        otm_calls_flow_counts[ce_flow] += 1
+
+        # Bid-ask imbalance
+        ce_ba_ratio = calculate_bid_ask_imbalance(data.get("ce_buy_qty", 0), data.get("ce_sell_qty", 0))
+        ce_flow_conf = composite_flow_confidence(ce_flow, ce_ba_ratio)
+
         call_conviction = calculate_conviction_multiplier(ce_volume, ce_oi_change)
         call_force = calculate_force(ce_oi_change, ce_oi, call_conviction)
+        call_force *= flow_weight(ce_flow)
 
         otm_calls_total_oi += ce_oi
         otm_calls_total_oi_change += ce_oi_change
@@ -1326,7 +1629,10 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             "call_oi": ce_oi,
             "call_oi_change": ce_oi_change,
             "call_force": round(call_force, 0),
-            "conviction": call_conviction
+            "conviction": call_conviction,
+            "flow_type": ce_flow,
+            "bid_ask_ratio": round(ce_ba_ratio, 2),
+            "flow_confidence": round(ce_flow_conf, 2)
         })
 
     # ========================================
@@ -1337,6 +1643,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     itm_puts_total_oi = 0
     itm_puts_total_oi_change = 0
     itm_puts_total_force = 0
+    itm_puts_flow_counts = {"fresh_writing": 0, "fresh_buying": 0, "long_unwinding": 0, "short_covering": 0, "neutral": 0}
 
     for strike in above_spot_strikes:
         data = strikes_data.get(strike, {})
@@ -1344,8 +1651,23 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         pe_oi_change = data.get("pe_oi_change", 0)
         pe_volume = data.get("pe_volume", 0)
 
+        # OI flow classification
+        pe_premium_change_pct = 0.0
+        if prev_strikes_data and strike in prev_strikes_data:
+            prev_ltp = prev_strikes_data[strike].get("pe_ltp", 0)
+            curr_ltp = data.get("pe_ltp", 0)
+            if prev_ltp > 0:
+                pe_premium_change_pct = ((curr_ltp - prev_ltp) / prev_ltp) * 100
+        pe_flow = classify_oi_flow(pe_oi_change, pe_premium_change_pct)
+        itm_puts_flow_counts[pe_flow] += 1
+
+        # Bid-ask imbalance
+        pe_ba_ratio = calculate_bid_ask_imbalance(data.get("pe_buy_qty", 0), data.get("pe_sell_qty", 0))
+        pe_flow_conf = composite_flow_confidence(pe_flow, pe_ba_ratio)
+
         put_conviction = calculate_conviction_multiplier(pe_volume, pe_oi_change)
         put_force = calculate_force(pe_oi_change, pe_oi, put_conviction)
+        put_force *= flow_weight(pe_flow)
 
         itm_puts_total_oi += pe_oi
         itm_puts_total_oi_change += pe_oi_change
@@ -1356,7 +1678,10 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
             "put_oi": pe_oi,
             "put_oi_change": pe_oi_change,
             "put_force": round(put_force, 0),
-            "conviction": put_conviction
+            "conviction": put_conviction,
+            "flow_type": pe_flow,
+            "bid_ask_ratio": round(pe_ba_ratio, 2),
+            "flow_confidence": round(pe_flow_conf, 2)
         })
 
     # ========================================
@@ -1594,7 +1919,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     # ========================================
     # VERDICT DETERMINATION (WITH HYSTERESIS)
     # ========================================
-    verdict, strength = determine_verdict_with_hysteresis(combined_score, prev_verdict)
+    smoothed_score, verdict, strength = ema_smooth_and_verdict(combined_score, prev_smoothed_score)
 
     # ========================================
     # ADDITIONAL METRICS
@@ -1653,6 +1978,18 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
 
     # Detect potential traps
     trap_warning = detect_trap(strikes_data, spot_price, price_direction, oi_direction, strength)
+
+    # Display-only: Primary S/R from absolute OI
+    primary_sr = find_primary_sr_levels(strikes_data, spot_price)
+
+    # Display-only: 2-candle confirmation
+    two_candle_confirmed = False
+    if prev_verdict and verdict != "Neutral":
+        prev_is_bullish = "bull" in prev_verdict.lower()
+        prev_is_bearish = "bear" in prev_verdict.lower()
+        curr_is_bullish = "bull" in verdict.lower()
+        curr_is_bearish = "bear" in verdict.lower()
+        two_candle_confirmed = (prev_is_bullish and curr_is_bullish) or (prev_is_bearish and curr_is_bearish)
 
     return {
         "spot_price": spot_price,
@@ -1731,6 +2068,7 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         "put_oi_change": round(total_put_oi_change, 0),
         "net_oi_change": round(total_put_oi_change - total_call_oi_change, 0),
         "combined_score": round(combined_score, 1),
+        "smoothed_score": round(smoothed_score, 1),
         "pcr": round(pcr, 2),
         "verdict": verdict,
         "strength": strength,
@@ -1777,7 +2115,36 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
         # Premium momentum
         "premium_momentum": premium_momentum,
         # Market regime
-        "market_regime": market_regime
+        "market_regime": market_regime,
+
+        # Display-only features
+        "primary_sr": primary_sr,
+        "two_candle_confirmed": two_candle_confirmed,
+
+        # OI flow classification summary
+        "oi_flow_summary": {
+            "otm_puts": otm_puts_flow_counts,
+            "otm_calls": otm_calls_flow_counts,
+            "itm_calls": itm_calls_flow_counts,
+            "itm_puts": itm_puts_flow_counts,
+            "net_bullish_flow": (
+                otm_puts_flow_counts["fresh_writing"] + otm_puts_flow_counts["fresh_buying"] +
+                itm_puts_flow_counts["short_covering"]
+            ),
+            "net_bearish_flow": (
+                otm_calls_flow_counts["fresh_writing"] + otm_calls_flow_counts["fresh_buying"] +
+                itm_calls_flow_counts["short_covering"]
+            ),
+            "dominant_flow": (
+                "writing" if (
+                    otm_puts_flow_counts["fresh_writing"] + otm_calls_flow_counts["fresh_writing"] >
+                    otm_puts_flow_counts["fresh_buying"] + otm_calls_flow_counts["fresh_buying"]
+                ) else "buying" if (
+                    otm_puts_flow_counts["fresh_buying"] + otm_calls_flow_counts["fresh_buying"] >
+                    otm_puts_flow_counts["fresh_writing"] + otm_calls_flow_counts["fresh_writing"]
+                ) else "mixed"
+            )
+        }
     }
 
 

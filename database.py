@@ -558,17 +558,115 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
         conn.commit()
 
 
-def get_previous_verdict() -> Optional[str]:
-    """Get the previous verdict from the most recent analysis."""
+def get_previous_verdict(today_only: bool = True) -> Optional[str]:
+    """Get the previous verdict from the most recent analysis.
+
+    Args:
+        today_only: If True, only return verdict from today (prevents overnight carryover)
+    """
+    from datetime import date as date_cls
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if today_only:
+            today_str = date_cls.today().strftime("%Y-%m-%d")
+            cursor.execute("""
+                SELECT verdict FROM analysis_history
+                WHERE DATE(timestamp) = ?
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """, (today_str,))
+        else:
+            cursor.execute("""
+                SELECT verdict FROM analysis_history
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+        row = cursor.fetchone()
+        return row["verdict"] if row else None
+
+
+def get_previous_smoothed_score() -> Optional[float]:
+    """Get the previous smoothed score from today's most recent analysis.
+
+    Reads smoothed_score from the analysis_json blob.
+    Returns None on a new day (triggers fresh EMA start).
+    """
+    import json as json_module
+    from datetime import date as date_cls
+    today_str = date_cls.today().strftime("%Y-%m-%d")
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            SELECT verdict FROM analysis_history
+            SELECT analysis_json FROM analysis_history
+            WHERE DATE(timestamp) = ?
             ORDER BY timestamp DESC
             LIMIT 1
-        """)
+        """, (today_str,))
         row = cursor.fetchone()
-        return row["verdict"] if row else None
+        if row and row["analysis_json"]:
+            try:
+                data = json_module.loads(row["analysis_json"])
+                return data.get("smoothed_score")
+            except (json_module.JSONDecodeError, TypeError):
+                pass
+    return None
+
+
+def get_recent_pcr_values(limit: int = 10) -> list:
+    """Get recent PCR values from today's analysis history.
+
+    Returns:
+        List of PCR values in chronological order
+    """
+    import json as json_module
+    from datetime import date as date_cls
+    today_str = date_cls.today().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT analysis_json FROM analysis_history
+            WHERE DATE(timestamp) = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (today_str, limit))
+        rows = cursor.fetchall()
+        pcr_values = []
+        for row in reversed(rows):  # Chronological order
+            if row["analysis_json"]:
+                try:
+                    data = json_module.loads(row["analysis_json"])
+                    pcr = data.get("pcr")
+                    if pcr is not None:
+                        pcr_values.append(pcr)
+                except (json_module.JSONDecodeError, TypeError):
+                    pass
+        return pcr_values
+
+
+def get_recent_max_pain_values(limit: int = 20) -> list:
+    """Get recent max pain values from today's analysis history.
+
+    Returns:
+        List of max pain values in chronological order
+    """
+    import json as json_module
+    from datetime import date as date_cls
+    today_str = date_cls.today().strftime("%Y-%m-%d")
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT max_pain FROM analysis_history
+            WHERE DATE(timestamp) = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (today_str, limit))
+        rows = cursor.fetchall()
+        values = []
+        for row in reversed(rows):  # Chronological order
+            mp = row["max_pain"]
+            if mp is not None and mp > 0:
+                values.append(mp)
+        return values
 
 
 def get_latest_snapshot() -> Optional[dict]:
@@ -678,21 +776,39 @@ def get_latest_analysis() -> Optional[dict]:
         return None
 
 
-def get_analysis_history(limit: int = 50) -> list:
-    """Get historical analysis results for charting, including zone force data."""
+def get_analysis_history(limit: int = 50, date: Optional[str] = None) -> list:
+    """Get historical analysis results for charting, including zone force data.
+
+    Args:
+        limit: Maximum number of records to return
+        date: Optional date string (YYYY-MM-DD) to filter results to a specific date
+    """
     import json as json_module
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT timestamp, spot_price, total_call_oi, total_put_oi,
-                   call_oi_change, put_oi_change, verdict,
-                   atm_call_oi_change, atm_put_oi_change,
-                   itm_call_oi_change, itm_put_oi_change,
-                   analysis_json
-            FROM analysis_history
-            ORDER BY timestamp DESC
-            LIMIT ?
-        """, (limit,))
+        if date:
+            cursor.execute("""
+                SELECT timestamp, spot_price, total_call_oi, total_put_oi,
+                       call_oi_change, put_oi_change, verdict,
+                       atm_call_oi_change, atm_put_oi_change,
+                       itm_call_oi_change, itm_put_oi_change,
+                       analysis_json
+                FROM analysis_history
+                WHERE DATE(timestamp) = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (date, limit))
+        else:
+            cursor.execute("""
+                SELECT timestamp, spot_price, total_call_oi, total_put_oi,
+                       call_oi_change, put_oi_change, verdict,
+                       atm_call_oi_change, atm_put_oi_change,
+                       itm_call_oi_change, itm_put_oi_change,
+                       analysis_json
+                FROM analysis_history
+                ORDER BY timestamp DESC
+                LIMIT ?
+            """, (limit,))
 
         rows = cursor.fetchall()
         results = []

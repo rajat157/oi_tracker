@@ -35,6 +35,15 @@ function initToggles() {
     }
 }
 
+// Switch table tabs
+function switchTableTab(btn, tabName) {
+    document.querySelectorAll('.table-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.table-tab-content').forEach(c => c.classList.remove('active'));
+    btn.classList.add('active');
+    const panel = document.getElementById('tab-' + tabName);
+    if (panel) panel.classList.add('active');
+}
+
 // Update score gauge visualization
 function updateScoreGauge(score) {
     const marker = document.getElementById('score-gauge-marker');
@@ -434,6 +443,15 @@ function updateDashboard(data) {
         netElem.classList.remove('positive', 'negative');
         netElem.classList.add(data.net_oi_change >= 0 ? 'positive' : 'negative');
     }
+
+    // Tug-of-War bar
+    const bearForce = Math.abs(aboveSpot.net_force || 0);
+    const bullForce = Math.abs(belowSpot.net_force || 0);
+    const totalForce = bearForce + bullForce || 1;
+    setWidth('tow-bear-fill', (bearForce / totalForce) * 100);
+    setWidth('tow-bull-fill', (bullForce / totalForce) * 100);
+    setText('tow-bear-value', formatNumber(bearForce));
+    setText('tow-bull-value', formatNumber(bullForce));
 
     // Update Zone tables with new strike-level data
     updateZoneTable('below-spot-tbody', belowSpot.strikes || []);

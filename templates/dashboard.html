@@ -114,7 +114,7 @@
                                 <span class="breakdown-weight" id="above-spot-weight">50%</span>
                                 <span class="breakdown-value" id="above-spot-score-display">--</span>
                             </div>
-                            <div class="breakdown-row" id="momentum-breakdown" style="display: none;">
+                            <div class="breakdown-row" id="momentum-breakdown" >
                                 <span class="breakdown-zone-label">Momentum</span>
                                 <span class="breakdown-weight" id="momentum-weight">0%</span>
                                 <span class="breakdown-value" id="momentum-score-display">--</span>
@@ -138,24 +138,24 @@
                 </div>
 
                 <!-- Trade Dock — compact pill bar showing all active strategies -->
-                <div class="trade-dock" id="trade-dock" style="display: none;">
-                    <div class="dock-pill dock-iron-pulse" id="dock-iron-pulse" style="display: none;" onclick="document.getElementById('trade-setup-card')?.scrollIntoView({behavior:'smooth'})">
+                <div class="trade-dock" id="trade-dock" >
+                    <div class="dock-pill dock-iron-pulse" id="dock-iron-pulse"  onclick="document.getElementById('trade-setup-card')?.scrollIntoView({behavior:'smooth'})">
                         <span class="dock-abbr">IP</span>
                         <span class="dock-pnl" id="dock-ip-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-selling" id="dock-selling" style="display: none;" onclick="document.getElementById('sell-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-selling" id="dock-selling"  onclick="document.getElementById('sell-trade-card')?.scrollIntoView({behavior:'smooth'})">
                         <span class="dock-abbr">SELL</span>
                         <span class="dock-pnl" id="dock-sell-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-dessert" id="dock-dessert" style="display: none;" onclick="document.getElementById('dessert-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-dessert" id="dock-dessert"  onclick="document.getElementById('dessert-trade-card')?.scrollIntoView({behavior:'smooth'})">
                         <span class="dock-abbr">DST</span>
                         <span class="dock-pnl" id="dock-dessert-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-momentum" id="dock-momentum" style="display: none;" onclick="document.getElementById('momentum-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-momentum" id="dock-momentum"  onclick="document.getElementById('momentum-trade-card')?.scrollIntoView({behavior:'smooth'})">
                         <span class="dock-abbr">MOM</span>
                         <span class="dock-pnl" id="dock-mom-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-pa" id="dock-pa" style="display: none;" onclick="document.getElementById('pa-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-pa" id="dock-pa"  onclick="document.getElementById('pa-trade-card')?.scrollIntoView({behavior:'smooth'})">
                         <span class="dock-abbr">PA</span>
                         <span class="dock-pnl" id="dock-pa-pnl">--</span>
                     </div>
@@ -189,7 +189,7 @@
                 </div>
 
                 <!-- Prediction Tree Card -->
-                <div class="card prediction-card" id="prediction-card" style="display: none;">
+                <div class="card prediction-card" id="prediction-card" >
                     <div class="trade-setup-title-row">
                         <h3 class="card-title">Prediction Tree</h3>
                         <span class="trade-status-badge" id="pred-status-badge">--</span>
@@ -219,7 +219,7 @@
                         <span class="pred-match-label">CDS Trend (EMA): <span class="pred-hint">&#9432;</span></span>
                         <span id="pred-contrarian">--</span>
                     </div>
-                    <div class="pred-signal" id="pred-signal" style="display: none;">
+                    <div class="pred-signal" id="pred-signal" >
                         <div class="pred-signal-header">Signal (conviction &ge; 60%)</div>
                         <div class="pred-signal-row for-row">
                             <span class="pred-signal-label">FOR:</span>
@@ -250,7 +250,7 @@
                 </div>
 
                 <!-- Sell Trade Card -->
-                <div class="card trade-setup-card sell-trade-card" id="sell-trade-card" style="display: none;">
+                <div class="card trade-setup-card sell-trade-card" id="sell-trade-card" >
                     <div class="trade-setup-title-row">
                         <h3 class="card-title">Sell Trade</h3>
                         <span class="trade-status-badge" id="sell-status-badge">ACTIVE</span>
@@ -260,12 +260,12 @@
                         <span class="trade-strike" id="sell-strike">--</span>
                         <span class="trade-confidence" id="sell-confidence">Confidence: --</span>
                     </div>
-                    <div class="trade-live-pnl" id="sell-live-pnl" style="display: none;">
+                    <div class="trade-live-pnl" id="sell-live-pnl" >
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="sell-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="sell-current-premium">--</strong></span>
                     </div>
-                    <div class="premium-bar-track" id="sell-premium-bar" style="display: none;">
+                    <div class="premium-bar-track" id="sell-premium-bar" >
                         <div class="premium-bar-labels">
                             <span class="premium-bar-sl" id="sell-bar-sl">SL --</span>
                             <span class="premium-bar-current" id="sell-bar-current">--</span>
@@ -309,7 +309,7 @@
                 </div>
 
                 <!-- Dessert Trade Card -->
-                <div class="card trade-setup-card dessert-trade-card" id="dessert-trade-card" style="display: none;">
+                <div class="card trade-setup-card dessert-trade-card" id="dessert-trade-card" >
                     <div class="trade-setup-title-row">
                         <h3 class="card-title" id="dessert-strategy-name">Dessert Trade</h3>
                         <span class="trade-status-badge" id="dessert-status-badge">ACTIVE</span>
@@ -319,12 +319,12 @@
                         <span class="trade-strike" id="dessert-strike">--</span>
                         <span class="trade-confidence" id="dessert-rr">RR: 1:2</span>
                     </div>
-                    <div class="trade-live-pnl" id="dessert-live-pnl" style="display: none;">
+                    <div class="trade-live-pnl" id="dessert-live-pnl" >
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="dessert-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="dessert-current-premium">--</strong></span>
                     </div>
-                    <div class="premium-bar-track" id="dessert-premium-bar" style="display: none;">
+                    <div class="premium-bar-track" id="dessert-premium-bar" >
                         <div class="premium-bar-labels">
                             <span class="premium-bar-sl" id="dessert-bar-sl">SL --</span>
                             <span class="premium-bar-current" id="dessert-bar-current">--</span>
@@ -357,7 +357,7 @@
                 </div>
 
                 <!-- Momentum Trade Card -->
-                <div class="card trade-setup-card momentum-trade-card" id="momentum-trade-card" style="display: none;">
+                <div class="card trade-setup-card momentum-trade-card" id="momentum-trade-card" >
                     <div class="trade-setup-title-row">
                         <h3 class="card-title" id="momentum-strategy-name">Momentum Trade</h3>
                         <span class="trade-status-badge" id="momentum-status-badge">ACTIVE</span>
@@ -367,12 +367,12 @@
                         <span class="trade-strike" id="momentum-strike">--</span>
                         <span class="trade-confidence" id="momentum-rr">RR: 1:2</span>
                     </div>
-                    <div class="trade-live-pnl" id="momentum-live-pnl" style="display: none;">
+                    <div class="trade-live-pnl" id="momentum-live-pnl" >
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="momentum-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="momentum-current-premium">--</strong></span>
                     </div>
-                    <div class="premium-bar-track" id="momentum-premium-bar" style="display: none;">
+                    <div class="premium-bar-track" id="momentum-premium-bar" >
                         <div class="premium-bar-labels">
                             <span class="premium-bar-sl" id="momentum-bar-sl">SL --</span>
                             <span class="premium-bar-current" id="momentum-bar-current">--</span>
@@ -405,23 +405,23 @@
                 </div>
 
                 <!-- Price Action Trade Card -->
-                <div class="card trade-setup-card pa-trade-card" id="pa-trade-card" style="display: none;">
+                <div class="card trade-setup-card pa-trade-card" id="pa-trade-card" >
                     <div class="trade-setup-title-row">
                         <h3 class="card-title" id="pa-strategy-name">Price Action</h3>
                         <span class="trade-status-badge" id="pa-status-badge">ACTIVE</span>
-                        <span class="trade-vix-warning" id="pa-vix-warning" style="display: none;">PAPER TRADE — HIGH VIX</span>
+                        <span class="trade-vix-warning" id="pa-vix-warning" >PAPER TRADE — HIGH VIX</span>
                     </div>
                     <div class="trade-setup-header">
                         <span class="trade-direction" id="pa-direction">--</span>
                         <span class="trade-strike" id="pa-strike">--</span>
                         <span class="trade-confidence" id="pa-rr">RR: 1:1</span>
                     </div>
-                    <div class="trade-live-pnl" id="pa-live-pnl" style="display: none;">
+                    <div class="trade-live-pnl" id="pa-live-pnl" >
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="pa-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="pa-current-premium">--</strong></span>
                     </div>
-                    <div class="premium-bar-track" id="pa-premium-bar" style="display: none;">
+                    <div class="premium-bar-track" id="pa-premium-bar" >
                         <div class="premium-bar-labels">
                             <span class="premium-bar-sl" id="pa-bar-sl">SL --</span>
                             <span class="premium-bar-current" id="pa-bar-current">--</span>
@@ -482,7 +482,7 @@
                 </div>
 
                 <!-- Iron Pulse Trade Card -->
-                <div class="card trade-setup-card iron-pulse-card" id="trade-setup-card" style="display: none;">
+                <div class="card trade-setup-card iron-pulse-card" id="trade-setup-card" >
                     <div class="trade-setup-title-row">
                         <h3 class="card-title">Iron Pulse</h3>
                         <span class="trade-status-badge" id="trade-status-badge">PENDING</span>
@@ -492,12 +492,12 @@
                         <span class="trade-strike" id="trade-strike">--</span>
                         <span class="trade-confidence" id="trade-confidence">Confidence: --</span>
                     </div>
-                    <div class="trade-live-pnl" id="trade-live-pnl" style="display: none;">
+                    <div class="trade-live-pnl" id="trade-live-pnl" >
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="trade-pnl-value">--</span>
                         <span class="pnl-current">Current: <strong id="trade-current-premium">--</strong></span>
                     </div>
-                    <div class="premium-bar-track" id="ip-premium-bar" style="display: none;">
+                    <div class="premium-bar-track" id="ip-premium-bar" >
                         <div class="premium-bar-labels">
                             <span class="premium-bar-sl" id="ip-bar-sl">SL --</span>
                             <span class="premium-bar-current" id="ip-bar-current">--</span>
@@ -528,7 +528,7 @@
                             <span class="level-value" id="trade-target1">--</span>
                             <span class="level-detail" id="trade-t1-status">--</span>
                         </div>
-                        <div class="trade-level target" id="trade-trailing-row" style="display: none;">
+                        <div class="trade-level target" id="trade-trailing-row" >
                             <span class="level-label">Trailing SL (-15%)</span>
                             <span class="level-value" id="trade-trailing-sl">--</span>
                             <span class="level-detail" id="trade-peak-info">Peak: --</span>
@@ -592,7 +592,7 @@
                 </div>
 
                 <!-- CALL Alert Card -->
-                <div class="card call-alert-card" id="call-alert-card" style="display: none;">
+                <div class="card call-alert-card" id="call-alert-card" >
                     <div class="alert-header">
                         <span class="alert-icon">&#9679;</span>
                         <span class="alert-title">CALL Entry Signal</span>
@@ -642,7 +642,7 @@
                 </div>
 
                 <!-- Trap Warning Card -->
-                <div class="card trap-warning-card" id="trap-warning-card" style="display: none;">
+                <div class="card trap-warning-card" id="trap-warning-card" >
                     <div class="trap-icon" id="trap-icon">
                         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
@@ -689,9 +689,22 @@
                         </div>
                     </div>
 
-                    <div class="net-change-box">
-                        <span class="net-label">Net Force</span>
-                        <span class="net-value" id="net-oi-change">--</span>
+                    <!-- Tug-of-War Bar -->
+                    <div class="tug-of-war">
+                        <div class="tow-labels">
+                            <span class="tow-bear-label">Bears</span>
+                            <span class="tow-net" id="net-oi-change">--</span>
+                            <span class="tow-bull-label">Bulls</span>
+                        </div>
+                        <div class="tow-track">
+                            <div class="tow-bear-fill" id="tow-bear-fill"></div>
+                            <div class="tow-center-line"></div>
+                            <div class="tow-bull-fill" id="tow-bull-fill"></div>
+                        </div>
+                        <div class="tow-values">
+                            <span class="tow-bear-value" id="tow-bear-value">--</span>
+                            <span class="tow-bull-value" id="tow-bull-value">--</span>
+                        </div>
                     </div>
                 </div>
 
@@ -723,7 +736,16 @@
                     </div>
                 </div>
 
-                <!-- Strike Tables - Below/Above Spot -->
+                <!-- Tabbed Tables -->
+                <div class="card table-tabs-card">
+                    <div class="table-tabs">
+                        <button class="table-tab active" data-tab="zone-forces" onclick="switchTableTab(this, 'zone-forces')">Zone Forces</button>
+                        <button class="table-tab" data-tab="otm-breakdown" onclick="switchTableTab(this, 'otm-breakdown')">OTM Breakdown</button>
+                        <button class="table-tab" data-tab="itm-breakdown" onclick="switchTableTab(this, 'itm-breakdown')">ITM Breakdown</button>
+                    </div>
+
+                    <!-- Tab 1: Zone Forces -->
+                    <div class="table-tab-content active" id="tab-zone-forces">
                 <div class="tables-row">
                     <div class="card table-card">
                         <h3 class="card-title table-title-bullish">Below Spot <span class="card-subtitle">(Support Zone)</span></h3>
@@ -776,9 +798,10 @@
                     </div>
                 </div>
 
-                <!-- OTM/ITM Zone Tables -->
-                <h3 class="section-title">OTM/ITM Zone Breakdown</h3>
+                    </div><!-- end tab-zone-forces -->
 
+                    <!-- Tab 2: OTM Breakdown -->
+                    <div class="table-tab-content" id="tab-otm-breakdown">
                 <div class="tables-row">
                     <div class="card table-card">
                         <h3 class="card-title table-title-bullish">OTM Puts <span class="card-subtitle">(Below Spot - Support)</span></h3>
@@ -830,7 +853,10 @@
                         </table>
                     </div>
                 </div>
+                    </div><!-- end tab-otm-breakdown -->
 
+                    <!-- Tab 3: ITM Breakdown -->
+                    <div class="table-tab-content" id="tab-itm-breakdown">
                 <div class="tables-row">
                     <div class="card table-card">
                         <h3 class="card-title table-title-bearish">OTM Calls <span class="card-subtitle">(Above Spot - Resistance)</span></h3>
@@ -882,6 +908,8 @@
                         </table>
                     </div>
                 </div>
+                    </div><!-- end tab-itm-breakdown -->
+                </div><!-- end table-tabs-card -->
 
             </div>
         </main>

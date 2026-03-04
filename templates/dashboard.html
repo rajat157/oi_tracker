@@ -13,12 +13,13 @@
 </head>
 <body>
     <div class="app">
-        <!-- Header (Simplified) -->
+        <!-- Header (Sticky) -->
         <header class="header">
             <div class="header-left">
                 <h1 class="logo">NIFTY OI Analyzer</h1>
             </div>
             <div class="header-right">
+                <div id="connection-status" class="connection connected">Connected</div>
                 <div id="market-badge" class="badge badge-closed">
                     <span class="badge-dot"></span>
                     <span id="market-text">Market Closed</span>
@@ -43,57 +44,76 @@
             </div>
         </header>
 
+        <!-- Hero Strip - Verdict + Key Metrics -->
+        <section class="hero-strip">
+            <div class="hero-verdict verdict-card" id="verdict-card">
+                <div class="hero-verdict-main">
+                    <span class="verdict-icon" id="verdict-icon"></span>
+                    <h2 class="verdict-text" id="verdict-text">Loading...</h2>
+                </div>
+                <div class="hero-verdict-score">
+                    <span class="score-value" id="combined-score">--</span>
+                    <span class="score-scale">/ 100</span>
+                </div>
+                <div class="score-gauge">
+                    <div class="gauge-track">
+                        <div class="gauge-fill" id="score-gauge-fill"></div>
+                        <div class="gauge-marker" id="score-gauge-marker"></div>
+                    </div>
+                    <div class="gauge-labels">
+                        <span>Bearish</span>
+                        <span>Neutral</span>
+                        <span>Bullish</span>
+                    </div>
+                </div>
+                <div class="confirmation-indicator" id="confirmation-indicator">
+                    <span class="confirmation-icon" id="confirmation-icon">--</span>
+                    <span class="confirmation-text" id="confirmation-text">Loading...</span>
+                </div>
+            </div>
+            <div class="hero-metrics">
+                <div class="hero-metric">
+                    <span class="hero-metric-label">Spot Price</span>
+                    <span class="hero-metric-value" id="spot-price">--</span>
+                </div>
+                <div class="hero-metric">
+                    <span class="hero-metric-label">PCR</span>
+                    <span class="hero-metric-value" id="pcr-value">--</span>
+                </div>
+                <div class="hero-metric">
+                    <span class="hero-metric-label">IV Skew</span>
+                    <span class="hero-metric-value" id="iv-skew">--</span>
+                </div>
+                <div class="hero-metric">
+                    <span class="hero-metric-label">Trend</span>
+                    <span class="hero-metric-value trend-indicator" id="market-trend">--</span>
+                </div>
+                <div class="hero-metric">
+                    <span class="hero-metric-label">Momentum (9m)</span>
+                    <span class="hero-metric-value" id="momentum-value">--</span>
+                </div>
+            </div>
+        </section>
+
         <!-- Main Content -->
         <main class="main">
             <!-- Left Column -->
             <div class="column-left">
-                <!-- Verdict Card (Simplified with Score Gauge) -->
-                <div class="card verdict-card" id="verdict-card">
-                    <div class="verdict-primary">
-                        <span class="verdict-label">Market Sentiment</span>
-                        <div class="verdict-main">
-                            <span class="verdict-icon" id="verdict-icon"></span>
-                            <h2 class="verdict-text" id="verdict-text">Loading...</h2>
-                        </div>
-                        <div class="verdict-score-display">
-                            <span class="score-value" id="combined-score">--</span>
-                            <span class="score-scale">/ 100</span>
-                        </div>
-                        <!-- Visual gauge for score context -->
-                        <div class="score-gauge">
-                            <div class="gauge-track">
-                                <div class="gauge-fill" id="score-gauge-fill"></div>
-                                <div class="gauge-marker" id="score-gauge-marker"></div>
-                            </div>
-                            <div class="gauge-labels">
-                                <span>Bearish</span>
-                                <span>Neutral</span>
-                                <span>Bullish</span>
-                            </div>
-                        </div>
-                        <!-- Confirmation indicator -->
-                        <div class="confirmation-indicator" id="confirmation-indicator">
-                            <span class="confirmation-icon" id="confirmation-icon">--</span>
-                            <span class="confirmation-text" id="confirmation-text">Loading...</span>
-                        </div>
-                    </div>
-                    <!-- Collapsible breakdown using <details> -->
-                    <details class="verdict-details">
+                <!-- Score Breakdown Card -->
+                <div class="card breakdown-card">
+                    <details class="verdict-details" open>
                         <summary>Score Breakdown</summary>
                         <div class="breakdown-grid">
-                            <!-- Below Spot Zone (Support) -->
                             <div class="breakdown-row">
                                 <span class="breakdown-zone-label">Below Spot</span>
                                 <span class="breakdown-weight" id="below-spot-weight">50%</span>
                                 <span class="breakdown-value" id="below-spot-score-display">--</span>
                             </div>
-                            <!-- Above Spot Zone (Resistance) -->
                             <div class="breakdown-row">
                                 <span class="breakdown-zone-label">Above Spot</span>
                                 <span class="breakdown-weight" id="above-spot-weight">50%</span>
                                 <span class="breakdown-value" id="above-spot-score-display">--</span>
                             </div>
-                            <!-- Momentum Zone -->
                             <div class="breakdown-row" id="momentum-breakdown" style="display: none;">
                                 <span class="breakdown-zone-label">Momentum</span>
                                 <span class="breakdown-weight" id="momentum-weight">0%</span>
@@ -101,7 +121,6 @@
                             </div>
                         </div>
                     </details>
-                    <!-- Self-Learning Status (inline) -->
                     <div class="learning-inline">
                         <span class="learning-item">
                             <span class="learning-label">Accuracy:</span>
@@ -118,58 +137,29 @@
                     </div>
                 </div>
 
-                <!-- Key Metrics (Grouped by Category) -->
+                <!-- Secondary Metrics -->
                 <div class="card metrics-card">
-                    <h3 class="card-title">Key Metrics</h3>
-                    <div class="metrics-grouped">
-                        <div class="metric-group">
-                            <h4 class="group-title">Price Levels</h4>
-                            <div class="metric">
-                                <span class="metric-label">Spot Price</span>
-                                <span class="metric-value" id="spot-price">--</span>
-                            </div>
-                            <div class="metric">
-                                <span class="metric-label">ATM Strike</span>
-                                <span class="metric-value" id="atm-strike">--</span>
-                            </div>
-                            <div class="metric">
-                                <span class="metric-label">Max Pain</span>
-                                <span class="metric-value" id="max-pain">--</span>
-                            </div>
+                    <h3 class="card-title">Analysis Details</h3>
+                    <div class="metrics-mini-grid">
+                        <div class="metric-mini">
+                            <span class="metric-label">ATM Strike</span>
+                            <span class="metric-value" id="atm-strike">--</span>
                         </div>
-                        <div class="metric-group">
-                            <h4 class="group-title">Sentiment</h4>
-                            <div class="metric">
-                                <span class="metric-label">PCR</span>
-                                <span class="metric-value" id="pcr-value">--</span>
-                            </div>
-                            <div class="metric">
-                                <span class="metric-label">Volume PCR</span>
-                                <span class="metric-value" id="volume-pcr">--</span>
-                            </div>
-                            <div class="metric">
-                                <span class="metric-label">IV Skew</span>
-                                <span class="metric-value" id="iv-skew">--</span>
-                            </div>
+                        <div class="metric-mini">
+                            <span class="metric-label">Max Pain</span>
+                            <span class="metric-value" id="max-pain">--</span>
                         </div>
-                        <div class="metric-group">
-                            <h4 class="group-title">Activity</h4>
-                            <div class="metric">
-                                <span class="metric-label">Trend</span>
-                                <span class="metric-value trend-indicator" id="market-trend">--</span>
-                            </div>
-                            <div class="metric">
-                                <span class="metric-label">Momentum (9m)</span>
-                                <span class="metric-value" id="momentum-value">--</span>
-                            </div>
-                            <div class="metric">
-                                <span class="metric-label">Avg Conviction</span>
-                                <span class="metric-value" id="avg-conviction">--</span>
-                            </div>
-                            <div class="metric">
-                                <span class="metric-label">Expiry</span>
-                                <span class="metric-value" id="expiry-date">--</span>
-                            </div>
+                        <div class="metric-mini">
+                            <span class="metric-label">Volume PCR</span>
+                            <span class="metric-value" id="volume-pcr">--</span>
+                        </div>
+                        <div class="metric-mini">
+                            <span class="metric-label">Avg Conviction</span>
+                            <span class="metric-value" id="avg-conviction">--</span>
+                        </div>
+                        <div class="metric-mini">
+                            <span class="metric-label">Expiry</span>
+                            <span class="metric-value" id="expiry-date">--</span>
                         </div>
                     </div>
                 </div>
@@ -238,7 +228,7 @@
                 <!-- Sell Trade Card -->
                 <div class="card trade-setup-card sell-trade-card" id="sell-trade-card" style="display: none;">
                     <div class="trade-setup-title-row">
-                        <h3 class="card-title">💰 Sell Trade</h3>
+                        <h3 class="card-title">Sell Trade</h3>
                         <span class="trade-status-badge" id="sell-status-badge">ACTIVE</span>
                     </div>
                     <div class="trade-setup-header">
@@ -283,10 +273,10 @@
                     </div>
                 </div>
 
-                <!-- Dessert Trade Card (1:2 RR strategies) -->
+                <!-- Dessert Trade Card -->
                 <div class="card trade-setup-card dessert-trade-card" id="dessert-trade-card" style="display: none;">
                     <div class="trade-setup-title-row">
-                        <h3 class="card-title" id="dessert-strategy-name">🍰 Dessert Trade</h3>
+                        <h3 class="card-title" id="dessert-strategy-name">Dessert Trade</h3>
                         <span class="trade-status-badge" id="dessert-status-badge">ACTIVE</span>
                     </div>
                     <div class="trade-setup-header">
@@ -320,9 +310,10 @@
                     </div>
                 </div>
 
+                <!-- Momentum Trade Card -->
                 <div class="card trade-setup-card momentum-trade-card" id="momentum-trade-card" style="display: none;">
                     <div class="trade-setup-title-row">
-                        <h3 class="card-title" id="momentum-strategy-name">🚀 Momentum Trade</h3>
+                        <h3 class="card-title" id="momentum-strategy-name">Momentum Trade</h3>
                         <span class="trade-status-badge" id="momentum-status-badge">ACTIVE</span>
                     </div>
                     <div class="trade-setup-header">
@@ -356,10 +347,10 @@
                     </div>
                 </div>
 
-                <!-- Price Action Trade Card (CHC-3 premium momentum) -->
+                <!-- Price Action Trade Card -->
                 <div class="card trade-setup-card pa-trade-card" id="pa-trade-card" style="display: none;">
                     <div class="trade-setup-title-row">
-                        <h3 class="card-title" id="pa-strategy-name">📈 Price Action</h3>
+                        <h3 class="card-title" id="pa-strategy-name">Price Action</h3>
                         <span class="trade-status-badge" id="pa-status-badge">ACTIVE</span>
                         <span class="trade-vix-warning" id="pa-vix-warning" style="display: none;">PAPER TRADE — HIGH VIX</span>
                     </div>
@@ -395,37 +386,37 @@
                 </div>
 
                 <!-- Kite Auth Card -->
-                <div class="card" id="kite-auth-card" style="margin-bottom: 10px;">
+                <div class="card kite-card" id="kite-auth-card">
                     <div style="display: flex; align-items: center; justify-content: space-between;">
                         <div>
-                            <span style="font-weight: bold;">🔗 Kite Connect</span>
+                            <span style="font-weight: bold;">Kite Connect</span>
                             <span id="kite-status" style="margin-left: 8px; font-size: 0.85em; color: #888;">Checking...</span>
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center;">
-                            <button id="kite-login-btn" onclick="window.open('/kite/login', '_blank')" 
+                            <button id="kite-login-btn" onclick="window.open('/kite/login', '_blank')"
                                     style="padding: 6px 16px; border: none; border-radius: 6px; background: #2563eb; color: white; cursor: pointer; font-size: 0.85em;">
                                 Login to Kite
                             </button>
-                            <button id="kite-manual-btn" onclick="document.getElementById('kite-manual-input').style.display='flex'" 
+                            <button id="kite-manual-btn" onclick="document.getElementById('kite-manual-input').style.display='flex'"
                                     style="padding: 6px 12px; border: 1px solid #555; border-radius: 6px; background: transparent; color: #aaa; cursor: pointer; font-size: 0.8em;">
                                 Paste Token
                             </button>
                         </div>
                     </div>
                     <div id="kite-manual-input" style="display: none; margin-top: 8px; gap: 8px; align-items: center;">
-                        <input type="text" id="kite-token-field" placeholder="Paste access token here..." 
+                        <input type="text" id="kite-token-field" placeholder="Paste access token here..."
                                style="flex: 1; padding: 6px 10px; border: 1px solid #555; border-radius: 6px; background: #1a1a2e; color: #eee; font-family: monospace; font-size: 0.85em;">
-                        <button onclick="saveKiteToken()" 
+                        <button onclick="saveKiteToken()"
                                 style="padding: 6px 16px; border: none; border-radius: 6px; background: #22c55e; color: white; cursor: pointer; font-size: 0.85em;">
                             Save
                         </button>
                     </div>
                 </div>
 
-                <!-- Trade Setup Card (Persistent with Lifecycle) -->
-                <div class="card trade-setup-card" id="trade-setup-card" style="display: none;">
+                <!-- Iron Pulse Trade Card -->
+                <div class="card trade-setup-card iron-pulse-card" id="trade-setup-card" style="display: none;">
                     <div class="trade-setup-title-row">
-                        <h3 class="card-title">🫀 Iron Pulse</h3>
+                        <h3 class="card-title">Iron Pulse</h3>
                         <span class="trade-status-badge" id="trade-status-badge">PENDING</span>
                     </div>
                     <div class="trade-setup-header">
@@ -433,7 +424,6 @@
                         <span class="trade-strike" id="trade-strike">--</span>
                         <span class="trade-confidence" id="trade-confidence">Confidence: --</span>
                     </div>
-                    <!-- Live P/L display (shown when ACTIVE) -->
                     <div class="trade-live-pnl" id="trade-live-pnl" style="display: none;">
                         <span class="pnl-label">Live P/L</span>
                         <span class="pnl-value" id="trade-pnl-value">--</span>
@@ -522,10 +512,10 @@
                     <a href="/trades" class="view-trades-btn">View All Trades</a>
                 </div>
 
-                <!-- CALL Alert Card (PM Strong Reversal) -->
+                <!-- CALL Alert Card -->
                 <div class="card call-alert-card" id="call-alert-card" style="display: none;">
                     <div class="alert-header">
-                        <span class="alert-icon">🟢</span>
+                        <span class="alert-icon">&#9679;</span>
                         <span class="alert-title">CALL Entry Signal</span>
                         <span class="alert-badge">75% Win Rate</span>
                     </div>
@@ -595,7 +585,6 @@
                     <h3 class="card-title">Zone Force Comparison <span class="card-subtitle">(3 Strikes Each Side)</span></h3>
 
                     <div class="oi-comparison">
-                        <!-- Below Spot Section (Support Zone) -->
                         <div class="oi-section oi-puts">
                             <div class="oi-header">
                                 <span class="oi-label">Below Spot</span>
@@ -608,7 +597,6 @@
                             <div class="oi-change positive" id="below-spot-change">--</div>
                         </div>
 
-                        <!-- Above Spot Section (Resistance Zone) -->
                         <div class="oi-section oi-calls">
                             <div class="oi-header">
                                 <span class="oi-label">Above Spot</span>
@@ -628,7 +616,7 @@
                     </div>
                 </div>
 
-                <!-- Directional Force (Strength Analysis) -->
+                <!-- Directional Force Analysis -->
                 <div class="card strength-card">
                     <h3 class="card-title">Directional Force Analysis</h3>
                     <div class="strength-grid">
@@ -656,7 +644,7 @@
                     </div>
                 </div>
 
-                <!-- Strike Tables - Old (Below/Above Spot) -->
+                <!-- Strike Tables - Below/Above Spot -->
                 <div class="tables-row">
                     <div class="card table-card">
                         <h3 class="card-title table-title-bullish">Below Spot <span class="card-subtitle">(Support Zone)</span></h3>
@@ -712,7 +700,6 @@
                 <!-- OTM/ITM Zone Tables -->
                 <h3 class="section-title">OTM/ITM Zone Breakdown</h3>
 
-                <!-- Below Spot: OTM Puts + ITM Calls -->
                 <div class="tables-row">
                     <div class="card table-card">
                         <h3 class="card-title table-title-bullish">OTM Puts <span class="card-subtitle">(Below Spot - Support)</span></h3>
@@ -765,7 +752,6 @@
                     </div>
                 </div>
 
-                <!-- Above Spot: OTM Calls + ITM Puts -->
                 <div class="tables-row">
                     <div class="card table-card">
                         <h3 class="card-title table-title-bearish">OTM Calls <span class="card-subtitle">(Above Spot - Resistance)</span></h3>
@@ -846,11 +832,9 @@
             </div>
         </section>
 
-
         <!-- Footer -->
         <footer class="footer">
             <span>Auto-refreshes every 3 minutes during market hours</span>
-            <div id="connection-status" class="connection connected">Connected</div>
         </footer>
     </div>
 

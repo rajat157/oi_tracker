@@ -535,12 +535,12 @@ class OIScheduler:
             replace_existing=True
         )
 
-        # 30-second live P&L broadcast (uses cached WebSocket LTP, no API calls)
+        # 5-second live P&L broadcast (uses cached WebSocket LTP, no API calls)
         self.scheduler.add_job(
             self._broadcast_live_pnl,
-            trigger=IntervalTrigger(seconds=30),
+            trigger=IntervalTrigger(seconds=5),
             id="pnl_broadcaster",
-            name="Broadcast Live P&L (30s)",
+            name="Broadcast Live P&L (5s)",
             replace_existing=True
         )
 
@@ -707,7 +707,7 @@ class OIScheduler:
         pass
 
     def _broadcast_live_pnl(self):
-        """Emit lightweight P&L update from WebSocket LTP cache every 30s."""
+        """Emit lightweight P&L update from WebSocket LTP cache every 5s."""
         if not self.socketio or not self.is_market_open():
             return
         pnl_data = self.premium_monitor.get_live_pnl()

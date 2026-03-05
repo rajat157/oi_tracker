@@ -37,6 +37,7 @@ PA_TIME_END = time(14, 0)
 PA_SL_PCT = 15.0
 PA_TARGET_PCT = 15.0   # 1:1 RR
 PA_MIN_PREMIUM = 5.0
+PA_MAX_PREMIUM = 200.0
 FORCE_CLOSE_TIME = time(15, 20)
 NIFTY_STEP = 50
 CHC_LOOKBACK = 3       # 3 consecutive higher closes
@@ -295,6 +296,12 @@ class PulseRiderTracker:
             log.info("PA skipped: choppy market")
             return None
 
+        # CONFLICT confirmation filter
+        confirmation = analysis.get("confirmation_status", "")
+        if confirmation == "CONFLICT":
+            log.info("PA skipped: CONFLICT confirmation")
+            return None
+
         log.info("PA CHC(3) detected", side=side, strength=f"{strength:.2%}")
         return side
 
@@ -318,6 +325,11 @@ class PulseRiderTracker:
         if not entry_premium or entry_premium < PA_MIN_PREMIUM:
             log.warning("PA skipped: premium too low",
                        strike=self.atm_strike, premium=entry_premium)
+            return None
+
+        if entry_premium > PA_MAX_PREMIUM:
+            log.info("PA skipped: premium too high",
+                     strike=self.atm_strike, premium=entry_premium)
             return None
 
         sl_premium = round(entry_premium * (1 - PA_SL_PCT / 100), 2)

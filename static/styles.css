@@ -652,6 +652,111 @@ body {
 .dock-pa { border-color: var(--pa); }
 .dock-pa .dock-abbr { color: var(--pa); }
 
+.dock-pill-active {
+    box-shadow: 0 0 0 2px var(--accent), 0 0 8px rgba(99, 102, 241, 0.3);
+}
+
+/* ===== Trade Carousel ===== */
+.trade-carousel {
+    position: relative;
+}
+
+.carousel-viewport {
+    position: relative;
+    overflow: hidden;
+}
+
+.carousel-viewport > .trade-setup-card {
+    transition: opacity 0.25s ease;
+}
+
+.carousel-hidden {
+    position: absolute !important;
+    top: 0;
+    left: 0;
+    width: 100%;
+    visibility: hidden;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.carousel-visible {
+    position: relative !important;
+    visibility: visible;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.carousel-arrow {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 10;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    border: 1px solid var(--glass-border);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    color: var(--text-secondary);
+    font-size: 1.25rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: var(--transition);
+    line-height: 1;
+    padding: 0;
+}
+
+.carousel-arrow:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-light);
+}
+
+.carousel-arrow-left { left: -16px; }
+.carousel-arrow-right { right: -16px; }
+
+.carousel-dots {
+    display: flex;
+    justify-content: center;
+    gap: 6px;
+    padding-top: var(--space-sm);
+}
+
+.carousel-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--bg-hover);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.carousel-dot:hover {
+    background: var(--border-light);
+}
+
+.carousel-dot.active {
+    transform: scale(1.25);
+    border-color: transparent;
+}
+
+.carousel-dot.dot-iron-pulse.active { background: var(--iron-pulse); box-shadow: 0 0 6px var(--iron-pulse); }
+.carousel-dot.dot-selling.active { background: var(--selling); box-shadow: 0 0 6px var(--selling); }
+.carousel-dot.dot-dessert.active { background: var(--dessert); box-shadow: 0 0 6px var(--dessert); }
+.carousel-dot.dot-momentum.active { background: var(--momentum); box-shadow: 0 0 6px var(--momentum); }
+.carousel-dot.dot-pa.active { background: var(--pa); box-shadow: 0 0 6px var(--pa); }
+
+@media (max-width: 479px) {
+    .carousel-arrow-left { left: 4px; }
+    .carousel-arrow-right { right: 4px; }
+    .carousel-arrow { width: 28px; height: 28px; font-size: 1rem; }
+}
+
 /* ===== Premium Bar Visualization ===== */
 .premium-bar-track {
     margin-bottom: var(--space-lg);

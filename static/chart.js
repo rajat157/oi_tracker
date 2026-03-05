@@ -2099,3 +2099,148 @@ function updateTradeDock() {
 
     dock.style.display = anyVisible ? 'flex' : 'none';
 }
+
+// ===== Trade Cards Carousel =====
+
+const CAROUSEL_CARDS = [
+    { cardId: 'sell-trade-card',    dotClass: 'dot-selling',     pillId: 'dock-selling' },
+    { cardId: 'dessert-trade-card', dotClass: 'dot-dessert',     pillId: 'dock-dessert' },
+    { cardId: 'momentum-trade-card',dotClass: 'dot-momentum',    pillId: 'dock-momentum' },
+    { cardId: 'pa-trade-card',      dotClass: 'dot-pa',          pillId: 'dock-pa' },
+    { cardId: 'trade-setup-card',   dotClass: 'dot-iron-pulse',  pillId: 'dock-iron-pulse' }
+];
+
+let _carouselActive = [];   // subset of CAROUSEL_CARDS currently visible
+let _carouselIdx = 0;       // current index in _carouselActive
+let _carouselRafPending = false;
+
+function carouselInit() {
+    // Observe style changes on each trade card to detect show/hide
+    CAROUSEL_CARDS.forEach(({ cardId }) => {
+        const el = document.getElementById(cardId);
+        if (!el) return;
+        const obs = new MutationObserver(() => carouselScheduleRefresh());
+        obs.observe(el, { attributes: true, attributeFilter: ['style'] });
+    });
+    carouselRefreshActiveList();
+}
+
+function carouselScheduleRefresh() {
+    if (_carouselRafPending) return;
+    _carouselRafPending = true;
+    requestAnimationFrame(() => {
+        _carouselRafPending = false;
+        carouselRefreshActiveList();
+    });
+}
+
+function carouselRefreshActiveList() {
+    const prev = _carouselActive.map(c => c.cardId);
+    _carouselActive = CAROUSEL_CARDS.filter(({ cardId }) => {
+        const el = document.getElementById(cardId);
+        return el && el.style.display !== 'none';
+    });
+
+    const curr = _carouselActive.map(c => c.cardId);
+    const changed = prev.length !== curr.length || prev.some((id, i) => id !== curr[i]);
+
+    if (changed) {
+        // Keep current card if still active, else reset to 0
+        if (_carouselIdx >= _carouselActive.length) _carouselIdx = 0;
+        carouselRenderDots();
+    }
+
+    const carousel = document.getElementById('trade-carousel');
+    if (carousel) {
+        carousel.style.display = _carouselActive.length > 0 ? '' : 'none';
+    }
+
+    carouselShowCurrent();
+    carouselUpdateArrows();
+    carouselHighlightDockPill();
+}
+
+function carouselShowCurrent() {
+    const activeIds = new Set(_carouselActive.map(c => c.cardId));
+    const currentId = _carouselActive[_carouselIdx]?.cardId;
+
+    CAROUSEL_CARDS.forEach(({ cardId }) => {
+        const el = document.getElementById(cardId);
+        if (!el) return;
+
+        if (!activeIds.has(cardId)) {
+            // Not active — keep original display:none from update functions
+            el.classList.remove('carousel-visible', 'carousel-hidden');
+            return;
+        }
+
+        if (cardId === currentId) {
+            el.classList.add('carousel-visible');
+            el.classList.remove('carousel-hidden');
+        } else {
+            el.classList.add('carousel-hidden');
+            el.classList.remove('carousel-visible');
+        }
+    });
+}
+
+function carouselNav(dir) {
+    if (_carouselActive.length <= 1) return;
+    _carouselIdx = (_carouselIdx + dir + _carouselActive.length) % _carouselActive.length;
+    carouselShowCurrent();
+    carouselUpdateArrows();
+    carouselRenderDots();
+    carouselHighlightDockPill();
+}
+
+function carouselGoTo(cardId) {
+    const idx = _carouselActive.findIndex(c => c.cardId === cardId);
+    if (idx === -1) return;
+    _carouselIdx = idx;
+    carouselShowCurrent();
+    carouselUpdateArrows();
+    carouselRenderDots();
+    carouselHighlightDockPill();
+    // Scroll carousel into view
+    const carousel = document.getElementById('trade-carousel');
+    if (carousel) carousel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function carouselRenderDots() {
+    const container = document.getElementById('carousel-dots');
+    if (!container) return;
+    container.innerHTML = '';
+    _carouselActive.forEach((card, i) => {
+        const dot = document.createElement('span');
+        dot.className = 'carousel-dot ' + card.dotClass + (i === _carouselIdx ? ' active' : '');
+        dot.onclick = () => {
+            _carouselIdx = i;
+            carouselShowCurrent();
+            carouselUpdateArrows();
+            carouselRenderDots();
+            carouselHighlightDockPill();
+        };
+        container.appendChild(dot);
+    });
+}
+
+function carouselUpdateArrows() {
+    const left = document.getElementById('carousel-arrow-left');
+    const right = document.getElementById('carousel-arrow-right');
+    const show = _carouselActive.length > 1;
+    if (left) left.style.display = show ? '' : 'none';
+    if (right) right.style.display = show ? '' : 'none';
+}
+
+function carouselHighlightDockPill() {
+    const currentPill = _carouselActive[_carouselIdx]?.pillId;
+    CAROUSEL_CARDS.forEach(({ pillId }) => {
+        const el = document.getElementById(pillId);
+        if (el) el.classList.toggle('dock-pill-active', pillId === currentPill);
+    });
+}
+
+// Init after DOM is ready and update functions have had a chance to run
+document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(carouselInit, 100);
+});

@@ -165,23 +165,23 @@
 
                 <!-- Trade Dock — compact pill bar showing all active strategies -->
                 <div class="trade-dock" id="trade-dock" >
-                    <div class="dock-pill dock-iron-pulse" id="dock-iron-pulse"  onclick="document.getElementById('trade-setup-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-iron-pulse" id="dock-iron-pulse"  onclick="carouselGoTo('trade-setup-card')">
                         <span class="dock-abbr">IP</span>
                         <span class="dock-pnl" id="dock-ip-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-selling" id="dock-selling"  onclick="document.getElementById('sell-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-selling" id="dock-selling"  onclick="carouselGoTo('sell-trade-card')">
                         <span class="dock-abbr">SELL</span>
                         <span class="dock-pnl" id="dock-sell-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-dessert" id="dock-dessert"  onclick="document.getElementById('dessert-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-dessert" id="dock-dessert"  onclick="carouselGoTo('dessert-trade-card')">
                         <span class="dock-abbr">DST</span>
                         <span class="dock-pnl" id="dock-dessert-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-momentum" id="dock-momentum"  onclick="document.getElementById('momentum-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-momentum" id="dock-momentum"  onclick="carouselGoTo('momentum-trade-card')">
                         <span class="dock-abbr">MOM</span>
                         <span class="dock-pnl" id="dock-mom-pnl">--</span>
                     </div>
-                    <div class="dock-pill dock-pa" id="dock-pa"  onclick="document.getElementById('pa-trade-card')?.scrollIntoView({behavior:'smooth'})">
+                    <div class="dock-pill dock-pa" id="dock-pa"  onclick="carouselGoTo('pa-trade-card')">
                         <span class="dock-abbr">PA</span>
                         <span class="dock-pnl" id="dock-pa-pnl">--</span>
                     </div>
@@ -283,6 +283,12 @@
                         <span>Paths: <strong id="pred-total-paths">--</strong></span>
                     </div>
                 </div>
+
+                <!-- Trade Cards Carousel -->
+                <div class="trade-carousel" id="trade-carousel">
+                    <button class="carousel-arrow carousel-arrow-left" id="carousel-arrow-left" onclick="carouselNav(-1)" aria-label="Previous trade">&#x2039;</button>
+                    <button class="carousel-arrow carousel-arrow-right" id="carousel-arrow-right" onclick="carouselNav(1)" aria-label="Next trade">&#x203A;</button>
+                    <div class="carousel-viewport" id="carousel-viewport">
 
                 <!-- Sell Trade Card -->
                 <div class="card trade-setup-card sell-trade-card" id="sell-trade-card" >
@@ -569,6 +575,10 @@
                         </div>
                     </div>
                 </div>
+
+                    </div><!-- /.carousel-viewport -->
+                    <div class="carousel-dots" id="carousel-dots"></div>
+                </div><!-- /.trade-carousel -->
 
                 <!-- Win Rate Card -->
                 <div class="card win-rate-card" id="win-rate-card">

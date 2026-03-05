@@ -2038,8 +2038,16 @@ def analyze_tug_of_war(strikes_data: dict, spot_price: float,
     # Detect potential traps
     trap_warning = detect_trap(strikes_data, spot_price, price_direction, oi_direction, strength)
 
-    # Display-only: Primary S/R from absolute OI
-    primary_sr = find_primary_sr_levels(strikes_data, spot_price)
+    # Display-only: Primary S/R from visible zone strikes (immediate, actionable levels)
+    primary_sr = {"support": None, "resistance": None}
+    if below_spot_data:
+        best_support = max(below_spot_data, key=lambda d: d["put_oi"])
+        if best_support["put_oi"] > 0:
+            primary_sr["support"] = {"strike": best_support["strike"], "put_oi": best_support["put_oi"]}
+    if above_spot_data:
+        best_resistance = max(above_spot_data, key=lambda d: d["call_oi"])
+        if best_resistance["call_oi"] > 0:
+            primary_sr["resistance"] = {"strike": best_resistance["strike"], "call_oi": best_resistance["call_oi"]}
 
     # Display-only: 2-candle confirmation
     two_candle_confirmed = False

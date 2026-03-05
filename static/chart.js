@@ -720,10 +720,20 @@ function updateDashboard(data) {
         twoCandleBadge.style.display = data.two_candle_confirmed ? 'inline-flex' : 'none';
     }
 
-    // Primary S/R
+    // Primary S/R (with OI context)
     if (data.primary_sr) {
-        setText('primary-support', data.primary_sr.support ? formatNumber(data.primary_sr.support.strike) : '--');
-        setText('primary-resistance', data.primary_sr.resistance ? formatNumber(data.primary_sr.resistance.strike) : '--');
+        if (data.primary_sr.support) {
+            const s = data.primary_sr.support;
+            setText('primary-support', `${formatNumber(s.strike)} (${formatCompact(s.put_oi)})`);
+        } else {
+            setText('primary-support', '--');
+        }
+        if (data.primary_sr.resistance) {
+            const r = data.primary_sr.resistance;
+            setText('primary-resistance', `${formatNumber(r.strike)} (${formatCompact(r.call_oi)})`);
+        } else {
+            setText('primary-resistance', '--');
+        }
     }
 
     // OI Flow Summary

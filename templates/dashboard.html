@@ -98,23 +98,23 @@
                 </div>
             </div>
             <div class="hero-metrics">
-                <div class="hero-metric">
+                <div class="hero-metric" title="NIFTY current spot price.">
                     <span class="hero-metric-label">Spot Price</span>
                     <span class="hero-metric-value" id="spot-price">--</span>
                 </div>
-                <div class="hero-metric">
+                <div class="hero-metric" title="Put-Call Ratio (Put OI / Call OI). Above 1 = more puts = bullish. Below 1 = more calls = bearish. Arrow shows trend direction.">
                     <span class="hero-metric-label">PCR</span>
                     <span class="hero-metric-value" id="pcr-value">--</span><span class="pcr-trend-arrow" id="pcr-trend-arrow"></span>
                 </div>
-                <div class="hero-metric">
+                <div class="hero-metric" title="Difference between Put IV and Call IV. Positive = puts are pricier (fear of downside). Negative = calls are pricier (fear of upside).">
                     <span class="hero-metric-label">IV Skew</span>
                     <span class="hero-metric-value" id="iv-skew">--</span>
                 </div>
-                <div class="hero-metric">
+                <div class="hero-metric" title="Market direction based on recent OI verdicts. Shows trend strength and consistency.">
                     <span class="hero-metric-label">Trend</span>
                     <span class="hero-metric-value trend-indicator" id="market-trend">--</span>
                 </div>
-                <div class="hero-metric">
+                <div class="hero-metric" title="Spot price change over the last 9 minutes (3 candles). Shows short-term price momentum.">
                     <span class="hero-metric-label">Momentum (9m)</span>
                     <span class="hero-metric-value" id="momentum-value">--</span>
                 </div>
@@ -191,32 +191,32 @@
                 <div class="card metrics-card">
                     <h3 class="card-title">Analysis Details</h3>
                     <div class="metrics-mini-grid">
-                        <div class="metric-mini">
+                        <div class="metric-mini" title="Strike below spot with highest Put OI. Put writers defend this level — price unlikely to fall below easily.">
                             <span class="metric-label">Support</span>
                             <span class="metric-value bullish-text" id="primary-support">--</span>
                         </div>
-                        <div class="metric-mini">
+                        <div class="metric-mini" title="Strike above spot with highest Call OI. Call writers defend this level — price unlikely to rise above easily.">
                             <span class="metric-label">Resistance</span>
                             <span class="metric-value bearish-text" id="primary-resistance">--</span>
                         </div>
-                        <div class="metric-mini">
+                        <div class="metric-mini" title="Strike where option sellers profit the most. Price tends to gravitate toward this level near expiry. Arrow shows drift from session start.">
                             <span class="metric-label">Max Pain</span>
                             <span class="metric-value" id="max-pain">--</span>
                             <span class="metric-sub" id="max-pain-drift">--</span>
                         </div>
-                        <div class="metric-mini">
+                        <div class="metric-mini" title="At-The-Money strike — the strike closest to the current spot price.">
                             <span class="metric-label">ATM Strike</span>
                             <span class="metric-value" id="atm-strike">--</span>
                         </div>
-                        <div class="metric-mini">
+                        <div class="metric-mini" title="Current weekly expiry date being analyzed.">
                             <span class="metric-label">Expiry</span>
                             <span class="metric-value" id="expiry-date">--</span>
                         </div>
-                        <div class="metric-mini">
+                        <div class="metric-mini" title="Put volume / Call volume. Above 1 = more puts traded (bearish activity). Below 1 = more calls traded (bullish activity).">
                             <span class="metric-label">Volume PCR</span>
                             <span class="metric-value" id="volume-pcr">--</span>
                         </div>
-                        <div class="metric-mini">
+                        <div class="metric-mini" title="Average conviction across all strikes. Above 1.2x = strong participation. Below 0.8x = weak/uncertain activity.">
                             <span class="metric-label">Avg Conviction</span>
                             <span class="metric-value" id="avg-conviction">--</span>
                         </div>

@@ -621,7 +621,7 @@ function updateDashboard(data) {
     setText('volume-pcr', data.volume_pcr ?? '--');
 
     // Display average conviction with color coding
-    const avgConviction = ((data.avg_call_conviction || 0) + (data.avg_put_conviction || 0)) / 2;
+    const avgConviction = data.avg_call_conviction || 0;
     const convictionElem = document.getElementById('avg-conviction');
     if (convictionElem) {
         convictionElem.textContent = avgConviction > 0 ? avgConviction.toFixed(2) + 'x' : '--';

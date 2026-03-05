@@ -93,13 +93,24 @@ function applyChartPeriod() {
         itmChart.update('none');
     }
 
-    // Cumulative OI chart
+    // OI Momentum chart (per-interval rate of change)
     if (cumulativeChart) {
         cumulativeChart.data.labels = labels;
-        cumulativeChart.data.datasets[0].data = filtered.map(item => item.cumulative_call_oi_change || 0);
-        cumulativeChart.data.datasets[1].data = filtered.map(item => item.cumulative_put_oi_change || 0);
+        const callCumulative = filtered.map(item => item.cumulative_call_oi_change || 0);
+        const putCumulative = filtered.map(item => item.cumulative_put_oi_change || 0);
+        // Compute interval-to-interval delta (momentum/acceleration)
+        const callMomentum = callCumulative.map((v, i) => i === 0 ? 0 : v - callCumulative[i - 1]);
+        const putMomentum = putCumulative.map((v, i) => i === 0 ? 0 : v - putCumulative[i - 1]);
+        cumulativeChart.data.datasets[0].data = callMomentum;
+        cumulativeChart.data.datasets[1].data = putMomentum;
         cumulativeChart.update('none');
     }
+
+    // Reset zoom on all charts so new data is always visible
+    oiChart?.resetZoom();
+    otmChart?.resetZoom();
+    itmChart?.resetZoom();
+    cumulativeChart?.resetZoom();
 }
 
 // Update score gauge visualization
@@ -217,47 +228,33 @@ function initChart() {
     });
 }
 
-// Initialize Cumulative OI Chart (day start build-up)
+// Initialize OI Momentum Chart (per-interval rate of change)
 function initCumulativeChart() {
     const canvas = document.getElementById('cumulative-oi-chart');
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    const bearGrad = ctx.createLinearGradient(0, 0, 0, 360);
-    bearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.25)');
-    bearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
-    const bullGrad = ctx.createLinearGradient(0, 0, 0, 360);
-    bullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.25)');
-    bullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
 
     cumulativeChart = new Chart(ctx, {
-        type: 'line',
+        type: 'bar',
         data: {
             labels: [],
             datasets: [
                 {
-                    label: 'Call OI Build-up',
+                    label: 'Call OI Momentum',
                     data: [],
+                    backgroundColor: 'rgba(248, 113, 113, 0.7)',
                     borderColor: '#f87171',
-                    backgroundColor: bearGrad,
-                    fill: true,
-                    tension: 0.4,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    pointHoverRadius: 4,
-                    pointBackgroundColor: '#f87171'
+                    borderWidth: 1,
+                    borderRadius: 2
                 },
                 {
-                    label: 'Put OI Build-up',
+                    label: 'Put OI Momentum',
                     data: [],
+                    backgroundColor: 'rgba(34, 197, 94, 0.7)',
                     borderColor: '#22c55e',
-                    backgroundColor: bullGrad,
-                    fill: true,
-                    tension: 0.4,
-                    borderWidth: 2,
-                    pointRadius: 0,
-                    pointHoverRadius: 4,
-                    pointBackgroundColor: '#22c55e'
+                    borderWidth: 1,
+                    borderRadius: 2
                 }
             ]
         },
@@ -1564,7 +1561,16 @@ function updateZoneTable(tbodyId, strikes) {
 function updateChartFromServer(history) {
     if (!history?.length || !oiChart) return;
 
-    // Merge into fullChartHistory (append new points, deduplicate by timestamp)
+    // Filter out previous day's data before merging
+    const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD
+    if (fullChartHistory.length > 0) {
+        fullChartHistory = fullChartHistory.filter(h => {
+            const d = new Date(h.timestamp).toLocaleDateString('en-CA');
+            return d === today;
+        });
+    }
+
+    // Merge new points (deduplicate by timestamp)
     if (fullChartHistory.length > 0) {
         const existingTs = new Set(fullChartHistory.map(h => h.timestamp));
         const newPoints = history.filter(h => !existingTs.has(h.timestamp));
@@ -1604,11 +1610,15 @@ function updateZoneChartsFromHistory(history) {
         itmChart.update('none');
     }
 
-    // Populate Cumulative OI chart
+    // Populate OI Momentum chart (per-interval rate of change)
     if (cumulativeChart) {
         cumulativeChart.data.labels = labels;
-        cumulativeChart.data.datasets[0].data = history.map(item => item.cumulative_call_oi_change || 0);
-        cumulativeChart.data.datasets[1].data = history.map(item => item.cumulative_put_oi_change || 0);
+        const callCumulative = history.map(item => item.cumulative_call_oi_change || 0);
+        const putCumulative = history.map(item => item.cumulative_put_oi_change || 0);
+        const callMomentum = callCumulative.map((v, i) => i === 0 ? 0 : v - callCumulative[i - 1]);
+        const putMomentum = putCumulative.map((v, i) => i === 0 ? 0 : v - putCumulative[i - 1]);
+        cumulativeChart.data.datasets[0].data = callMomentum;
+        cumulativeChart.data.datasets[1].data = putMomentum;
         cumulativeChart.update('none');
     }
 }

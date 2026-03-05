@@ -1763,7 +1763,12 @@ function updateFlowCard(flow) {
         const raw = flow.dominant_flow || 'mixed';
         const dom = raw.charAt(0).toUpperCase() + raw.slice(1);
         const icons = { 'Writing': '\u270E', 'Buying': '\u25B2', 'Mixed': '\u25C6' };
-        dominantEl.textContent = (icons[dom] || '') + ' ' + dom;
+        const subtitles = {
+            'Writing': 'Sellers in control \u2014 range-bound',
+            'Buying': 'Buyers in control \u2014 trending',
+            'Mixed': 'No clear dominance'
+        };
+        dominantEl.innerHTML = `${icons[dom] || ''} ${dom}<span class="flow-dominant-sub">${subtitles[dom] || ''}</span>`;
         dominantEl.className = 'flow-dominant';
         if (dom === 'Writing') dominantEl.classList.add('flow-writing');
         else if (dom === 'Buying') dominantEl.classList.add('flow-buying');
@@ -1776,12 +1781,12 @@ function updateFlowCard(flow) {
     const zonesEl = document.getElementById('flow-zones');
     if (zonesEl) {
         const zoneKeys = [
-            { key: 'otm_puts', name: 'OTM Puts' },
-            { key: 'otm_calls', name: 'OTM Calls' },
-            { key: 'itm_calls', name: 'ITM Calls' },
-            { key: 'itm_puts', name: 'ITM Puts' }
+            { key: 'otm_puts', name: 'OTM Puts', tip: 'Put options above spot price. Writing here = sellers expect support to hold (bullish).' },
+            { key: 'otm_calls', name: 'OTM Calls', tip: 'Call options above spot price. Writing here = sellers expect resistance to hold (bearish).' },
+            { key: 'itm_calls', name: 'ITM Calls', tip: 'Call options below spot price (already in profit). Unwinding = longs taking profit.' },
+            { key: 'itm_puts', name: 'ITM Puts', tip: 'Put options below spot price (already in profit). Unwinding = shorts taking profit.' }
         ];
-        zonesEl.innerHTML = zoneKeys.map(({ key, name }) => {
+        zonesEl.innerHTML = zoneKeys.map(({ key, name, tip }) => {
             const z = flow[key];
             if (!z) return '';
             const writing = z.fresh_writing || 0;
@@ -1794,13 +1799,14 @@ function updateFlowCard(flow) {
             const bPct = (buying / total * 100).toFixed(0);
             const uPct = (unwinding / total * 100).toFixed(0);
             const cPct = (covering / total * 100).toFixed(0);
-            return `<div class="flow-zone-row">
+            const segLabel = (pct) => pct >= 25 ? `<span class="flow-seg-label">${pct}%</span>` : '';
+            return `<div class="flow-zone-row" title="${tip}">
                 <span class="flow-zone-label">${name}</span>
                 <div class="flow-zone-bar">
-                    <div class="flow-seg flow-seg-fw" style="width:${wPct}%" title="Writing ${wPct}%"></div>
-                    <div class="flow-seg flow-seg-fb" style="width:${bPct}%" title="Buying ${bPct}%"></div>
-                    <div class="flow-seg flow-seg-lu" style="width:${uPct}%" title="Unwinding ${uPct}%"></div>
-                    <div class="flow-seg flow-seg-sc" style="width:${cPct}%" title="Covering ${cPct}%"></div>
+                    <div class="flow-seg flow-seg-fw" style="width:${wPct}%" title="Writing: ${writing} strikes (${wPct}%) — new sellers opening positions">${segLabel(wPct)}</div>
+                    <div class="flow-seg flow-seg-fb" style="width:${bPct}%" title="Buying: ${buying} strikes (${bPct}%) — new buyers opening positions">${segLabel(bPct)}</div>
+                    <div class="flow-seg flow-seg-lu" style="width:${uPct}%" title="Unwinding: ${unwinding} strikes (${uPct}%) — longs exiting positions">${segLabel(uPct)}</div>
+                    <div class="flow-seg flow-seg-sc" style="width:${cPct}%" title="Covering: ${covering} strikes (${cPct}%) — shorts exiting positions">${segLabel(cPct)}</div>
                 </div>
             </div>`;
         }).join('');

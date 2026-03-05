@@ -2334,6 +2334,14 @@ body {
 .flow-dominant.flow-writing { color: var(--warning); }
 .flow-dominant.flow-buying { color: var(--bullish); }
 
+.flow-dominant-sub {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
 .flow-counts {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2359,10 +2367,38 @@ body {
     font-weight: 600;
 }
 
+.flow-legend {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.flow-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.65rem;
+    color: var(--text-muted);
+    cursor: help;
+}
+
+.flow-legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+.flow-dot-fw { background: var(--warning); }
+.flow-dot-fb { background: var(--bullish); }
+.flow-dot-lu { background: var(--text-muted); }
+.flow-dot-sc { background: var(--momentum); }
+
 .flow-zones {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
 }
 
 .flow-zone-row {
@@ -2383,13 +2419,26 @@ body {
 .flow-zone-bar {
     flex: 1;
     display: flex;
-    height: 8px;
+    height: 14px;
     border-radius: 4px;
     overflow: hidden;
     background: var(--bg-secondary);
+    position: relative;
 }
 
-.flow-seg { height: 100%; transition: width 0.3s ease; }
+.flow-seg { height: 100%; transition: width 0.3s ease; position: relative; cursor: help; }
+.flow-seg-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.55rem;
+    font-weight: 700;
+    color: var(--bg-primary);
+    pointer-events: none;
+    text-shadow: 0 0 2px rgba(0,0,0,0.5);
+}
 .flow-seg-fw { background: var(--warning); }
 .flow-seg-fb { background: var(--bullish); }
 .flow-seg-lu { background: var(--text-muted); }

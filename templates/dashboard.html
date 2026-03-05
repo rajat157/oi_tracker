@@ -744,19 +744,33 @@
                 </div>
 
                 <!-- OI Flow Classification -->
-                <div class="card flow-card" id="flow-card">
+                <div class="card flow-card" id="flow-card" title="Classifies each strike's activity by combining OI change direction with premium movement. Shows whether new positions are being created (strong signal) or old ones closed (weak signal).">
                     <h3 class="card-title">OI Flow Classification</h3>
                     <div class="flow-summary">
                         <div class="flow-dominant" id="flow-dominant">--</div>
                         <div class="flow-counts">
-                            <div class="flow-row">
-                                <span class="flow-label">Net Bullish Flow</span>
+                            <div class="flow-row" title="Number of strikes showing bullish-aligned flows (Put Writing + Call Buying + Short Covering)">
+                                <span class="flow-label">Bullish Strikes</span>
                                 <span class="flow-value bullish-text" id="flow-bullish">0</span>
                             </div>
-                            <div class="flow-row">
-                                <span class="flow-label">Net Bearish Flow</span>
+                            <div class="flow-row" title="Number of strikes showing bearish-aligned flows (Call Writing + Put Buying + Short Covering)">
+                                <span class="flow-label">Bearish Strikes</span>
                                 <span class="flow-value bearish-text" id="flow-bearish">0</span>
                             </div>
+                        </div>
+                        <div class="flow-legend">
+                            <span class="flow-legend-item" title="OI increasing + Premium falling. Sellers opening new positions — they expect the option to expire worthless. Strong signal.">
+                                <span class="flow-legend-dot flow-dot-fw"></span>Writing
+                            </span>
+                            <span class="flow-legend-item" title="OI increasing + Premium rising. Buyers opening new positions — they expect the option to gain value. Strong signal.">
+                                <span class="flow-legend-dot flow-dot-fb"></span>Buying
+                            </span>
+                            <span class="flow-legend-item" title="OI decreasing + Premium falling. Previous buyers exiting their positions. Weak signal — just profit-taking or stop-losses.">
+                                <span class="flow-legend-dot flow-dot-lu"></span>Unwinding
+                            </span>
+                            <span class="flow-legend-item" title="OI decreasing + Premium rising. Previous sellers buying back to exit. Weak signal — shorts getting squeezed.">
+                                <span class="flow-legend-dot flow-dot-sc"></span>Covering
+                            </span>
                         </div>
                         <div class="flow-zones" id="flow-zones"></div>
                     </div>

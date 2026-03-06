@@ -137,6 +137,7 @@ class VShapeDetector:
     def __init__(self):
         init_v_shape_tables()
         self._reset_daily_state()
+        self._resolve_stale_signals()
 
     def _reset_daily_state(self):
         """Reset all state for a new trading day."""
@@ -167,6 +168,35 @@ class VShapeDetector:
         # Resolution tracking
         self._resolved_at = None
         self._resolution_type = None
+
+    def _resolve_stale_signals(self):
+        """Auto-resolve any unresolved CONFIRMED signals on startup."""
+        try:
+            today = datetime.now().strftime('%Y-%m-%d')
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT id, detected_at, spot_price, day_low
+                    FROM v_shape_signals
+                    WHERE signal_level = 'CONFIRMED'
+                    AND resolved_at IS NULL
+                    AND DATE(detected_at) <= ?
+                """, (today,))
+                stale = cursor.fetchall()
+                for row in stale:
+                    r = dict(row)
+                    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    cursor.execute("""
+                        UPDATE v_shape_signals
+                        SET resolved_at = ?, resolution_type = 'V_EXPIRED',
+                            notes = 'Auto-resolved on startup (stale)'
+                        WHERE id = ? AND resolved_at IS NULL
+                    """, (now_str, r['id']))
+                    log.info("Auto-resolved stale V-shape signal",
+                             id=r['id'], detected_at=r['detected_at'])
+                conn.commit()
+        except Exception as e:
+            log.error("Failed to resolve stale signals", error=str(e))
 
     def _ensure_day(self):
         """Reset state if a new trading day has started."""
@@ -742,8 +772,15 @@ def get_v_shape_status() -> Optional[Dict]:
                     pass
 
             # Determine display visibility for frontend
-            level = result.get("signal_level", "")
+            # Use resolution_type if set (CONFIRMED row that was resolved),
+            # otherwise use signal_level
+            resolution = result.get("resolution_type")
+            level = resolution if resolution else result.get("signal_level", "")
             resolved_at = result.get("resolved_at")
+
+            # Override signal_level for frontend so it shows the right state
+            if resolution:
+                result["signal_level"] = resolution
 
             if level in ("FORMING", "LIKELY", "CONFIRMED"):
                 result["display"] = True

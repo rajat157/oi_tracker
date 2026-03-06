@@ -25,6 +25,7 @@ from selling_tracker import SellingTracker, get_active_sell_setup
 from dessert_tracker import DessertTracker, get_active_dessert
 from momentum_tracker import MomentumTracker, get_active_momentum
 from pa_tracker import PulseRiderTracker, get_active_pa
+from scalper_tracker import ScalperTracker, get_active_scalp
 from v_shape_detector import VShapeDetector
 from database import get_active_trade_setup
 from pattern_tracker import check_patterns, log_failed_entry
@@ -62,6 +63,7 @@ class OIScheduler:
         self.dessert_tracker = DessertTracker()
         self.momentum_tracker = MomentumTracker()
         self.pa_tracker = PulseRiderTracker()
+        self.scalper_tracker = ScalperTracker()
         self.v_shape_detector = VShapeDetector()
         self.prediction_engine = PredictionEngine()
         self.force_enabled = False
@@ -446,6 +448,30 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in PA tracker", error=str(e))
 
+            # ===== SCALPER AGENT (Claude-powered premium chart analysis) =====
+            try:
+                # Check/update active scalp trade
+                scalp_update = self.scalper_tracker.check_and_update_scalp(strikes_data)
+                if scalp_update:
+                    log.info("Scalp trade updated",
+                             action=scalp_update['action'],
+                             pnl=f"{scalp_update['pnl']:.2f}%",
+                             reason=scalp_update['reason'])
+                    if scalp_update['action'] in ('WON', 'LOST'):
+                        log.warning("Exit detected by 3-min poll, not WebSocket",
+                                    tracker="scalper", action=scalp_update['action'],
+                                    reason=scalp_update['reason'])
+
+                # Evaluate new scalp opportunity via Claude agent
+                if self.scalper_tracker.should_create_scalp(analysis):
+                    signal = self.scalper_tracker.get_agent_signal(analysis, strikes_data)
+                    if signal:
+                        scalp_id = self.scalper_tracker.create_scalp_trade(signal, analysis)
+                        if scalp_id:
+                            self._register_trade_with_monitor("scalper", get_active_scalp)
+            except Exception as e:
+                log.error("Error in scalper agent", error=str(e))
+
             # 6. Add trade tracker data to analysis for dashboard
             tracker_data = self.trade_tracker.get_stats()
             active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
@@ -523,6 +549,24 @@ class OIScheduler:
                 log.error("Error getting PA data for dashboard", error=str(e))
                 analysis["active_pa_trade"] = None
                 analysis["pa_stats"] = {}
+
+            # Add scalper data
+            try:
+                active_scalp = get_active_scalp()
+                if active_scalp:
+                    strike_sc = strikes_data.get(active_scalp["strike"], {})
+                    key = "pe_ltp" if active_scalp["option_type"] == "PE" else "ce_ltp"
+                    cur_prem = strike_sc.get(key, 0)
+                    if cur_prem > 0:
+                        sc_pnl = ((cur_prem - active_scalp["entry_premium"]) / active_scalp["entry_premium"]) * 100
+                        active_scalp["current_premium"] = cur_prem
+                        active_scalp["current_pnl"] = sc_pnl
+                analysis["active_scalp_trade"] = active_scalp
+                analysis["scalp_stats"] = self.scalper_tracker.get_scalp_stats()
+            except Exception as e:
+                log.error("Error getting scalper data for dashboard", error=str(e))
+                analysis["active_scalp_trade"] = None
+                analysis["scalp_stats"] = {}
 
             # Run daily learning update at market close
             self._check_daily_learning_update()
@@ -724,6 +768,17 @@ class OIScheduler:
                     pnl = exit_info.get("pnl_pct", 0)
                     conn.execute("""
                         UPDATE pa_trades SET status=?, resolved_at=?,
+                        exit_premium=?, exit_reason=?, profit_loss_pct=?
+                        WHERE id=?
+                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
+                    conn.commit()
+            elif tracker_type == "scalper":
+                from database import get_connection
+                with get_connection() as conn:
+                    status = "WON" if action == "WON" else "LOST"
+                    pnl = exit_info.get("pnl_pct", 0)
+                    conn.execute("""
+                        UPDATE scalp_trades SET status=?, resolved_at=?,
                         exit_premium=?, exit_reason=?, profit_loss_pct=?
                         WHERE id=?
                     """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))

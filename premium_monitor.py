@@ -19,6 +19,7 @@ from selling_tracker import get_active_sell_setup
 from dessert_tracker import get_active_dessert
 from momentum_tracker import get_active_momentum
 from pa_tracker import get_active_pa
+from scalper_tracker import get_active_scalp
 from logger import get_logger
 
 log = get_logger("premium_monitor")
@@ -452,6 +453,17 @@ class PremiumMonitor:
                     count += 1
         except Exception as e:
             log.error("Error scanning PA trades", error=str(e))
+
+        # Scalper
+        try:
+            setup = get_active_scalp()
+            if setup:
+                trade = self._db_trade_to_active(setup, "scalper", expiry, is_selling=False)
+                if trade:
+                    self.register_trade(trade)
+                    count += 1
+        except Exception as e:
+            log.error("Error scanning scalper trades", error=str(e))
 
         log.info("Scanned existing trades", found=count)
 

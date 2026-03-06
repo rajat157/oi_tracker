@@ -361,6 +361,30 @@ def api_pa_stats():
     return jsonify(tracker.get_pa_stats())
 
 
+@app.route("/api/scalp-trades")
+def api_scalp_trades():
+    """Get scalp trade history."""
+    from database import get_connection
+    days = request.args.get("days", 30, type=int)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM scalp_trades
+            WHERE created_at >= datetime('now', ?)
+            ORDER BY created_at DESC
+        """, (f"-{days} days",))
+        trades = [dict(r) for r in cursor.fetchall()]
+    return jsonify({"trades": trades})
+
+
+@app.route("/api/scalp-stats")
+def api_scalp_stats():
+    """Get scalp trade statistics."""
+    from scalper_tracker import ScalperTracker
+    tracker = ScalperTracker()
+    return jsonify(tracker.get_scalp_stats())
+
+
 @app.route("/api/v-shape-signals")
 def api_v_shape_signals():
     """Get V-shape recovery signals history."""

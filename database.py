@@ -831,6 +831,10 @@ def get_analysis_history(limit: int = 50, date: Optional[str] = None) -> list:
                         full.get('otm_puts', {}).get('total_oi_change', 0) +
                         full.get('itm_puts', {}).get('total_oi_change', 0)
                     )
+                    # Futures data for frontend charts
+                    item['futures_basis'] = full.get('futures_basis', 0.0)
+                    item['futures_oi'] = full.get('futures_oi', 0)
+                    item['futures_oi_change'] = full.get('futures_oi_change', 0)
                 except (json_module.JSONDecodeError, TypeError):
                     pass
             # Remove bulky analysis_json from response

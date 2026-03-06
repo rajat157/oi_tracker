@@ -3195,3 +3195,76 @@ body {
     .analysis-grid { grid-template-columns: 1fr 1fr; }
     .trade-extremes { flex-direction: column; gap: var(--space-sm); }
 }
+
+/* ===== Futures Data Card ===== */
+.futures-card { border-left: 3px solid var(--accent); }
+
+.futures-hero {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--space-md); background: var(--bg-surface);
+    border-radius: var(--radius-md); border: 1px solid var(--border);
+    margin-bottom: var(--space-md);
+}
+
+.futures-basis-display { display: flex; flex-direction: column; gap: var(--space-xs); }
+.futures-basis-label { font-size: var(--text-xs); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.futures-basis-value { font-size: var(--text-xl); font-weight: 700; font-variant-numeric: tabular-nums; }
+.futures-basis-value.basis-bullish { color: var(--bullish); }
+.futures-basis-value.basis-bearish { color: var(--bearish); }
+.futures-basis-value.basis-neutral { color: var(--text-secondary); }
+.futures-basis-arrow { font-size: var(--text-sm); font-weight: 600; }
+.futures-sparkline-container { width: 120px; height: 40px; }
+
+/* Small chart container for futures basis */
+.chart-container-small {
+    position: relative;
+    height: 200px;
+}
+
+/* ===== V-Shape Recovery Alert ===== */
+.v-shape-alert {
+    margin: 0 var(--space-xl); padding: var(--space-lg) var(--space-xl);
+    border-radius: var(--radius-lg); border: 2px solid transparent;
+    transition: all 0.3s ease;
+}
+
+.v-shape-alert.v-forming {
+    background: linear-gradient(135deg, rgba(251,191,36,0.08), rgba(251,191,36,0.03));
+    border-color: var(--warning);
+    animation: vglow-yellow 2s ease-in-out infinite;
+}
+.v-shape-alert.v-likely {
+    background: linear-gradient(135deg, rgba(34,197,94,0.12), rgba(34,197,94,0.04));
+    border-color: var(--bullish);
+    animation: vglow-green 1.5s ease-in-out infinite;
+}
+.v-shape-alert.v-confirmed {
+    background: linear-gradient(135deg, rgba(34,197,94,0.15), rgba(34,197,94,0.06));
+    border-color: var(--bullish); box-shadow: 0 0 30px rgba(34,197,94,0.2);
+}
+
+@keyframes vglow-yellow { 0%,100% { box-shadow: 0 0 0 rgba(251,191,36,0.3); } 50% { box-shadow: 0 0 20px 5px rgba(251,191,36,0.1); } }
+@keyframes vglow-green { 0%,100% { box-shadow: 0 0 0 rgba(34,197,94,0.3); } 50% { box-shadow: 0 0 25px 5px rgba(34,197,94,0.15); } }
+
+.v-shape-header { display: flex; align-items: center; gap: var(--space-md); margin-bottom: var(--space-md); }
+.v-shape-icon { font-size: var(--text-xl); font-weight: 900; }
+.v-forming .v-shape-icon, .v-forming .v-shape-title { color: var(--warning); }
+.v-likely .v-shape-icon, .v-likely .v-shape-title { color: var(--bullish); }
+.v-confirmed .v-shape-icon, .v-confirmed .v-shape-title { color: var(--bullish); }
+.v-shape-title { flex: 1; font-size: var(--text-lg); font-weight: 700; }
+.v-shape-confidence { font-size: var(--text-sm); font-weight: 600; padding: 4px 12px; border-radius: var(--radius-sm); background: var(--bg-surface); }
+
+.v-shape-conditions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
+.v-shape-condition {
+    display: flex; align-items: center; gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md); background: var(--bg-surface);
+    border-radius: var(--radius-sm); font-size: var(--text-sm);
+}
+.vsc-check { font-size: var(--text-base); color: var(--text-muted); }
+.vsc-check.vsc-met { color: var(--bullish); }
+.vsc-text { color: var(--text-secondary); font-size: var(--text-xs); }
+
+@media (max-width: 768px) {
+    .v-shape-conditions { grid-template-columns: 1fr; }
+    .futures-hero { flex-direction: column; gap: var(--space-md); }
+}

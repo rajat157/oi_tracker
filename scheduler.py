@@ -25,6 +25,7 @@ from selling_tracker import SellingTracker, get_active_sell_setup
 from dessert_tracker import DessertTracker, get_active_dessert
 from momentum_tracker import MomentumTracker, get_active_momentum
 from pa_tracker import PulseRiderTracker, get_active_pa
+from v_shape_detector import VShapeDetector
 from database import get_active_trade_setup
 from pattern_tracker import check_patterns, log_failed_entry
 from prediction_engine import PredictionEngine
@@ -61,6 +62,7 @@ class OIScheduler:
         self.dessert_tracker = DessertTracker()
         self.momentum_tracker = MomentumTracker()
         self.pa_tracker = PulseRiderTracker()
+        self.v_shape_detector = VShapeDetector()
         self.prediction_engine = PredictionEngine()
         self.force_enabled = False
         self.last_iron_pulse_time = None  # Track when Iron Pulse enters for selling decoupling
@@ -243,6 +245,12 @@ class OIScheduler:
                 mp_history, analysis.get("max_pain", 0), spot_price
             )
 
+            # Add futures data to analysis for frontend
+            analysis["futures_oi"] = futures_oi
+            analysis["futures_basis"] = round(futures_basis, 2) if futures_basis else 0.0
+            analysis["futures_price"] = round(spot_price + (futures_basis or 0), 2)
+            analysis["futures_oi_change"] = futures_oi_change
+
             # Serialize complete analysis to JSON for storage (now includes self_learning)
             analysis_json = json.dumps(analysis, default=str)
 
@@ -292,6 +300,22 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in pattern tracking", error=str(e))
                 analysis["call_alert"] = None
+
+            # V-Shape Detector: detect intraday V-shape recovery setups
+            try:
+                v_shape_result = self.v_shape_detector.evaluate(
+                    analysis, futures_basis=futures_basis,
+                    futures_oi=futures_oi, futures_oi_change=futures_oi_change
+                )
+                if v_shape_result:
+                    analysis["v_shape"] = v_shape_result
+                    log.info("V-shape signal", level=v_shape_result["signal_level"])
+                else:
+                    from v_shape_detector import get_v_shape_status
+                    analysis["v_shape"] = get_v_shape_status()
+            except Exception as e:
+                log.error("V-shape detector error", error=str(e))
+                analysis["v_shape"] = None
 
             # Trade Tracker: manage persistent trade setups
             # 1. Check and update existing setup status (activation/resolution)
@@ -506,6 +530,13 @@ class OIScheduler:
             # Add chart history for frontend sync (last 30 data points)
             chart_history = get_analysis_history(limit=30)
             analysis["chart_history"] = chart_history
+
+            # Add V-shape recovery status for frontend
+            try:
+                from v_shape_detector import get_v_shape_status
+                analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
+            except Exception:
+                analysis["v_shape_status"] = {"signal_level": "NONE"}
 
             # Broadcast to connected clients
             if self.socketio:

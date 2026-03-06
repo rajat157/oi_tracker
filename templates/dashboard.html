@@ -121,6 +121,33 @@
             </div>
         </section>
 
+        <!-- V-Shape Recovery Alert Banner -->
+        <div class="v-shape-alert" id="v-shape-alert" style="display: none;">
+            <div class="v-shape-header">
+                <span class="v-shape-icon" id="v-shape-icon">V</span>
+                <span class="v-shape-title" id="v-shape-title">V-Shape Recovery Forming</span>
+                <span class="v-shape-confidence" id="v-shape-confidence"></span>
+            </div>
+            <div class="v-shape-conditions">
+                <div class="v-shape-condition">
+                    <span class="vsc-check" id="vsc-basis-check">&#x2610;</span>
+                    <span class="vsc-text" title="Futures basis remains positive during decline — institutions still holding longs">Futures basis positive during decline</span>
+                </div>
+                <div class="v-shape-condition">
+                    <span class="vsc-check" id="vsc-score-check">&#x2610;</span>
+                    <span class="vsc-text" title="OI score hit extreme negative — sellers exhausted, often marks the bottom">Score capitulation (&lt; -40)</span>
+                </div>
+                <div class="v-shape-condition">
+                    <span class="vsc-check" id="vsc-pm-check">&#x2610;</span>
+                    <span class="vsc-text" title="Premium momentum reversing — put premiums peaking, calls starting to recover">PM reversal patterns firing</span>
+                </div>
+                <div class="v-shape-condition">
+                    <span class="vsc-check" id="vsc-confidence-check">&#x2610;</span>
+                    <span class="vsc-text" title="Low confidence = uncertain direction = reversal-prone market">Low confidence (&lt; 70%)</span>
+                </div>
+            </div>
+        </div>
+
         <!-- Main Content -->
         <main class="main">
             <!-- Left Column -->
@@ -219,6 +246,35 @@
                         <div class="metric-mini" title="Average conviction across all strikes. Above 1.2x = strong participation. Below 0.8x = weak/uncertain activity.">
                             <span class="metric-label">Avg Conviction</span>
                             <span class="metric-value" id="avg-conviction">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Futures Data Card -->
+                <div class="card futures-card" title="NIFTY Futures: Basis shows premium of futures over spot. Positive = bullish. Negative = bearish.">
+                    <h3 class="card-title">Futures Data</h3>
+                    <div class="futures-hero">
+                        <div class="futures-basis-display">
+                            <span class="futures-basis-label">Basis</span>
+                            <span class="futures-basis-value" id="futures-basis-val">--</span>
+                            <span class="futures-basis-arrow" id="futures-basis-arrow"></span>
+                        </div>
+                        <div class="futures-sparkline-container">
+                            <canvas id="futures-basis-sparkline" width="120" height="40"></canvas>
+                        </div>
+                    </div>
+                    <div class="metrics-mini-grid">
+                        <div class="metric-mini" title="Futures OI change today. Positive = new positions. Negative = positions closing.">
+                            <span class="metric-label">Fut OI Change</span>
+                            <span class="metric-value" id="futures-oi-change">--</span>
+                        </div>
+                        <div class="metric-mini" title="Total open interest in NIFTY futures.">
+                            <span class="metric-label">Fut OI</span>
+                            <span class="metric-value" id="futures-oi-val">--</span>
+                        </div>
+                        <div class="metric-mini" title="NIFTY futures price (Spot + Basis).">
+                            <span class="metric-label">Fut Price</span>
+                            <span class="metric-value" id="futures-price-val">--</span>
                         </div>
                     </div>
                 </div>
@@ -1033,6 +1089,20 @@
                     <div class="chart-container">
                         <canvas id="itm-chart"></canvas>
                     </div>
+                </div>
+            </div>
+
+            <div class="card chart-card">
+                <div class="chart-header">
+                    <h3 class="card-title">Futures Basis Trend</h3>
+                    <div class="chart-controls">
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="futuresBasisChart?.zoom(1.2)" title="Zoom In">+</button>
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="futuresBasisChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="futuresBasisChart?.resetZoom()" title="Reset">&#x27F2;</button>
+                    </div>
+                </div>
+                <div class="chart-container-small">
+                    <canvas id="futures-basis-chart"></canvas>
                 </div>
             </div>
         </section>

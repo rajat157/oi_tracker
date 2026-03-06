@@ -6,6 +6,7 @@ let oiChart = null;
 let otmChart = null;
 let itmChart = null;
 let cumulativeChart = null;
+let futuresBasisChart = null;
 let fullChartHistory = [];
 let chartPeriod = 'all';
 
@@ -15,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initCumulativeChart();
     initOTMChart();
     initITMChart();
+    initFuturesBasisChart();
     initToggles();
     setupSocketListeners();
 
@@ -106,11 +108,19 @@ function applyChartPeriod() {
         cumulativeChart.update('none');
     }
 
+    // Futures Basis chart
+    if (futuresBasisChart) {
+        futuresBasisChart.data.labels = labels;
+        futuresBasisChart.data.datasets[0].data = filtered.map(item => item.futures_basis || 0);
+        futuresBasisChart.update('none');
+    }
+
     // Reset zoom on all charts so new data is always visible
     oiChart?.resetZoom();
     otmChart?.resetZoom();
     itmChart?.resetZoom();
     cumulativeChart?.resetZoom();
+    futuresBasisChart?.resetZoom();
 }
 
 // Update score gauge visualization
@@ -431,6 +441,76 @@ function initITMChart() {
     });
 }
 
+// Initialize Futures Basis Chart
+function initFuturesBasisChart() {
+    const canvas = document.getElementById('futures-basis-chart');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const basisGrad = ctx.createLinearGradient(0, 0, 0, 200);
+    basisGrad.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
+    basisGrad.addColorStop(1, 'rgba(99, 102, 241, 0.02)');
+
+    futuresBasisChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Futures Basis',
+                    data: [],
+                    borderColor: '#6366f1',
+                    backgroundColor: basisGrad,
+                    fill: true,
+                    tension: 0.4,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    pointBackgroundColor: '#6366f1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            interaction: { intersect: false, mode: 'index' },
+            plugins: {
+                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } },
+                tooltip: {
+                    backgroundColor: '#1a1a24',
+                    titleColor: '#ffffff',
+                    bodyColor: '#a1a1b5',
+                    borderColor: '#2a2a3a',
+                    borderWidth: 1,
+                    padding: 12,
+                    cornerRadius: 8,
+                    callbacks: {
+                        label: function(context) {
+                            const val = context.parsed.y;
+                            return 'Basis: ' + (val > 0 ? '+' : '') + val.toFixed(2);
+                        }
+                    }
+                },
+                zoom: {
+                    pan: { enabled: true, mode: 'x' },
+                    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
+                }
+            },
+            scales: {
+                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
+                y: {
+                    grid: {
+                        color: (ctx) => ctx.tick.value === 0 ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                        lineWidth: (ctx) => ctx.tick.value === 0 ? 1.5 : 1
+                    },
+                    ticks: { color: '#6b6b7f', font: { size: 10 }, callback: v => v.toFixed(1) }
+                }
+            }
+        }
+    });
+}
+
 // Socket listeners
 function setupSocketListeners() {
     socket.on('connect', () => {
@@ -741,6 +821,12 @@ function updateDashboard(data) {
 
     // Update Prediction Tree (full fetch to include history)
     if (data.prediction_tree) fetchPredictionTree();
+
+    // Update Futures Data Card
+    updateFuturesData(data);
+
+    // Update V-Shape Recovery Alert
+    updateVShapeAlert(data);
 
     // Update Sell Trade Card
     updateSellTrade(data);
@@ -1631,6 +1717,13 @@ function updateZoneChartsFromHistory(history) {
         cumulativeChart.data.datasets[1].data = putMomentum;
         cumulativeChart.update('none');
     }
+
+    // Populate Futures Basis chart
+    if (futuresBasisChart) {
+        futuresBasisChart.data.labels = labels;
+        futuresBasisChart.data.datasets[0].data = history.map(item => item.futures_basis || 0);
+        futuresBasisChart.update('none');
+    }
 }
 
 /**
@@ -1684,6 +1777,143 @@ function updateZoneCharts(data) {
         itmChart.data.datasets[1].data.push(itmCallForce);
         itmChart.update('none');
     }
+}
+
+// ===== Futures Data Display =====
+
+function updateFuturesData(data) {
+    const basis = data.futures_basis;
+    const basisElem = document.getElementById('futures-basis-val');
+    if (basisElem && basis != null) {
+        basisElem.textContent = (basis > 0 ? '+' : '') + Number(basis).toFixed(2);
+        basisElem.className = 'futures-basis-value ' +
+            (basis > 50 ? 'basis-bullish' : basis < -20 ? 'basis-bearish' : 'basis-neutral');
+    }
+
+    const arrow = document.getElementById('futures-basis-arrow');
+    if (arrow && basis != null) {
+        arrow.textContent = basis > 50 ? '\u2191 Bullish' : basis < -20 ? '\u2193 Bearish' : '\u2192 Neutral';
+        arrow.style.color = basis > 50 ? 'var(--bullish)' : basis < -20 ? 'var(--bearish)' : 'var(--text-muted)';
+    }
+
+    const oiChange = document.getElementById('futures-oi-change');
+    if (oiChange && data.futures_oi_change != null) {
+        const c = data.futures_oi_change;
+        oiChange.textContent = (c > 0 ? '+' : '') + formatCompact(c);
+        oiChange.style.color = c > 0 ? 'var(--bullish)' : c < 0 ? 'var(--bearish)' : 'var(--text-muted)';
+    }
+
+    const oiElem = document.getElementById('futures-oi-val');
+    if (oiElem && data.futures_oi) oiElem.textContent = formatCompact(data.futures_oi);
+
+    const priceElem = document.getElementById('futures-price-val');
+    if (priceElem && data.futures_price) priceElem.textContent = Number(data.futures_price).toFixed(2);
+
+    updateBasisSparkline(data);
+}
+
+function updateBasisSparkline(data) {
+    const canvas = document.getElementById('futures-basis-sparkline');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // Get basis values from fullChartHistory
+    let values = fullChartHistory.map(item => item.futures_basis || 0);
+    // Add current value if available
+    if (data.futures_basis != null) {
+        values = values.concat([data.futures_basis]);
+    }
+
+    // Need at least 2 points
+    if (values.length < 2) return;
+
+    // Take last 20 values
+    values = values.slice(-20);
+
+    ctx.clearRect(0, 0, w, h);
+
+    const min = Math.min(...values, 0);
+    const max = Math.max(...values, 0);
+    const range = max - min || 1;
+    const stepX = w / (values.length - 1);
+
+    // Draw zero line (dashed)
+    const zeroY = h - ((0 - min) / range) * h;
+    ctx.beginPath();
+    ctx.setLineDash([3, 3]);
+    ctx.moveTo(0, zeroY);
+    ctx.lineTo(w, zeroY);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Draw basis line
+    const lastVal = values[values.length - 1];
+    const lineColor = lastVal >= 0 ? '#22c55e' : '#f87171';
+
+    ctx.beginPath();
+    values.forEach((v, i) => {
+        const x = i * stepX;
+        const y = h - ((v - min) / range) * h;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Draw end dot
+    const lastX = (values.length - 1) * stepX;
+    const lastY = h - ((lastVal - min) / range) * h;
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = lineColor;
+    ctx.fill();
+}
+
+// ===== V-Shape Recovery Alert =====
+
+function updateVShapeAlert(data) {
+    const alert = document.getElementById('v-shape-alert');
+    if (!alert) return;
+
+    const vs = data.v_shape_status;
+    if (!vs || vs.signal_level === 'NONE' || !vs.signal_level) {
+        alert.style.display = 'none';
+        return;
+    }
+
+    alert.style.display = 'block';
+    alert.className = 'v-shape-alert';
+
+    const level = vs.signal_level;
+    if (level === 'V_SHAPE_FORMING') alert.classList.add('v-forming');
+    else if (level === 'V_SHAPE_LIKELY') alert.classList.add('v-likely');
+    else if (level === 'V_SHAPE_CONFIRMED') alert.classList.add('v-confirmed');
+
+    const titles = { V_SHAPE_FORMING: 'V-Shape Recovery Forming', V_SHAPE_LIKELY: 'V-Shape Recovery Likely!', V_SHAPE_CONFIRMED: 'V-Shape Recovery Confirmed!' };
+    document.getElementById('v-shape-title').textContent = titles[level] || level;
+    document.getElementById('v-shape-confidence').textContent = vs.conditions_count ? vs.conditions_count + ' signals' : '';
+
+    // Update condition checks from conditions_met array
+    const conditions = vs.conditions_met || [];
+    const checks = [
+        ['vsc-basis-check', conditions.includes('futures_basis_positive')],
+        ['vsc-score-check', conditions.includes('capitulation_snapback') || conditions.includes('score_near_zero')],
+        ['vsc-pm-check', conditions.includes('pm_reversal_cluster')],
+        ['vsc-confidence-check', conditions.includes('low_confidence')]
+    ];
+    checks.forEach(([id, met]) => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = met ? '\u2611' : '\u2610';
+            el.className = 'vsc-check' + (met ? ' vsc-met' : '');
+        }
+    });
 }
 
 // UI functions

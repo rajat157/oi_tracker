@@ -168,6 +168,13 @@ def api_latest():
             analysis["active_pa_trade"] = None
             analysis["pa_stats"] = {}
 
+        # Add V-shape status
+        try:
+            from v_shape_detector import get_v_shape_status
+            analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
+        except Exception:
+            analysis["v_shape_status"] = {"signal_level": "NONE"}
+
         # Add chart history for frontend sync (last 30 data points, today only)
         from datetime import date as date_cls
         today_str = date_cls.today().strftime("%Y-%m-%d")
@@ -354,6 +361,21 @@ def api_pa_stats():
     return jsonify(tracker.get_pa_stats())
 
 
+@app.route("/api/v-shape-signals")
+def api_v_shape_signals():
+    """Get V-shape recovery signals history."""
+    from v_shape_detector import get_v_shape_signals
+    days = request.args.get("days", 30, type=int)
+    return jsonify({"signals": get_v_shape_signals(days=days)})
+
+
+@app.route("/api/v-shape-stats")
+def api_v_shape_stats():
+    """Get V-shape recovery statistics."""
+    from v_shape_detector import get_v_shape_stats
+    return jsonify(get_v_shape_stats())
+
+
 @app.route("/api/prediction-tree")
 def api_prediction_tree():
     """Get current prediction tree state."""
@@ -437,6 +459,13 @@ def handle_connect():
             analysis["active_trade"] = None
             analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
 
+        # Add V-shape status
+        try:
+            from v_shape_detector import get_v_shape_status
+            analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
+        except Exception:
+            analysis["v_shape_status"] = {"signal_level": "NONE"}
+
         # Add chart history for frontend sync (today only)
         from datetime import date as date_cls
         today_str = date_cls.today().strftime("%Y-%m-%d")
@@ -488,6 +517,13 @@ def handle_request_latest():
         else:
             analysis["active_trade"] = None
             analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
+
+        # Add V-shape status
+        try:
+            from v_shape_detector import get_v_shape_status
+            analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
+        except Exception:
+            analysis["v_shape_status"] = {"signal_level": "NONE"}
 
         # Add chart history for frontend sync (last 30 data points, today only)
         from datetime import date as date_cls

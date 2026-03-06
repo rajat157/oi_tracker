@@ -1887,17 +1887,38 @@ function updateVShapeAlert(data) {
         return;
     }
 
+    // Backend controls visibility via 'display' field
+    if (vs.display === false) {
+        alert.style.display = 'none';
+        return;
+    }
+
     alert.style.display = 'block';
     alert.className = 'v-shape-alert';
 
     const level = vs.signal_level;
-    if (level === 'V_SHAPE_FORMING') alert.classList.add('v-forming');
-    else if (level === 'V_SHAPE_LIKELY') alert.classList.add('v-likely');
-    else if (level === 'V_SHAPE_CONFIRMED') alert.classList.add('v-confirmed');
+    const levelClasses = {
+        'FORMING': 'v-forming', 'LIKELY': 'v-likely', 'CONFIRMED': 'v-confirmed',
+        'V_SUCCEEDED': 'v-succeeded', 'V_PARTIAL': 'v-partial', 'V_FAILED': 'v-failed'
+    };
+    if (levelClasses[level]) alert.classList.add(levelClasses[level]);
 
-    const titles = { V_SHAPE_FORMING: 'V-Shape Recovery Forming', V_SHAPE_LIKELY: 'V-Shape Recovery Likely!', V_SHAPE_CONFIRMED: 'V-Shape Recovery Confirmed!' };
+    const titles = {
+        'FORMING': 'V-Shape Recovery Forming',
+        'LIKELY': 'V-Shape Recovery Likely!',
+        'CONFIRMED': 'V-Shape Recovery Confirmed!',
+        'V_SUCCEEDED': 'V-Shape Succeeded',
+        'V_PARTIAL': 'V-Shape Partial Recovery',
+        'V_FAILED': 'V-Shape Failed'
+    };
     document.getElementById('v-shape-title').textContent = titles[level] || level;
-    document.getElementById('v-shape-confidence').textContent = vs.conditions_count ? vs.conditions_count + ' signals' : '';
+
+    const confEl = document.getElementById('v-shape-confidence');
+    if (vs.notes && level.startsWith('V_')) {
+        confEl.textContent = vs.notes;
+    } else {
+        confEl.textContent = vs.conditions_count ? vs.conditions_count + ' signals' : '';
+    }
 
     // Update condition checks from conditions_met array
     const conditions = vs.conditions_met || [];
@@ -1914,6 +1935,10 @@ function updateVShapeAlert(data) {
             el.className = 'vsc-check' + (met ? ' vsc-met' : '');
         }
     });
+
+    // Hide conditions grid for resolution states
+    const condGrid = alert.querySelector('.v-shape-conditions');
+    if (condGrid) condGrid.style.display = level.startsWith('V_') ? 'none' : 'grid';
 }
 
 // UI functions

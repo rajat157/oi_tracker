@@ -1,6 +1,6 @@
-"""Market regime detection — re-exports from oi_analyzer."""
+"""Market regime detection — re-exports from tug_of_war."""
 
-from oi_analyzer import (  # noqa: F401
+from analysis.tug_of_war import (  # noqa: F401
     detect_market_regime,
     calculate_market_trend,
 )

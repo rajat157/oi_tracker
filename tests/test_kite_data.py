@@ -299,7 +299,7 @@ class TestIntegrationWithAnalyzer:
 
     def test_works_with_analyze_tug_of_war(self, fetcher, mock_kite):
         """Output should pass through OI analyzer without error."""
-        from oi_analyzer import analyze_tug_of_war
+        from analysis.tug_of_war import analyze_tug_of_war
 
         imap = fetcher._instrument_map
         symbols = imap.build_quote_symbols.return_value

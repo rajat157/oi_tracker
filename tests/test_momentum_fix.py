@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database import get_analysis_history, get_strikes_for_timestamp, get_recent_price_trend
-from oi_analyzer import analyze_tug_of_war, calculate_price_momentum
+from analysis.tug_of_war import analyze_tug_of_war, calculate_price_momentum
 
 
 def test_momentum_on_historical_data():

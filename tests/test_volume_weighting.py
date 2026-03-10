@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database import get_latest_snapshot
-from oi_analyzer import analyze_tug_of_war, calculate_conviction_multiplier
+from analysis.tug_of_war import analyze_tug_of_war, calculate_conviction_multiplier
 
 
 def test_conviction_calculation():

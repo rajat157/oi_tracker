@@ -144,7 +144,7 @@ def _enrich_analysis(analysis: dict) -> dict:
 
     # V-shape
     try:
-        from v_shape_detector import get_v_shape_status
+        from analysis.v_shape import get_v_shape_status
         analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
     except Exception:
         analysis["v_shape_status"] = {"signal_level": "NONE"}

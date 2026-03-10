@@ -1,9 +1,14 @@
-"""Analysis package — organized re-exports from oi_analyzer.py.
+"""Analysis package — OI analysis, predictions, pattern detection, v-shape.
 
-During the migration, functions live in oi_analyzer.py and are re-exported
-through these sub-modules for a cleaner interface. Phase 4 will move the
-actual code here.
+Submodules:
+  analysis.tug_of_war      — Core OI tug-of-war analysis (was oi_analyzer.py)
+  analysis.pattern_tracker  — PM reversal / shakeout detection
+  analysis.v_shape          — V-shape recovery detector
+  analysis.prediction       — Prediction tree engine
+  analysis.momentum         — Momentum calculation re-exports
+  analysis.regime_detector  — Market regime detection re-exports
+  analysis.confirmation     — Signal confidence re-exports
 """
 
 # Re-export the main entry point for convenience
-from oi_analyzer import analyze_tug_of_war  # noqa: F401
+from analysis.tug_of_war import analyze_tug_of_war  # noqa: F401

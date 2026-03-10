@@ -12,7 +12,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from kite.data import KiteDataFetcher
 from premium_monitor import PremiumMonitor, ActiveTrade
-from oi_analyzer import analyze_tug_of_war, calculate_market_trend
+from analysis.tug_of_war import analyze_tug_of_war, calculate_market_trend
 from database import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
     get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
@@ -28,9 +28,9 @@ from strategies.momentum import MomentumStrategy
 from strategies.pulse_rider import PulseRiderStrategy
 from strategies.scalper import ScalperStrategy
 from alerts.broker import AlertBroker
-from v_shape_detector import VShapeDetector
-from pattern_tracker import check_patterns, log_failed_entry
-from prediction_engine import PredictionEngine
+from analysis.v_shape import VShapeDetector
+from analysis.pattern_tracker import check_patterns, log_failed_entry
+from analysis.prediction import PredictionEngine
 from core.logger import get_logger
 
 log = get_logger("scheduler")
@@ -246,7 +246,7 @@ class OIScheduler:
 
             # Display-only: PCR trend
             from database import get_recent_pcr_values, get_recent_max_pain_values
-            from oi_analyzer import calculate_pcr_trend, calculate_max_pain_drift
+            from analysis.tug_of_war import calculate_pcr_trend, calculate_max_pain_drift
             pcr_history = get_recent_pcr_values(limit=10)
             analysis["pcr_trend"] = calculate_pcr_trend(pcr_history)
 
@@ -322,7 +322,7 @@ class OIScheduler:
                     analysis["v_shape"] = v_shape_result
                     log.info("V-shape signal", level=v_shape_result["signal_level"])
                 else:
-                    from v_shape_detector import get_v_shape_status
+                    from analysis.v_shape import get_v_shape_status
                     analysis["v_shape"] = get_v_shape_status()
             except Exception as e:
                 log.error("V-shape detector error", error=str(e))
@@ -589,7 +589,7 @@ class OIScheduler:
 
             # Add V-shape recovery status for frontend
             try:
-                from v_shape_detector import get_v_shape_status
+                from analysis.v_shape import get_v_shape_status
                 analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
             except Exception:
                 analysis["v_shape_status"] = {"signal_level": "NONE"}

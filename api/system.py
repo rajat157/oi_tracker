@@ -29,24 +29,24 @@ def api_logs():
 
 @bp.route("/api/v-shape-signals")
 def api_v_shape_signals():
-    from v_shape_detector import get_v_shape_signals
+    from analysis.v_shape import get_v_shape_signals
     days = request.args.get("days", 30, type=int)
     return jsonify({"signals": get_v_shape_signals(days=days)})
 
 
 @bp.route("/api/v-shape-stats")
 def api_v_shape_stats():
-    from v_shape_detector import get_v_shape_stats
+    from analysis.v_shape import get_v_shape_stats
     return jsonify(get_v_shape_stats())
 
 
 @bp.route("/api/prediction-tree")
 def api_prediction_tree():
-    from prediction_engine import get_prediction_state
+    from analysis.prediction import get_prediction_state
     return jsonify(get_prediction_state() or {})
 
 
 @bp.route("/api/prediction-stats")
 def api_prediction_stats():
-    from prediction_engine import PredictionEngine
+    from analysis.prediction import PredictionEngine
     return jsonify(PredictionEngine().get_prediction_stats())

@@ -1,6 +1,6 @@
-"""Momentum calculations — re-exports from oi_analyzer."""
+"""Momentum calculations — re-exports from tug_of_war."""
 
-from oi_analyzer import (  # noqa: F401
+from analysis.tug_of_war import (  # noqa: F401
     calculate_price_momentum,
     calculate_premium_momentum,
     calculate_oi_acceleration,

@@ -12,42 +12,50 @@ oi_tracker/
 │   ├── trade.py           # TradeStatus/Direction enums, TradeSignal/Result/ActiveTrade
 │   ├── analysis.py        # AnalysisResult dataclass (wraps tug-of-war dict)
 │   ├── events.py          # EventBus pub/sub (TRADE_CREATED/EXITED/UPDATED)
-│   └── base_tracker.py    # ABC for all strategy trackers
-├── db/                    # Repository pattern (wraps database.py)
+│   ├── base_tracker.py    # ABC for all strategy trackers
+│   └── logger.py          # Centralized structured logging with DB persistence
+├── db/                    # Repository pattern + legacy DB functions
 │   ├── connection.py      # get_connection() + init_db()
 │   ├── base_repo.py       # BaseRepository with _execute/_fetch helpers
+│   ├── legacy.py          # Legacy SQLite functions (was database.py)
+│   ├── settings_repo.py   # Key-value settings (get_setting/set_setting)
 │   ├── trade_repo.py      # Generic TradeRepository (works across all trade tables)
 │   ├── snapshot_repo.py   # SnapshotRepository
 │   ├── analysis_repo.py   # AnalysisRepository
 │   ├── signal_repo.py     # SignalRepository
 │   ├── prediction_repo.py # PredictionRepository
 │   └── log_repo.py        # LogRepository
+├── kite/                  # Kite Connect API
+│   ├── iv.py              # Black-Scholes IV calculation
+│   ├── auth.py            # OAuth login flow + token storage
+│   ├── instruments.py     # NFO instrument lookup and caching
+│   ├── broker.py          # Order placement + GTT
+│   └── data.py            # KiteDataFetcher (option chain + futures OI)
+├── analysis/              # OI analysis, predictions, pattern detection
+│   ├── tug_of_war.py      # Core OI tug-of-war analysis (was oi_analyzer.py)
+│   ├── pattern_tracker.py # Premium Momentum (PM) reversal detection
+│   ├── v_shape.py         # V-shape recovery detector
+│   ├── prediction.py      # Prediction tree engine
+│   ├── momentum.py        # Momentum calculation re-exports
+│   ├── regime_detector.py # Market regime detection re-exports
+│   └── confirmation.py    # Signal confidence re-exports
 ├── strategies/            # Strategy implementations (extend BaseTracker)
 │   ├── momentum.py        # MomentumStrategy (trend-following 1:2 RR)
 │   ├── dessert.py         # DessertStrategy (Contra Sniper + Phantom PUT)
 │   ├── selling.py         # SellingStrategy (dual T1/T2 targets)
 │   ├── scalper.py         # ScalperStrategy (Claude-powered multi-trade/day)
+│   ├── scalper_engine.py  # Technical analysis for premium charts (VWAP, S/R, swings)
+│   ├── scalper_agent.py   # Claude Code FNO expert agent (subprocess via `claude -p`)
 │   ├── pulse_rider.py     # PulseRiderStrategy (CHC-3 price action)
 │   └── iron_pulse.py      # IronPulseStrategy (PENDING→ACTIVE lifecycle)
-├── kite_data.py           # Kite Connect API data fetching (option chain + futures OI)
-├── kite_instruments.py    # Kite instrument lookup and caching
-├── iv_calculator.py       # Black-Scholes IV calculation
-├── premium_monitor.py     # Real-time premium monitoring via Kite WebSocket
-├── oi_analyzer.py         # OI analysis logic (tug-of-war calculation)
-├── database.py            # SQLite storage for historical data (legacy, being migrated to db/)
-├── scheduler.py           # APScheduler for 3-minute polling + trade orchestration
-├── scalper_engine.py      # Technical analysis for premium charts (VWAP, S/R, swings)
-├── scalper_agent.py       # Claude Code FNO expert agent (subprocess via `claude -p`)
-├── self_learner.py        # Adaptive learning system (EMA, confidence buckets)
-├── prediction_engine.py   # Prediction tree engine (3-scenario predict → validate → signal)
-├── pattern_tracker.py     # Premium Momentum (PM) reversal detection
+├── monitoring/            # Scheduler + premium monitor
+│   ├── scheduler.py       # APScheduler for 3-minute polling + trade orchestration
+│   └── premium_monitor.py # Real-time premium monitoring via Kite WebSocket
 ├── alerts/                # Telegram notification system
 │   ├── __init__.py        # Re-exports send_telegram + AlertBroker
 │   ├── _legacy.py         # Legacy send_telegram/send_telegram_multi functions
 │   ├── telegram.py        # TelegramChannel (new OOP wrapper)
 │   └── broker.py          # AlertBroker (EventBus → Telegram routing)
-├── logger.py              # Centralized structured logging with DB persistence
-├── main.py                # Alternative entry point
 ├── templates/
 │   └── dashboard.html     # Web dashboard with live updates
 ├── static/

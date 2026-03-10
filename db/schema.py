@@ -23,11 +23,25 @@ CREATE TABLE IF NOT EXISTS trade_setups (
     signal_confidence REAL NOT NULL,
     iv_at_creation REAL DEFAULT 0.0,
     expiry_date TEXT NOT NULL,
+    -- OI context at creation
+    call_oi_change_at_creation REAL DEFAULT 0,
+    put_oi_change_at_creation REAL DEFAULT 0,
+    pcr_at_creation REAL DEFAULT 0,
+    max_pain_at_creation INTEGER DEFAULT 0,
+    support_at_creation INTEGER DEFAULT 0,
+    resistance_at_creation INTEGER DEFAULT 0,
+    trade_reasoning TEXT DEFAULT '',
     -- Status
     status TEXT NOT NULL DEFAULT 'PENDING',
     -- Activation
     activated_at DATETIME,
     activation_premium REAL,
+    -- T1 trailing
+    t1_hit INTEGER DEFAULT 0,
+    t1_hit_at DATETIME,
+    t1_premium REAL,
+    peak_premium REAL,
+    trailing_sl REAL,
     -- Resolution
     resolved_at DATETIME,
     exit_premium REAL,

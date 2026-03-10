@@ -70,7 +70,7 @@ def exchange_token(request_token: str) -> dict:
 
 def save_token(access_token: str):
     """Save access token to database and .env."""
-    from database import set_setting
+    from db.settings_repo import set_setting
     set_setting('kite_access_token', access_token)
     set_setting('kite_token_date', datetime.now().strftime('%Y-%m-%d'))
 
@@ -81,7 +81,7 @@ def save_token(access_token: str):
 
 def load_token() -> str:
     """Load today's access token from database."""
-    from database import get_setting
+    from db.settings_repo import get_setting
     token_date = get_setting('kite_token_date')
     today = datetime.now().strftime('%Y-%m-%d')
 

@@ -25,7 +25,7 @@ import json
 from datetime import datetime, time, timedelta
 from typing import Optional, Dict, List
 
-from database import get_connection
+from db.connection import get_connection
 from core.logger import get_logger
 
 log = get_logger("v_shape_detector")

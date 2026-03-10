@@ -134,7 +134,7 @@ class OILogger:
         """Save log entry to database."""
         try:
             # Import here to avoid circular imports
-            from database import save_log
+            from db.legacy import save_log
 
             details_json = json.dumps(details) if details else None
             save_log(

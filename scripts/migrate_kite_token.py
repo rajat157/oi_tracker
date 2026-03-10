@@ -3,7 +3,8 @@ import os
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database import init_db, set_setting
+from db.legacy import init_db
+from db.settings_repo import set_setting
 
 TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.kite_token')
 

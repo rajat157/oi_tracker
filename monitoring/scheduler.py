@@ -13,7 +13,7 @@ from apscheduler.triggers.cron import CronTrigger
 from kite.data import KiteDataFetcher
 from monitoring.premium_monitor import PremiumMonitor, ActiveTrade
 from analysis.tug_of_war import analyze_tug_of_war, calculate_market_trend
-from database import (
+from db.legacy import (
     save_snapshot, save_analysis, purge_old_data, get_last_data_date,
     get_recent_price_trend, get_recent_oi_changes, get_previous_strikes_data,
     get_previous_futures_oi, get_analysis_history, get_previous_verdict,
@@ -245,7 +245,7 @@ class OIScheduler:
             analysis["market_trend"] = market_trend
 
             # Display-only: PCR trend
-            from database import get_recent_pcr_values, get_recent_max_pain_values
+            from db.legacy import get_recent_pcr_values, get_recent_max_pain_values
             from analysis.tug_of_war import calculate_pcr_trend, calculate_max_pain_drift
             pcr_history = get_recent_pcr_values(limit=10)
             analysis["pcr_trend"] = calculate_pcr_trend(pcr_history)

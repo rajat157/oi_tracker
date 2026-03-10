@@ -2,7 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 
-from database import (
+from db.legacy import (
     get_latest_analysis, get_analysis_history, get_latest_snapshot,
 )
 

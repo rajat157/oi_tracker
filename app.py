@@ -12,7 +12,7 @@ from api.trades import bp as trades_bp
 from api.stats import bp as stats_bp
 from api.system import bp as system_bp
 from api.kite_auth import bp as kite_bp
-from database import get_latest_analysis
+from db.legacy import get_latest_analysis
 from monitoring.scheduler import OIScheduler
 from core.logger import get_logger
 

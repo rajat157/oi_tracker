@@ -2,7 +2,7 @@
 
 from flask import Blueprint, jsonify, request
 
-from database import get_logs
+from db.legacy import get_logs
 
 bp = Blueprint("system", __name__)
 

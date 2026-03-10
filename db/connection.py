@@ -37,5 +37,5 @@ def init_db(db_path: str | None = None) -> None:
     Delegates to the existing database.init_db() to avoid duplication.
     When Phase 4 removes database.py, the full DDL will live here.
     """
-    from database import init_db as _legacy_init
+    from db.legacy import init_db as _legacy_init
     _legacy_init()

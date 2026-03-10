@@ -8,7 +8,7 @@ from pathlib import Path
 # Add parent directory to path for imports when running from tests/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database import get_latest_snapshot
+from db.legacy import get_latest_snapshot
 from analysis.tug_of_war import analyze_tug_of_war, calculate_conviction_multiplier
 
 

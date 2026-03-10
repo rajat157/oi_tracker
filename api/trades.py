@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from flask import Blueprint, jsonify, request
 
-from database import get_trade_history
+from db.legacy import get_trade_history
 from db.trade_repo import TradeRepository
 
 bp = Blueprint("trades", __name__)

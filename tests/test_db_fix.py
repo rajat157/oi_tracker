@@ -5,7 +5,7 @@ from pathlib import Path
 # Add parent directory to path for imports when running from tests/
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database import get_latest_snapshot
+from db.legacy import get_latest_snapshot
 
 try:
     snapshot = get_latest_snapshot()

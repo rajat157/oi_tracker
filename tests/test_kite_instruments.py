@@ -39,7 +39,7 @@ def mock_csv_response():
 def instrument_map(mock_csv_response):
     """Create an InstrumentMap with mocked CSV download."""
     from kite.instruments import InstrumentMap
-    with patch('kite_instruments.requests.get', return_value=mock_csv_response):
+    with patch('kite.instruments.requests.get', return_value=mock_csv_response):
         imap = InstrumentMap(api_key="test_key", access_token="test_token")
         imap.refresh()
     return imap
@@ -61,7 +61,7 @@ class TestRefresh:
     def test_refresh_returns_true(self, mock_csv_response):
         """Refresh should return True on success."""
         from kite.instruments import InstrumentMap
-        with patch('kite_instruments.requests.get', return_value=mock_csv_response):
+        with patch('kite.instruments.requests.get', return_value=mock_csv_response):
             imap = InstrumentMap(api_key="test_key", access_token="test_token")
             assert imap.refresh() is True
 
@@ -70,7 +70,7 @@ class TestRefresh:
         from kite.instruments import InstrumentMap
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = Exception("HTTP 500")
-        with patch('kite_instruments.requests.get', return_value=mock_resp):
+        with patch('kite.instruments.requests.get', return_value=mock_resp):
             imap = InstrumentMap(api_key="test_key", access_token="test_token")
             assert imap.refresh() is False
 
@@ -101,7 +101,7 @@ class TestGetCurrentExpiry:
         mock_resp.status_code = 200
         mock_resp.text = csv_data
         mock_resp.raise_for_status = MagicMock()
-        with patch('kite_instruments.requests.get', return_value=mock_resp):
+        with patch('kite.instruments.requests.get', return_value=mock_resp):
             imap = InstrumentMap(api_key="test_key", access_token="test_token")
             imap.refresh()
             assert imap.get_current_expiry() == exp1
@@ -161,7 +161,7 @@ class TestCacheSameDay:
     def test_cache_same_day(self, mock_csv_response):
         """Should not re-download on same day."""
         from kite.instruments import InstrumentMap
-        with patch('kite_instruments.requests.get', return_value=mock_csv_response) as mock_get:
+        with patch('kite.instruments.requests.get', return_value=mock_csv_response) as mock_get:
             imap = InstrumentMap(api_key="test_key", access_token="test_token")
             imap.refresh()
             imap.refresh()  # Second call same day

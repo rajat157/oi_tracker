@@ -39,14 +39,14 @@ class ScalperStrategy(BaseTracker):
     @property
     def engine(self):
         if self._engine is None:
-            from scalper_engine import ScalperEngine
+            from strategies.scalper_engine import ScalperEngine
             self._engine = ScalperEngine()
         return self._engine
 
     @property
     def agent(self):
         if self._agent is None:
-            from scalper_agent import ScalperAgent
+            from strategies.scalper_agent import ScalperAgent
             self._agent = ScalperAgent()
         return self._agent
 

@@ -24,7 +24,7 @@ class TestSLTargetDetection:
 
     def test_buying_sl_hit(self):
         """Buying trade: premium drops below SL → LOST."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -43,7 +43,7 @@ class TestSLTargetDetection:
 
     def test_buying_target_hit(self):
         """Buying trade: premium rises above target → WON."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -62,7 +62,7 @@ class TestSLTargetDetection:
 
     def test_selling_sl_hit(self):
         """Selling trade: premium RISES above SL → LOST (inverted)."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -81,7 +81,7 @@ class TestSLTargetDetection:
 
     def test_selling_target_hit(self):
         """Selling trade: premium DROPS below target → WON (inverted)."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -100,7 +100,7 @@ class TestSLTargetDetection:
 
     def test_no_action_in_range(self):
         """Premium between SL and target → no exit."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -118,7 +118,7 @@ class TestSLTargetDetection:
 
     def test_selling_no_action_in_range(self):
         """Selling: premium between entry and SL → no exit."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -140,7 +140,7 @@ class TestShadowMode:
 
     def test_shadow_mode_logs_only(self):
         """In shadow mode, detection should log but NOT call exit_callback."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         callback = MagicMock()
@@ -163,7 +163,7 @@ class TestShadowMode:
 
     def test_live_mode_calls_callback(self):
         """In live mode, detection should call exit_callback."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=False)
 
         callback = MagicMock()
@@ -193,7 +193,7 @@ class TestRegistration:
 
     def test_register_subscribes_instrument(self):
         """Registering a trade should add it to active tracking."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -210,7 +210,7 @@ class TestRegistration:
 
     def test_unregister_removes_trade(self):
         """Unregistering should remove trade from tracking."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -229,7 +229,7 @@ class TestRegistration:
 
     def test_multiple_trades_same_token(self):
         """Multiple trades on same instrument should coexist."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade1 = MockActiveTrade(
@@ -257,7 +257,7 @@ class TestGTTPolling:
 
     def test_gtt_triggered_detected(self):
         """GTT poll should detect externally-triggered GTT."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(
@@ -296,7 +296,7 @@ class TestScanExistingTrades:
 
     def test_scan_existing_active_trades(self):
         """On startup, should pick up ACTIVE trades from all strategy trackers."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
 
         monitor = PremiumMonitor(shadow_mode=True)
 
@@ -334,7 +334,7 @@ class TestGetStatus:
 
     def test_get_status_empty(self):
         """Status with no trades."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
         status = monitor.get_status()
         assert status["shadow_mode"] is True
@@ -342,7 +342,7 @@ class TestGetStatus:
 
     def test_get_status_with_trades(self):
         """Status with registered trades."""
-        from premium_monitor import PremiumMonitor
+        from monitoring.premium_monitor import PremiumMonitor
         monitor = PremiumMonitor(shadow_mode=True)
 
         trade = MockActiveTrade(

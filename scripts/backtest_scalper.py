@@ -21,7 +21,7 @@ from datetime import datetime, date, timedelta
 from typing import List, Dict, Optional, Tuple
 from collections import defaultdict
 
-from scalper_engine import ScalperEngine, NIFTY_STEP, STRIKES_OFFSET
+from strategies.scalper_engine import ScalperEngine, NIFTY_STEP, STRIKES_OFFSET
 
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "oi_tracker.db")
 

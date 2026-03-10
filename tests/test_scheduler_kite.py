@@ -60,17 +60,17 @@ def mock_kite_fetcher():
 class TestUsesKiteFetcher:
     """Verify scheduler uses KiteDataFetcher."""
 
-    @patch('scheduler.KiteDataFetcher')
+    @patch('monitoring.scheduler.KiteDataFetcher')
     def test_uses_kite_fetcher(self, MockKite):
         """Scheduler should instantiate KiteDataFetcher, not NSEFetcher."""
-        from scheduler import OIScheduler
+        from monitoring.scheduler import OIScheduler
         scheduler = OIScheduler()
         assert hasattr(scheduler, 'kite_fetcher')
 
-    @patch('scheduler.KiteDataFetcher')
+    @patch('monitoring.scheduler.KiteDataFetcher')
     def test_no_nse_fetcher_in_fetch(self, MockKite):
         """fetch_and_analyze should NOT create NSEFetcher."""
-        from scheduler import OIScheduler
+        from monitoring.scheduler import OIScheduler
         scheduler = OIScheduler()
 
         mock_fetcher = MockKite.return_value
@@ -87,11 +87,11 @@ class TestUsesKiteFetcher:
 class TestPremiumMonitor:
     """Test premium monitor integration."""
 
-    @patch('scheduler.PremiumMonitor')
-    @patch('scheduler.KiteDataFetcher')
+    @patch('monitoring.scheduler.PremiumMonitor')
+    @patch('monitoring.scheduler.KiteDataFetcher')
     def test_premium_monitor_started(self, MockKite, MockMonitor):
         """Premium monitor should start with scheduler."""
-        from scheduler import OIScheduler
+        from monitoring.scheduler import OIScheduler
         scheduler = OIScheduler()
         scheduler.start()
 
@@ -104,12 +104,12 @@ class TestPremiumMonitor:
 class TestFetchOutputUnchanged:
     """Verify analysis format is unchanged for SocketIO."""
 
-    @patch('scheduler.KiteDataFetcher')
+    @patch('monitoring.scheduler.KiteDataFetcher')
     def test_fetch_output_unchanged(self, MockKite, mock_kite_fetcher):
         """Analysis output should maintain same structure for dashboard."""
         MockKite.return_value = mock_kite_fetcher
 
-        from scheduler import OIScheduler
+        from monitoring.scheduler import OIScheduler
         socketio_mock = MagicMock()
         scheduler = OIScheduler(socketio=socketio_mock)
 

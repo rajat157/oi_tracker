@@ -4,6 +4,15 @@ import pytest
 from unittest.mock import patch, MagicMock, PropertyMock
 from datetime import datetime
 
+from core.events import event_bus
+
+
+@pytest.fixture(autouse=True)
+def _clean_global_bus():
+    """Prevent AlertBroker leak — clear global event_bus after each test."""
+    yield
+    event_bus.clear()
+
 
 @pytest.fixture
 def mock_kite_fetcher():

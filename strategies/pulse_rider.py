@@ -344,7 +344,7 @@ class PulseRiderStrategy(BaseTracker):
     def _place_kite_order(self, trade_id: int, strike: int, option_type: str,
                           entry: float, sl: float, target: float, expiry_date: str):
         try:
-            from kite_broker import is_authenticated, place_order, place_gtt_oco, round_to_tick
+            from kite.broker import is_authenticated, place_order, place_gtt_oco, round_to_tick
             from alerts import _get_kite_trading_symbol, send_telegram
 
             if not is_authenticated():

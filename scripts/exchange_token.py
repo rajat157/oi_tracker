@@ -2,7 +2,7 @@ import os, sys, hashlib, requests
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), '.env'), override=True)
-from kite_auth import save_token
+from kite.auth import save_token
 
 api_key = os.environ.get('KITE_API_KEY')
 api_secret = os.environ.get('KITE_API_SECRET')

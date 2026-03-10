@@ -133,7 +133,7 @@ def connect_kite() -> KiteConnect:
 
     # Try database token first
     try:
-        from kite_auth import load_token
+        from kite.auth import load_token
         token = load_token()
         if token:
             kite.set_access_token(token)
@@ -203,7 +203,7 @@ def fetch_nifty_1min(kite: KiteConnect, from_date: date, to_date: date) -> List[
 
 def get_option_tokens(kite: KiteConnect) -> Dict[Tuple[int, str, str], int]:
     """Download NFO instruments and build (strike, type, expiry) -> token map."""
-    from kite_instruments import InstrumentMap
+    from kite.instruments import InstrumentMap
 
     api_key = os.environ.get("KITE_API_KEY", "")
     imap = InstrumentMap(api_key=api_key)

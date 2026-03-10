@@ -194,7 +194,7 @@ def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "
 
     # --- Primary: look up from instrument data ---
     try:
-        from kite_instruments import InstrumentMap
+        from kite.instruments import InstrumentMap
         imap = InstrumentMap._get_shared_instance()
         if imap and expiry_date:
             inst = imap.get_option_instrument(strike, option_type, expiry_date)

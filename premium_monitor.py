@@ -137,7 +137,7 @@ class PremiumMonitor:
         if self._running:
             return
 
-        from kite_auth import load_token
+        from kite.auth import load_token
         api_key = os.environ.get('KITE_API_KEY', '')
         access_token = load_token()
 

@@ -77,10 +77,10 @@ def mock_kite():
 @pytest.fixture
 def fetcher(mock_kite):
     """Create a KiteDataFetcher with mocked dependencies."""
-    from kite_data import KiteDataFetcher
+    from kite.data import KiteDataFetcher
     imap = _make_instrument_map()
-    with patch('kite_data.InstrumentMap', return_value=imap), \
-         patch('kite_data.load_token', return_value='test_token'):
+    with patch('kite.data.InstrumentMap', return_value=imap), \
+         patch('kite.data.load_token', return_value='test_token'):
         f = KiteDataFetcher.__new__(KiteDataFetcher)
         f._api_key = 'test_key'
         f._kite = mock_kite

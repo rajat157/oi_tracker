@@ -10,7 +10,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 
-from kite_data import KiteDataFetcher
+from kite.data import KiteDataFetcher
 from premium_monitor import PremiumMonitor, ActiveTrade
 from oi_analyzer import analyze_tug_of_war, calculate_market_trend
 from database import (

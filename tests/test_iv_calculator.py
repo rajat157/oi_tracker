@@ -1,7 +1,7 @@
 """Tests for Black-Scholes IV calculator."""
 
 import pytest
-from iv_calculator import black_scholes_price, implied_volatility, time_to_expiry_years
+from kite.iv import black_scholes_price, implied_volatility, time_to_expiry_years
 
 
 class TestBlackScholesPrice:

@@ -38,7 +38,7 @@ def mock_csv_response():
 @pytest.fixture
 def instrument_map(mock_csv_response):
     """Create an InstrumentMap with mocked CSV download."""
-    from kite_instruments import InstrumentMap
+    from kite.instruments import InstrumentMap
     with patch('kite_instruments.requests.get', return_value=mock_csv_response):
         imap = InstrumentMap(api_key="test_key", access_token="test_token")
         imap.refresh()
@@ -60,14 +60,14 @@ class TestRefresh:
 
     def test_refresh_returns_true(self, mock_csv_response):
         """Refresh should return True on success."""
-        from kite_instruments import InstrumentMap
+        from kite.instruments import InstrumentMap
         with patch('kite_instruments.requests.get', return_value=mock_csv_response):
             imap = InstrumentMap(api_key="test_key", access_token="test_token")
             assert imap.refresh() is True
 
     def test_refresh_failure_returns_false(self):
         """Refresh should return False on HTTP error."""
-        from kite_instruments import InstrumentMap
+        from kite.instruments import InstrumentMap
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = Exception("HTTP 500")
         with patch('kite_instruments.requests.get', return_value=mock_resp):
@@ -87,7 +87,7 @@ class TestGetCurrentExpiry:
 
     def test_returns_nearest_expiry(self):
         """Should return the nearest future weekly expiry."""
-        from kite_instruments import InstrumentMap
+        from kite.instruments import InstrumentMap
         from datetime import timedelta
         # Build CSV with two future expiries
         exp1 = (date.today() + timedelta(days=3)).isoformat()
@@ -160,7 +160,7 @@ class TestCacheSameDay:
 
     def test_cache_same_day(self, mock_csv_response):
         """Should not re-download on same day."""
-        from kite_instruments import InstrumentMap
+        from kite.instruments import InstrumentMap
         with patch('kite_instruments.requests.get', return_value=mock_csv_response) as mock_get:
             imap = InstrumentMap(api_key="test_key", access_token="test_token")
             imap.refresh()

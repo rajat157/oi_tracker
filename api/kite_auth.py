@@ -44,7 +44,7 @@ def kite_callback():
 
         if result.get("status") == "success":
             access_token = result["data"]["access_token"]
-            from kite_auth import save_token
+            from kite.auth import save_token
             save_token(access_token)
             return _success_page(access_token)
         else:
@@ -57,7 +57,7 @@ def kite_callback():
 @bp.route("/kite/status")
 def kite_status():
     """Check if Kite is authenticated for today."""
-    from kite_auth import load_token
+    from kite.auth import load_token
     token = load_token()
     return jsonify({
         "authenticated": bool(token),
@@ -72,7 +72,7 @@ def kite_save_token():
     token = data.get("token", "").strip()
     if not token:
         return jsonify({"error": "No token provided"}), 400
-    from kite_auth import save_token
+    from kite.auth import save_token
     save_token(token)
     return jsonify({"status": "success", "message": "Token saved"})
 

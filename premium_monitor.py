@@ -14,12 +14,6 @@ import threading
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Callable
 
-from database import get_active_trade_setup
-from selling_tracker import get_active_sell_setup
-from dessert_tracker import get_active_dessert
-from momentum_tracker import get_active_momentum
-from pa_tracker import get_active_pa
-from scalper_tracker import get_active_scalp
 from logger import get_logger
 
 log = get_logger("premium_monitor")
@@ -383,10 +377,16 @@ class PremiumMonitor:
             })
         return snapshots
 
-    def scan_existing_trades(self):
+    def scan_existing_trades(self, strategies: dict | None = None):
         """
         On startup, pick up ACTIVE trades from all tracker tables.
         Requires self._instrument_map to be set.
+
+        Parameters
+        ----------
+        strategies : dict | None
+            Mapping of name -> strategy instance (BaseTracker subclass).
+            When provided, iterates over strategies to find active trades.
         """
         if not self._instrument_map:
             log.warning("Cannot scan trades: no instrument map")
@@ -397,73 +397,28 @@ class PremiumMonitor:
             log.warning("Cannot scan trades: no current expiry")
             return
 
+        if not strategies:
+            log.warning("Cannot scan trades: no strategies provided")
+            return
+
         count = 0
-
-        # Iron Pulse (buying)
-        try:
-            setup = get_active_trade_setup()
-            if setup and setup.get('status') == 'ACTIVE':
-                trade = self._db_trade_to_active(setup, "iron_pulse", expiry, is_selling=False)
+        for name, strategy in strategies.items():
+            try:
+                setup = strategy.get_active()
+                if not setup:
+                    continue
+                # Iron Pulse uses PENDING->ACTIVE lifecycle; only monitor ACTIVE
+                if setup.get("status") not in ("ACTIVE",):
+                    continue
+                trade = self._db_trade_to_active(
+                    setup, strategy.tracker_type, expiry,
+                    is_selling=strategy.is_selling,
+                )
                 if trade:
                     self.register_trade(trade)
                     count += 1
-        except Exception as e:
-            log.error("Error scanning buying trades", error=str(e))
-
-        # Selling
-        try:
-            setup = get_active_sell_setup()
-            if setup:
-                trade = self._db_trade_to_active(setup, "selling", expiry, is_selling=True)
-                if trade:
-                    self.register_trade(trade)
-                    count += 1
-        except Exception as e:
-            log.error("Error scanning selling trades", error=str(e))
-
-        # Dessert
-        try:
-            setup = get_active_dessert()
-            if setup:
-                trade = self._db_trade_to_active(setup, "dessert", expiry, is_selling=False)
-                if trade:
-                    self.register_trade(trade)
-                    count += 1
-        except Exception as e:
-            log.error("Error scanning dessert trades", error=str(e))
-
-        # Momentum
-        try:
-            setup = get_active_momentum()
-            if setup:
-                trade = self._db_trade_to_active(setup, "momentum", expiry, is_selling=False)
-                if trade:
-                    self.register_trade(trade)
-                    count += 1
-        except Exception as e:
-            log.error("Error scanning momentum trades", error=str(e))
-
-        # Price Action (PA)
-        try:
-            setup = get_active_pa()
-            if setup:
-                trade = self._db_trade_to_active(setup, "pa", expiry, is_selling=False)
-                if trade:
-                    self.register_trade(trade)
-                    count += 1
-        except Exception as e:
-            log.error("Error scanning PA trades", error=str(e))
-
-        # Scalper
-        try:
-            setup = get_active_scalp()
-            if setup:
-                trade = self._db_trade_to_active(setup, "scalper", expiry, is_selling=False)
-                if trade:
-                    self.register_trade(trade)
-                    count += 1
-        except Exception as e:
-            log.error("Error scanning scalper trades", error=str(e))
+            except Exception as e:
+                log.error("Error scanning trades", strategy=name, error=str(e))
 
         log.info("Scanned existing trades", found=count)
 

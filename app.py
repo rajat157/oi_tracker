@@ -3,15 +3,17 @@ Flask Web Server for OI Tracker Dashboard
 Main entry point for the application
 """
 
-from flask import Flask, render_template, jsonify, request
+from flask import Flask
 from flask_socketio import SocketIO
 
+from api.dashboard import bp as dashboard_bp
+from api.market import bp as market_bp, _enrich_analysis
+from api.trades import bp as trades_bp
+from api.stats import bp as stats_bp
+from api.system import bp as system_bp
+from api.kite_auth import bp as kite_bp
+from database import get_latest_analysis
 from scheduler import OIScheduler
-from database import (
-    get_latest_analysis, get_analysis_history, get_latest_snapshot,
-    get_active_trade_setup, get_trade_setup_stats, get_trade_history,
-    get_logs
-)
 from logger import get_logger
 
 log = get_logger("app")
@@ -20,42 +22,13 @@ log = get_logger("app")
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "oi_tracker_secret_key"
 
-
-def _get_setup_with_pnl(setup: dict, strikes_data: dict) -> dict:
-    """Calculate live P/L for a trade setup."""
-    if not setup or not strikes_data:
-        return setup
-
-    strike = setup["strike"]
-    option_type = setup.get("option_type", "CE" if setup["direction"] == "BUY_CALL" else "PE")
-    strike_data = strikes_data.get(strike, {})
-    current_premium = strike_data.get(
-        "ce_ltp" if option_type == "CE" else "pe_ltp", 0
-    )
-
-    # Calculate live P/L
-    if setup["status"] == "ACTIVE" and setup.get("activation_premium"):
-        activation_premium = setup["activation_premium"]
-        live_pnl_pct = ((current_premium - activation_premium) / activation_premium) * 100 if activation_premium else 0
-        live_pnl_points = current_premium - activation_premium
-    elif setup["status"] == "PENDING":
-        entry_premium = setup["entry_premium"]
-        live_pnl_pct = ((current_premium - entry_premium) / entry_premium) * 100 if entry_premium else 0
-        live_pnl_points = current_premium - entry_premium
-    else:
-        live_pnl_pct = 0
-        live_pnl_points = 0
-
-    return {
-        **setup,
-        "current_premium": round(current_premium, 2),
-        "live_pnl_pct": round(live_pnl_pct, 2),
-        "live_pnl_points": round(live_pnl_points, 2),
-        # Map database field names to frontend expected names
-        "support_ref": setup.get("support_at_creation"),
-        "resistance_ref": setup.get("resistance_at_creation"),
-        "max_pain": setup.get("max_pain_at_creation"),
-    }
+# Register API blueprints
+app.register_blueprint(dashboard_bp)
+app.register_blueprint(market_bp)
+app.register_blueprint(trades_bp)
+app.register_blueprint(stats_bp)
+app.register_blueprint(system_bp)
+app.register_blueprint(kite_bp)
 
 # Initialize SocketIO with threading (more reliable on Windows)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
@@ -63,439 +36,19 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 # Initialize scheduler with socketio for real-time updates
 oi_scheduler = OIScheduler(socketio=socketio)
 
+# Store scheduler in app config for blueprint access
+app.config["oi_scheduler"] = oi_scheduler
 
-@app.route("/")
-def dashboard():
-    """Render the main dashboard page."""
-    return render_template("dashboard.html")
 
-
-@app.route("/api/latest")
-def api_latest():
-    """Get the latest OI analysis from database (single source of truth)."""
-    # ALWAYS fetch from database - single source of truth
-    analysis = get_latest_analysis()
-
-    if analysis:
-        # Static self_learning status (self-learner removed - using fixed strategy params)
-        analysis["self_learning"] = {
-            "should_trade": True,
-            "is_paused": False,
-            "ema_accuracy": 0,
-            "consecutive_errors": 0,
-            "is_stale": False
-        }
-
-        # Add live trade tracker data (needs current snapshot for live P/L)
-        snapshot = get_latest_snapshot()
-        if snapshot and snapshot.get("strikes"):
-            active_setup = get_active_trade_setup()
-            if active_setup:
-                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
-            else:
-                analysis["active_trade"] = None
-            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
-        else:
-            analysis["active_trade"] = None
-            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
-
-        # Add sell trade data
-        try:
-            from selling_tracker import get_active_sell_setup
-            active_sell = get_active_sell_setup()
-            if active_sell and snapshot and snapshot.get("strikes"):
-                strike_d = snapshot["strikes"].get(active_sell["strike"], {})
-                opt = active_sell["option_type"]
-                cur_prem = strike_d.get("ce_ltp" if opt == "CE" else "pe_ltp", 0)
-                if cur_prem and cur_prem > 0:
-                    sell_pnl = ((active_sell["entry_premium"] - cur_prem) / active_sell["entry_premium"]) * 100
-                    active_sell["current_premium"] = cur_prem
-                    active_sell["current_pnl"] = sell_pnl
-            analysis["active_sell_trade"] = active_sell
-        except Exception:
-            analysis["active_sell_trade"] = None
-
-        # Add dessert trade data
-        try:
-            from dessert_tracker import get_active_dessert, DessertTracker
-            active_dessert = get_active_dessert()
-            if active_dessert and snapshot and snapshot.get("strikes"):
-                strike_d = snapshot["strikes"].get(active_dessert["strike"], {})
-                cur_prem = strike_d.get("pe_ltp", 0)
-                if cur_prem and cur_prem > 0:
-                    d_pnl = ((cur_prem - active_dessert["entry_premium"]) / active_dessert["entry_premium"]) * 100
-                    active_dessert["current_premium"] = cur_prem
-                    active_dessert["current_pnl"] = d_pnl
-            analysis["active_dessert_trade"] = active_dessert
-            analysis["dessert_stats"] = DessertTracker().get_dessert_stats()
-        except Exception:
-            analysis["active_dessert_trade"] = None
-            analysis["dessert_stats"] = {}
-
-        # Add momentum trade data
-        try:
-            from momentum_tracker import get_active_momentum, MomentumTracker
-            active_momentum = get_active_momentum()
-            if active_momentum and snapshot and snapshot.get("strikes"):
-                strike_m = snapshot["strikes"].get(active_momentum["strike"], {})
-                key = "pe_ltp" if active_momentum["option_type"] == "PE" else "ce_ltp"
-                cur_prem = strike_m.get(key, 0)
-                if cur_prem and cur_prem > 0:
-                    m_pnl = ((cur_prem - active_momentum["entry_premium"]) / active_momentum["entry_premium"]) * 100
-                    active_momentum["current_premium"] = cur_prem
-                    active_momentum["current_pnl"] = m_pnl
-            analysis["active_momentum_trade"] = active_momentum
-            analysis["momentum_stats"] = MomentumTracker().get_momentum_stats()
-        except Exception:
-            analysis["active_momentum_trade"] = None
-            analysis["momentum_stats"] = {}
-
-        # Add PA trade data
-        try:
-            from pa_tracker import get_active_pa, PulseRiderTracker
-            active_pa = get_active_pa()
-            if active_pa and snapshot and snapshot.get("strikes"):
-                strike_pa = snapshot["strikes"].get(active_pa["strike"], {})
-                key = "pe_ltp" if active_pa["option_type"] == "PE" else "ce_ltp"
-                cur_prem = strike_pa.get(key, 0)
-                if cur_prem and cur_prem > 0:
-                    pa_pnl = ((cur_prem - active_pa["entry_premium"]) / active_pa["entry_premium"]) * 100
-                    active_pa["current_premium"] = cur_prem
-                    active_pa["current_pnl"] = pa_pnl
-            analysis["active_pa_trade"] = active_pa
-            analysis["pa_stats"] = PulseRiderTracker().get_pa_stats()
-        except Exception:
-            analysis["active_pa_trade"] = None
-            analysis["pa_stats"] = {}
-
-        # Add V-shape status
-        try:
-            from v_shape_detector import get_v_shape_status
-            analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
-        except Exception:
-            analysis["v_shape_status"] = {"signal_level": "NONE"}
-
-        # Add chart history for frontend sync (last 30 data points, today only)
-        from datetime import date as date_cls
-        today_str = date_cls.today().strftime("%Y-%m-%d")
-        analysis["chart_history"] = get_analysis_history(limit=30, date=today_str)
-
-        return jsonify(analysis)
-
-    return jsonify({"error": "No data available yet"}), 404
-
-
-@app.route("/api/history")
-def api_history():
-    """Get historical analysis data for charts."""
-    from flask import request as flask_request
-    date = flask_request.args.get("date")
-    if not date:
-        from datetime import date as date_cls
-        date = date_cls.today().strftime("%Y-%m-%d")
-    history = get_analysis_history(limit=200, date=date)
-    return jsonify(history)
-
-
-@app.route("/api/refresh")
-def api_refresh():
-    """Manually trigger a data refresh."""
-    try:
-        oi_scheduler.trigger_now()
-        return jsonify({"status": "success", "message": "Refresh triggered"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-
-@app.route("/api/market-status")
-def api_market_status():
-    """Get current market status."""
-    return jsonify(oi_scheduler.get_market_status())
-
-
-@app.route("/api/learning-report")
-def api_learning_report():
-    """Self-learning system removed - returns static response."""
-    return jsonify({"status": "disabled", "message": "Self-learner removed - using fixed strategy params"})
-
-
-@app.route("/api/learning-status")
-def api_learning_status():
-    """Self-learning system removed - returns static response."""
-    return jsonify({"status": "disabled", "message": "Self-learner removed - using fixed strategy params"})
-
-
-@app.route("/trades")
-def trades_page():
-    """Render the trade history page."""
-    return render_template("trades.html")
-
-
-@app.route("/api/trades")
-def api_trades():
-    """
-    Get historical trades with pagination and filters.
-
-    Query params:
-        limit: Number of trades to return (default 50)
-        offset: Number of trades to skip (default 0)
-        days: Number of days to look back (default 30)
-        status: Filter by status (WON, LOST, EXPIRED, CANCELLED)
-        direction: Filter by direction (BUY_CALL, BUY_PUT)
-    """
-    limit = request.args.get("limit", 50, type=int)
-    offset = request.args.get("offset", 0, type=int)
-    days = request.args.get("days", 30, type=int)
-    status = request.args.get("status")
-    direction = request.args.get("direction")
-
-    trades = get_trade_history(
-        limit=limit,
-        offset=offset,
-        days=days,
-        status_filter=status,
-        direction_filter=direction
-    )
-
-    return jsonify({
-        "trades": trades,
-        "has_more": len(trades) == limit,
-        "offset": offset,
-        "limit": limit
-    })
-
-
-@app.route("/api/sell-trades")
-def api_sell_trades():
-    """Get selling trade history."""
-    from selling_tracker import get_connection
-    days = request.args.get("days", 30, type=int)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM sell_trade_setups
-            WHERE created_at >= datetime('now', ?)
-            ORDER BY created_at DESC
-        """, (f"-{days} days",))
-        trades = [dict(r) for r in cursor.fetchall()]
-    return jsonify({"trades": trades})
-
-
-@app.route("/api/sell-stats")
-def api_sell_stats():
-    """Get selling trade statistics."""
-    from selling_tracker import SellingTracker
-    tracker = SellingTracker()
-    return jsonify(tracker.get_sell_stats())
-
-
-@app.route("/api/dessert-trades")
-def api_dessert_trades():
-    """Get dessert trade history."""
-    from database import get_connection
-    days = request.args.get("days", 30, type=int)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM dessert_trades
-            WHERE created_at >= datetime('now', ?)
-            ORDER BY created_at DESC
-        """, (f"-{days} days",))
-        trades = [dict(r) for r in cursor.fetchall()]
-    return jsonify({"trades": trades})
-
-
-@app.route("/api/dessert-stats")
-def api_dessert_stats():
-    """Get dessert trade statistics."""
-    from dessert_tracker import DessertTracker
-    tracker = DessertTracker()
-    return jsonify(tracker.get_dessert_stats())
-
-
-@app.route("/api/momentum-trades")
-def api_momentum_trades():
-    """Get momentum trade history."""
-    from database import get_connection
-    days = request.args.get("days", 30, type=int)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM momentum_trades
-            WHERE created_at >= datetime('now', ?)
-            ORDER BY created_at DESC
-        """, (f"-{days} days",))
-        trades = [dict(r) for r in cursor.fetchall()]
-    return jsonify({"trades": trades})
-
-
-@app.route("/api/momentum-stats")
-def api_momentum_stats():
-    """Get momentum trade statistics."""
-    from momentum_tracker import MomentumTracker
-    tracker = MomentumTracker()
-    return jsonify(tracker.get_momentum_stats())
-
-
-@app.route("/api/pa-trades")
-def api_pa_trades():
-    """Get PA trade history."""
-    from database import get_connection
-    days = request.args.get("days", 30, type=int)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM pa_trades
-            WHERE created_at >= datetime('now', ?)
-            ORDER BY created_at DESC
-        """, (f"-{days} days",))
-        trades = [dict(r) for r in cursor.fetchall()]
-    return jsonify({"trades": trades})
-
-
-@app.route("/api/pa-stats")
-def api_pa_stats():
-    """Get PA trade statistics."""
-    from pa_tracker import PulseRiderTracker
-    tracker = PulseRiderTracker()
-    return jsonify(tracker.get_pa_stats())
-
-
-@app.route("/api/scalp-trades")
-def api_scalp_trades():
-    """Get scalp trade history."""
-    from database import get_connection
-    days = request.args.get("days", 30, type=int)
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM scalp_trades
-            WHERE created_at >= datetime('now', ?)
-            ORDER BY created_at DESC
-        """, (f"-{days} days",))
-        trades = [dict(r) for r in cursor.fetchall()]
-    return jsonify({"trades": trades})
-
-
-@app.route("/api/scalp-stats")
-def api_scalp_stats():
-    """Get scalp trade statistics."""
-    from scalper_tracker import ScalperTracker
-    tracker = ScalperTracker()
-    return jsonify(tracker.get_scalp_stats())
-
-
-@app.route("/api/v-shape-signals")
-def api_v_shape_signals():
-    """Get V-shape recovery signals history."""
-    from v_shape_detector import get_v_shape_signals
-    days = request.args.get("days", 30, type=int)
-    return jsonify({"signals": get_v_shape_signals(days=days)})
-
-
-@app.route("/api/v-shape-stats")
-def api_v_shape_stats():
-    """Get V-shape recovery statistics."""
-    from v_shape_detector import get_v_shape_stats
-    return jsonify(get_v_shape_stats())
-
-
-@app.route("/api/prediction-tree")
-def api_prediction_tree():
-    """Get current prediction tree state."""
-    from prediction_engine import get_prediction_state
-    state = get_prediction_state()
-    return jsonify(state or {})
-
-
-@app.route("/api/prediction-stats")
-def api_prediction_stats():
-    """Get prediction accuracy stats."""
-    from prediction_engine import PredictionEngine
-    engine = PredictionEngine()
-    return jsonify(engine.get_prediction_stats())
-
-
-@app.route("/api/logs")
-def api_logs():
-    """
-    Get system logs with filtering.
-
-    Query params:
-        level: Filter by log level (DEBUG, INFO, WARNING, ERROR)
-        component: Filter by component name
-        hours: Hours to look back (default 24)
-        limit: Max records to return (default 100)
-    """
-    level = request.args.get("level")
-    component = request.args.get("component")
-    hours = request.args.get("hours", 24, type=int)
-    limit = request.args.get("limit", 100, type=int)
-
-    logs_list, total = get_logs(
-        level=level,
-        component=component,
-        hours=hours,
-        limit=limit
-    )
-
-    filters_applied = {}
-    if level:
-        filters_applied["level"] = level
-    if component:
-        filters_applied["component"] = component
-    filters_applied["hours"] = hours
-
-    return jsonify({
-        "logs": logs_list,
-        "total": total,
-        "filters_applied": filters_applied
-    })
-
+# ===== SocketIO Handlers (must stay in app.py) =====
 
 @socketio.on("connect")
 def handle_connect():
-    """Handle client connection."""
+    """Handle client connection — send latest enriched analysis."""
     log.info("Client connected")
-    # Send latest data from database (single source of truth)
     analysis = get_latest_analysis()
-
     if analysis:
-        # Static self_learning status (self-learner removed)
-        analysis["self_learning"] = {
-            "should_trade": True,
-            "is_paused": False,
-            "ema_accuracy": 0,
-            "consecutive_errors": 0,
-            "is_stale": False
-        }
-
-        # Add live trade tracker data
-        snapshot = get_latest_snapshot()
-        if snapshot and snapshot.get("strikes"):
-            active_setup = get_active_trade_setup()
-            if active_setup:
-                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
-            else:
-                analysis["active_trade"] = None
-            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
-        else:
-            analysis["active_trade"] = None
-            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
-
-        # Add V-shape status
-        try:
-            from v_shape_detector import get_v_shape_status
-            analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
-        except Exception:
-            analysis["v_shape_status"] = {"signal_level": "NONE"}
-
-        # Add chart history for frontend sync (today only)
-        from datetime import date as date_cls
-        today_str = date_cls.today().strftime("%Y-%m-%d")
-        analysis["chart_history"] = get_analysis_history(limit=30, date=today_str)
-
-        socketio.emit("oi_update", analysis)
+        socketio.emit("oi_update", _enrich_analysis(analysis))
 
 
 @socketio.on("disconnect")
@@ -513,48 +66,11 @@ def handle_refresh_request():
 
 @socketio.on("request_latest")
 def handle_request_latest():
-    """Handle request for latest analysis from client (uses database as single source of truth)."""
+    """Handle request for latest analysis from client."""
     from flask_socketio import emit
-
-    # ALWAYS fetch from database - single source of truth
     analysis = get_latest_analysis()
-
     if analysis:
-        # Static self_learning status (self-learner removed)
-        analysis["self_learning"] = {
-            "should_trade": True,
-            "is_paused": False,
-            "ema_accuracy": 0,
-            "consecutive_errors": 0,
-            "is_stale": False
-        }
-
-        # Add live trade tracker data (needs current snapshot for live P/L)
-        snapshot = get_latest_snapshot()
-        if snapshot and snapshot.get("strikes"):
-            active_setup = get_active_trade_setup()
-            if active_setup:
-                analysis["active_trade"] = _get_setup_with_pnl(active_setup, snapshot["strikes"])
-            else:
-                analysis["active_trade"] = None
-            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
-        else:
-            analysis["active_trade"] = None
-            analysis["trade_stats"] = get_trade_setup_stats(lookback_days=30)
-
-        # Add V-shape status
-        try:
-            from v_shape_detector import get_v_shape_status
-            analysis["v_shape_status"] = get_v_shape_status() or {"signal_level": "NONE"}
-        except Exception:
-            analysis["v_shape_status"] = {"signal_level": "NONE"}
-
-        # Add chart history for frontend sync (last 30 data points, today only)
-        from datetime import date as date_cls
-        today_str = date_cls.today().strftime("%Y-%m-%d")
-        analysis["chart_history"] = get_analysis_history(limit=30, date=today_str)
-
-        emit("oi_update", analysis)
+        emit("oi_update", _enrich_analysis(analysis))
 
 
 @socketio.on("set_force_fetch")
@@ -563,107 +79,6 @@ def handle_set_force_fetch(data):
     enabled = data.get("enabled", False)
     oi_scheduler.set_force_enabled(enabled)
     log.info("Force auto-fetch toggled", enabled=enabled)
-
-
-# ===== KITE AUTH ROUTES =====
-
-@app.route('/kite/login')
-def kite_login():
-    """Redirect to Kite login page."""
-    import os
-    api_key = os.environ.get('KITE_API_KEY', '')
-    if not api_key:
-        return jsonify({"error": "KITE_API_KEY not configured"}), 400
-    login_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={api_key}"
-    from flask import redirect
-    return redirect(login_url)
-
-
-@app.route('/kite/callback')
-def kite_callback():
-    """Capture request_token from Kite redirect and exchange for access_token."""
-    import os, hashlib, requests as req
-    
-    request_token = request.args.get('request_token', '')
-    if not request_token:
-        return """<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
-        <h1 style="color:red;">Login Failed</h1>
-        <p>No request token received from Kite.</p>
-        <a href="/kite/login">Try Again</a>
-        </body></html>"""
-    
-    api_key = os.environ.get('KITE_API_KEY', '')
-    api_secret = os.environ.get('KITE_API_SECRET', '')
-    
-    if not api_secret:
-        # Show manual token entry
-        return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
-        <h1 style="color:orange;">API Secret Missing</h1>
-        <p>Add KITE_API_SECRET to .env and restart.</p>
-        <p>Request token: <code>{request_token}</code></p>
-        </body></html>"""
-    
-    # Exchange request_token for access_token
-    checksum = hashlib.sha256(f"{api_key}{request_token}{api_secret}".encode()).hexdigest()
-    
-    try:
-        resp = req.post("https://api.kite.trade/session/token", data={
-            'api_key': api_key,
-            'request_token': request_token,
-            'checksum': checksum
-        }, timeout=10)
-        result = resp.json()
-        
-        if result.get('status') == 'success':
-            access_token = result['data']['access_token']
-            
-            # Save token
-            from kite_auth import save_token
-            save_token(access_token)
-            
-            return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
-            <h1 style="color:green;">Login Successful!</h1>
-            <p>Access token saved. Iron Pulse can now place orders automatically.</p>
-            <p>Token: <code>{access_token[:10]}...</code></p>
-            <p><a href="/">Back to Dashboard</a></p>
-            <script>setTimeout(function(){{ window.close(); }}, 3000);</script>
-            </body></html>"""
-        else:
-            return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
-            <h1 style="color:red;">Token Exchange Failed</h1>
-            <p>{result.get('message', 'Unknown error')}</p>
-            <a href="/kite/login">Try Again</a>
-            </body></html>"""
-    except Exception as e:
-        return f"""<html><body style="font-family:sans-serif;text-align:center;padding:50px;">
-        <h1 style="color:red;">Error</h1>
-        <p>{str(e)}</p>
-        <a href="/kite/login">Try Again</a>
-        </body></html>"""
-
-
-@app.route('/kite/status')
-def kite_status():
-    """Check if Kite is authenticated for today."""
-    from kite_auth import load_token
-    token = load_token()
-    return jsonify({
-        "authenticated": bool(token),
-        "token_preview": f"{token[:10]}..." if token else None
-    })
-
-
-@app.route('/kite/save-token', methods=['POST'])
-def kite_save_token():
-    """Manually save an access token (fallback)."""
-    data = request.get_json()
-    token = data.get('token', '').strip()
-    if not token:
-        return jsonify({"error": "No token provided"}), 400
-    
-    from kite_auth import save_token
-    save_token(token)
-    return jsonify({"status": "success", "message": "Token saved"})
 
 
 def start_app(debug: bool = False, port: int = 5000):

@@ -294,25 +294,9 @@ class TestGTTPolling:
 class TestScanExistingTrades:
     """Test startup scan for active trades."""
 
-    @patch('premium_monitor.get_active_trade_setup')
-    @patch('premium_monitor.get_active_sell_setup')
-    @patch('premium_monitor.get_active_dessert')
-    @patch('premium_monitor.get_active_momentum')
-    def test_scan_existing_active_trades(self, mock_momentum, mock_dessert,
-                                          mock_sell, mock_buying):
-        """On startup, should pick up ACTIVE trades from all trackers."""
+    def test_scan_existing_active_trades(self):
+        """On startup, should pick up ACTIVE trades from all strategy trackers."""
         from premium_monitor import PremiumMonitor
-
-        # Mock an active buying trade
-        mock_buying.return_value = {
-            'id': 1, 'status': 'ACTIVE',
-            'strike': 23000, 'option_type': 'CE',
-            'entry_premium': 100.0, 'sl_premium': 80.0,
-            'target1_premium': 122.0, 'target2_premium': None,
-        }
-        mock_sell.return_value = None
-        mock_dessert.return_value = None
-        mock_momentum.return_value = None
 
         monitor = PremiumMonitor(shadow_mode=True)
 
@@ -322,9 +306,26 @@ class TestScanExistingTrades:
         mock_inst = {'instrument_token': 5000, 'tradingsymbol': 'NIFTY2622723000CE'}
         monitor._instrument_map.get_option_instrument.return_value = mock_inst
 
-        monitor.scan_existing_trades()
+        # Build a mock strategies dict with one active trade
+        mock_ip = MagicMock()
+        mock_ip.tracker_type = "iron_pulse"
+        mock_ip.is_selling = False
+        mock_ip.get_active.return_value = {
+            'id': 1, 'status': 'ACTIVE',
+            'strike': 23000, 'option_type': 'CE',
+            'entry_premium': 100.0, 'sl_premium': 80.0,
+            'target1_premium': 122.0, 'target2_premium': None,
+        }
 
-        # Should have registered the trade
+        mock_sell = MagicMock()
+        mock_sell.tracker_type = "selling"
+        mock_sell.is_selling = True
+        mock_sell.get_active.return_value = None
+
+        strategies = {"iron_pulse": mock_ip, "selling": mock_sell}
+        monitor.scan_existing_trades(strategies)
+
+        # Should have registered the iron_pulse trade
         assert 5000 in monitor._token_to_trades
 
 

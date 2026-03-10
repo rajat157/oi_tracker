@@ -118,7 +118,8 @@ class BaseTracker(ABC):
         return strike_data.get(key)
 
     def force_exit(self, trade_id: int, exit_premium: float,
-                   reason: str, pnl_pct: float) -> None:
+                   reason: str, pnl_pct: float,
+                   alert_message: str | None = None) -> None:
         """Force-exit a trade (used by PremiumMonitor WebSocket exits).
 
         Updates the DB row and publishes TRADE_EXITED.
@@ -136,13 +137,16 @@ class BaseTracker(ABC):
             exit_reason=reason,
             profit_loss_pct=round(pnl_pct, 2),
         )
-        self._publish(EventType.TRADE_EXITED, {
+        event_data = {
             "trade_id": trade_id,
             "action": status,
             "pnl": round(pnl_pct, 2),
             "reason": reason,
             "exit_premium": exit_premium,
-        })
+        }
+        if alert_message:
+            event_data["alert_message"] = alert_message
+        self._publish(EventType.TRADE_EXITED, event_data)
         logger.info("force_exit: %s trade %d %s (%.2f%%) — %s",
                      self.tracker_type, trade_id, status, pnl_pct, reason)
 

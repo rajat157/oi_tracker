@@ -20,14 +20,15 @@ from database import (
     save_orderflow_depth, purge_old_orderflow,
     get_previous_smoothed_score
 )
-from trade_tracker import get_trade_tracker
-from selling_tracker import SellingTracker, get_active_sell_setup
-from dessert_tracker import DessertTracker, get_active_dessert
-from momentum_tracker import MomentumTracker, get_active_momentum
-from pa_tracker import PulseRiderTracker, get_active_pa
-from scalper_tracker import ScalperTracker, get_active_scalp
+from db.trade_repo import TradeRepository
+from strategies.iron_pulse import IronPulseStrategy
+from strategies.selling import SellingStrategy
+from strategies.dessert import DessertStrategy
+from strategies.momentum import MomentumStrategy
+from strategies.pulse_rider import PulseRiderStrategy
+from strategies.scalper import ScalperStrategy
+from alerts.broker import AlertBroker
 from v_shape_detector import VShapeDetector
-from database import get_active_trade_setup
 from pattern_tracker import check_patterns, log_failed_entry
 from prediction_engine import PredictionEngine
 from logger import get_logger
@@ -58,12 +59,19 @@ class OIScheduler:
         self.is_running = False
         self.last_purge_date = None
         self.last_learning_date = None
-        self.trade_tracker = get_trade_tracker()
-        self.selling_tracker = SellingTracker()
-        self.dessert_tracker = DessertTracker()
-        self.momentum_tracker = MomentumTracker()
-        self.pa_tracker = PulseRiderTracker()
-        self.scalper_tracker = ScalperTracker()
+        repo = TradeRepository()
+        self.strategies = {
+            "iron_pulse": IronPulseStrategy(
+                trade_repo=repo,
+                price_trend_fn=lambda m: get_recent_price_trend(lookback_minutes=m),
+            ),
+            "selling": SellingStrategy(trade_repo=repo),
+            "dessert": DessertStrategy(trade_repo=repo),
+            "momentum": MomentumStrategy(trade_repo=repo),
+            "pulse_rider": PulseRiderStrategy(trade_repo=repo),
+            "scalper": ScalperStrategy(trade_repo=repo),
+        }
+        self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
         self.prediction_engine = PredictionEngine()
         self.force_enabled = False
@@ -78,31 +86,32 @@ class OIScheduler:
         """Enable/disable force fetch mode for automatic polling."""
         self.force_enabled = enabled
 
-    def _register_trade_with_monitor(self, tracker_type: str, get_active_fn, is_selling: bool = False):
+    def _register_trade_with_monitor(self, strategy):
         """Register a newly created/activated trade with the WebSocket premium monitor."""
         try:
-            setup = get_active_fn()
+            setup = strategy.get_active()
             if not setup:
-                log.warning("WS registration skipped: no active trade found", tracker=tracker_type)
+                log.warning("WS registration skipped: no active trade found", tracker=strategy.tracker_type)
                 return
             if not self.premium_monitor._instrument_map:
-                log.warning("WS registration skipped: no instrument map", tracker=tracker_type)
+                log.warning("WS registration skipped: no instrument map", tracker=strategy.tracker_type)
                 return
             expiry = self.premium_monitor._instrument_map.get_current_expiry()
             if not expiry:
-                log.warning("WS registration skipped: no current expiry", tracker=tracker_type)
+                log.warning("WS registration skipped: no current expiry", tracker=strategy.tracker_type)
                 return
-            trade_obj = self.premium_monitor._db_trade_to_active(setup, tracker_type, expiry, is_selling=is_selling)
+            trade_obj = self.premium_monitor._db_trade_to_active(
+                setup, strategy.tracker_type, expiry, is_selling=strategy.is_selling)
             if not trade_obj:
                 log.warning("WS registration skipped: instrument token not found",
-                            tracker=tracker_type, strike=setup.get('strike'), type=setup.get('option_type'))
+                            tracker=strategy.tracker_type, strike=setup.get('strike'), type=setup.get('option_type'))
                 return
             self.premium_monitor.register_trade(trade_obj)
             log.info("Trade registered with WebSocket monitor",
-                     tracker=tracker_type, trade_id=setup['id'],
+                     tracker=strategy.tracker_type, trade_id=setup['id'],
                      strike=setup.get('strike'), type=setup.get('option_type'))
         except Exception as e:
-            log.error("WS registration failed", tracker=tracker_type, error=str(e))
+            log.error("WS registration failed", tracker=strategy.tracker_type, error=str(e))
 
     def is_market_open(self) -> bool:
         """Check if the market is currently open."""
@@ -319,37 +328,39 @@ class OIScheduler:
                 log.error("V-shape detector error", error=str(e))
                 analysis["v_shape"] = None
 
-            # Trade Tracker: manage persistent trade setups
+            # ===== IRON PULSE (bread & butter 1:1 RR buying) =====
+            ip = self.strategies["iron_pulse"]
             # 1. Check and update existing setup status (activation/resolution)
-            trade_update = self.trade_tracker.check_and_update_setup(strikes_data, timestamp)
+            trade_update = ip.check_and_update(strikes_data, timestamp=timestamp)
             if trade_update:
                 log.info("Trade setup updated", setup_id=trade_update['setup_id'],
                          prev_status=trade_update['previous_status'], new_status=trade_update['new_status'])
                 # Register with WebSocket when trade becomes ACTIVE
                 if trade_update.get('new_status') == 'ACTIVE':
-                    self._register_trade_with_monitor("iron_pulse", get_active_trade_setup)
+                    self._register_trade_with_monitor(ip)
                 elif trade_update.get('new_status') in ('WON', 'LOST'):
                     log.warning("Exit detected by 3-min poll, not WebSocket",
                                 tracker="iron_pulse", action=trade_update['new_status'])
 
             # 2. Cancel PENDING setup if OI direction flipped
-            self.trade_tracker.cancel_on_direction_change(analysis["verdict"], timestamp)
+            ip.cancel_on_direction_change(analysis)
 
             # 3. Expire PENDING setups at market close
-            self.trade_tracker.expire_pending_setups(timestamp)
+            ip.expire_pending(timestamp)
 
             # 4. Force close ACTIVE trades at market close (3:20 PM)
-            self.trade_tracker.force_close_active_trades(timestamp, strikes_data)
+            ip.force_close(timestamp, strikes_data)
 
             # 5. Create new setup if conditions met (pass price_history for timing checks)
-            if self.trade_tracker.should_create_new_setup(analysis, price_history):
-                self.trade_tracker.create_setup(analysis, timestamp)
+            if ip.should_create(analysis, price_history=price_history):
+                ip.create_trade(True, analysis, {}, timestamp=timestamp)
                 self.last_iron_pulse_time = timestamp  # Track for selling decoupling
 
-            # ===== SELLING TRACKER =====
+            # ===== SELLING (dual T1/T2 option selling) =====
+            sell = self.strategies["selling"]
             try:
                 # Check/update active selling trade
-                sell_update = self.selling_tracker.check_and_update_sell_setup(strikes_data)
+                sell_update = sell.check_and_update(strikes_data)
                 if sell_update:
                     log.info("Sell trade updated", action=sell_update['action'],
                              pnl=f"{sell_update['pnl']:.2f}%", reason=sell_update['reason'])
@@ -371,17 +382,18 @@ class OIScheduler:
                                  reason="decoupling")
 
                 # Create new selling setup if conditions met (and not deferred)
-                if not selling_deferred and self.selling_tracker.should_create_sell_setup(analysis):
-                    sell_id = self.selling_tracker.create_sell_setup(analysis, strikes_data)
+                if not selling_deferred and sell.should_create(analysis):
+                    sell_id = sell.create_trade(True, analysis, strikes_data)
                     if sell_id:
-                        self._register_trade_with_monitor("selling", get_active_sell_setup, is_selling=True)
+                        self._register_trade_with_monitor(sell)
             except Exception as e:
                 log.error("Error in selling tracker", error=str(e))
 
-            # ===== DESSERT TRACKER (1:2 RR strategies) =====
+            # ===== DESSERT (1:2 RR strategies) =====
+            dessert = self.strategies["dessert"]
             try:
                 # Check/update active dessert trade
-                dessert_update = self.dessert_tracker.check_and_update_dessert(strikes_data)
+                dessert_update = dessert.check_and_update(strikes_data)
                 if dessert_update:
                     log.info("Dessert trade updated",
                              strategy=dessert_update.get('strategy'),
@@ -394,18 +406,19 @@ class OIScheduler:
                                     reason=dessert_update['reason'])
 
                 # Create new dessert trade if conditions met
-                strategy = self.dessert_tracker.should_create_dessert(analysis)
-                if strategy:
-                    dessert_id = self.dessert_tracker.create_dessert_trade(strategy, analysis, strikes_data)
+                dessert_signal = dessert.evaluate(analysis)
+                if dessert_signal:
+                    dessert_id = dessert.create_trade(dessert_signal, analysis, strikes_data)
                     if dessert_id:
-                        self._register_trade_with_monitor("dessert", get_active_dessert)
+                        self._register_trade_with_monitor(dessert)
             except Exception as e:
                 log.error("Error in dessert tracker", error=str(e))
 
-            # ===== MOMENTUM TRACKER (1:2 RR trend-following) =====
+            # ===== MOMENTUM (1:2 RR trend-following) =====
+            mom = self.strategies["momentum"]
             try:
                 # Check/update active momentum trade
-                momentum_update = self.momentum_tracker.check_and_update_momentum(strikes_data)
+                momentum_update = mom.check_and_update(strikes_data)
                 if momentum_update:
                     log.info("Momentum trade updated",
                              action=momentum_update['action'],
@@ -417,18 +430,19 @@ class OIScheduler:
                                     reason=momentum_update['reason'])
 
                 # Create new momentum trade if conditions met
-                direction = self.momentum_tracker.should_create_momentum(analysis)
+                direction = mom.evaluate(analysis)
                 if direction:
-                    mom_id = self.momentum_tracker.create_momentum_trade(direction, analysis, strikes_data)
+                    mom_id = mom.create_trade(direction, analysis, strikes_data)
                     if mom_id:
-                        self._register_trade_with_monitor("momentum", get_active_momentum)
+                        self._register_trade_with_monitor(mom)
             except Exception as e:
                 log.error("Error in momentum tracker", error=str(e))
 
-            # ===== PRICE ACTION TRACKER (CHC-3 premium momentum) =====
+            # ===== PULSE RIDER (CHC-3 premium momentum) =====
+            pr = self.strategies["pulse_rider"]
             try:
                 # Check/update active PA trade
-                pa_update = self.pa_tracker.check_and_update_trade(strikes_data, timestamp)
+                pa_update = pr.check_and_update(strikes_data)
                 if pa_update:
                     log.info("PA trade updated",
                              action=pa_update['action'],
@@ -436,22 +450,23 @@ class OIScheduler:
                              reason=pa_update['reason'])
                     if pa_update['action'] in ('WON', 'LOST'):
                         log.warning("Exit detected by 3-min poll, not WebSocket",
-                                    tracker="pa", action=pa_update['action'],
+                                    tracker="pulse_rider", action=pa_update['action'],
                                     reason=pa_update['reason'])
 
                 # Create new PA trade if conditions met
-                pa_side = self.pa_tracker.should_create_trade(analysis, strikes_data)
+                pa_side = pr.evaluate(analysis, strikes_data)
                 if pa_side:
-                    pa_trade_id = self.pa_tracker.create_trade(pa_side, analysis, strikes_data)
+                    pa_trade_id = pr.create_trade(pa_side, analysis, strikes_data)
                     if pa_trade_id:
-                        self._register_trade_with_monitor("pa", get_active_pa)
+                        self._register_trade_with_monitor(pr)
             except Exception as e:
                 log.error("Error in PA tracker", error=str(e))
 
             # ===== SCALPER AGENT (Claude-powered premium chart analysis) =====
+            scalper = self.strategies["scalper"]
             try:
                 # Check/update active scalp trade
-                scalp_update = self.scalper_tracker.check_and_update_scalp(strikes_data)
+                scalp_update = scalper.check_and_update(strikes_data)
                 if scalp_update:
                     log.info("Scalp trade updated",
                              action=scalp_update['action'],
@@ -463,26 +478,23 @@ class OIScheduler:
                                     reason=scalp_update['reason'])
 
                 # Evaluate new scalp opportunity via Claude agent
-                if self.scalper_tracker.should_create_scalp(analysis):
-                    signal = self.scalper_tracker.get_agent_signal(analysis, strikes_data)
+                if scalper.should_create(analysis):
+                    signal = scalper.get_agent_signal(analysis, strikes_data)
                     if signal:
-                        scalp_id = self.scalper_tracker.create_scalp_trade(signal, analysis)
+                        scalp_id = scalper.create_trade(signal, analysis, strikes_data)
                         if scalp_id:
-                            self._register_trade_with_monitor("scalper", get_active_scalp)
+                            self._register_trade_with_monitor(scalper)
             except Exception as e:
                 log.error("Error in scalper agent", error=str(e))
 
             # 6. Add trade tracker data to analysis for dashboard
-            tracker_data = self.trade_tracker.get_stats()
-            active_setup_with_pnl = self.trade_tracker.get_active_setup_with_pnl(strikes_data)
-            analysis["active_trade"] = active_setup_with_pnl
-            analysis["trade_stats"] = tracker_data["stats"]
+            analysis["active_trade"] = ip.get_active_setup_with_pnl(strikes_data)
+            analysis["trade_stats"] = ip.get_stats()
 
             # Add selling tracker data
             try:
-                active_sell = get_active_sell_setup()
+                active_sell = sell.get_active()
                 if active_sell:
-                    # Calculate current P&L for active sell
                     strike_d = strikes_data.get(active_sell["strike"], {})
                     opt = active_sell["option_type"]
                     cur_prem = strike_d.get("ce_ltp" if opt == "CE" else "pe_ltp", 0)
@@ -491,7 +503,7 @@ class OIScheduler:
                         active_sell["current_premium"] = cur_prem
                         active_sell["current_pnl"] = sell_pnl
                 analysis["active_sell_trade"] = active_sell
-                analysis["sell_stats"] = self.selling_tracker.get_sell_stats()
+                analysis["sell_stats"] = sell.get_stats()
             except Exception as e:
                 log.error("Error getting sell data for dashboard", error=str(e))
                 analysis["active_sell_trade"] = None
@@ -499,7 +511,7 @@ class OIScheduler:
 
             # Add dessert tracker data
             try:
-                active_dessert = get_active_dessert()
+                active_dessert = dessert.get_active()
                 if active_dessert:
                     strike_d = strikes_data.get(active_dessert["strike"], {})
                     cur_prem = strike_d.get("pe_ltp", 0)
@@ -508,7 +520,7 @@ class OIScheduler:
                         active_dessert["current_premium"] = cur_prem
                         active_dessert["current_pnl"] = d_pnl
                 analysis["active_dessert_trade"] = active_dessert
-                analysis["dessert_stats"] = self.dessert_tracker.get_dessert_stats()
+                analysis["dessert_stats"] = dessert.get_stats()
             except Exception as e:
                 log.error("Error getting dessert data for dashboard", error=str(e))
                 analysis["active_dessert_trade"] = None
@@ -516,7 +528,7 @@ class OIScheduler:
 
             # Add momentum tracker data
             try:
-                active_momentum = get_active_momentum()
+                active_momentum = mom.get_active()
                 if active_momentum:
                     strike_m = strikes_data.get(active_momentum["strike"], {})
                     key = "pe_ltp" if active_momentum["option_type"] == "PE" else "ce_ltp"
@@ -526,7 +538,7 @@ class OIScheduler:
                         active_momentum["current_premium"] = cur_prem
                         active_momentum["current_pnl"] = m_pnl
                 analysis["active_momentum_trade"] = active_momentum
-                analysis["momentum_stats"] = self.momentum_tracker.get_momentum_stats()
+                analysis["momentum_stats"] = mom.get_stats()
             except Exception as e:
                 log.error("Error getting momentum data for dashboard", error=str(e))
                 analysis["active_momentum_trade"] = None
@@ -534,7 +546,7 @@ class OIScheduler:
 
             # Add PA tracker data
             try:
-                active_pa = get_active_pa()
+                active_pa = pr.get_active()
                 if active_pa:
                     strike_pa = strikes_data.get(active_pa["strike"], {})
                     key = "pe_ltp" if active_pa["option_type"] == "PE" else "ce_ltp"
@@ -544,7 +556,7 @@ class OIScheduler:
                         active_pa["current_premium"] = cur_prem
                         active_pa["current_pnl"] = pa_pnl
                 analysis["active_pa_trade"] = active_pa
-                analysis["pa_stats"] = self.pa_tracker.get_pa_stats()
+                analysis["pa_stats"] = pr.get_stats()
             except Exception as e:
                 log.error("Error getting PA data for dashboard", error=str(e))
                 analysis["active_pa_trade"] = None
@@ -552,7 +564,7 @@ class OIScheduler:
 
             # Add scalper data
             try:
-                active_scalp = get_active_scalp()
+                active_scalp = scalper.get_active()
                 if active_scalp:
                     strike_sc = strikes_data.get(active_scalp["strike"], {})
                     key = "pe_ltp" if active_scalp["option_type"] == "PE" else "ce_ltp"
@@ -562,7 +574,7 @@ class OIScheduler:
                         active_scalp["current_premium"] = cur_prem
                         active_scalp["current_pnl"] = sc_pnl
                 analysis["active_scalp_trade"] = active_scalp
-                analysis["scalp_stats"] = self.scalper_tracker.get_scalp_stats()
+                analysis["scalp_stats"] = scalper.get_stats()
             except Exception as e:
                 log.error("Error getting scalper data for dashboard", error=str(e))
                 analysis["active_scalp_trade"] = None
@@ -670,7 +682,7 @@ class OIScheduler:
             self.kite_fetcher._refresh_token()
             self.kite_fetcher._instrument_map.refresh()
             self.premium_monitor._instrument_map = self.kite_fetcher._instrument_map
-            self.premium_monitor.scan_existing_trades()
+            self.premium_monitor.scan_existing_trades(self.strategies)
             self.premium_monitor.start()
         except Exception as e:
             log.error("Failed to start premium monitor", error=str(e))
@@ -708,6 +720,7 @@ class OIScheduler:
         action = exit_info["action"]
         exit_premium = exit_info.get("exit_premium", 0)
         reason = exit_info.get("reason", "")
+        pnl = exit_info.get("pnl_pct", 0)
 
         log.info("Premium monitor exit detected",
                  trade_id=trade_id, tracker=tracker_type,
@@ -715,99 +728,22 @@ class OIScheduler:
                  reason=reason)
 
         try:
-            from datetime import datetime as dt
-            now = dt.now()
-
-            if tracker_type == "iron_pulse":
-                from database import update_trade_setup_status
-                status = "WON" if action == "WON" else "LOST"
-                update_trade_setup_status(
-                    trade_id, status,
-                    resolved_at=now.isoformat(),
-                    exit_premium=exit_premium,
-                    hit_sl=(action == "LOST"),
-                    hit_target=(action == "WON"),
+            strategy = self.strategies.get(tracker_type)
+            if strategy:
+                emoji = "\u2705" if action == "WON" else "\u274c"
+                alert_msg = (
+                    f"<b>{emoji} {tracker_type.upper()} {action}</b>\n"
+                    f"{reason}\n"
+                    f"Exit: \u20b9{exit_premium:.2f}\n"
+                    f"P&L: {pnl:+.1f}%"
                 )
-            elif tracker_type == "selling":
-                from database import get_connection
-                with get_connection() as conn:
-                    status = "WON" if action == "WON" else "LOST"
-                    pnl = exit_info.get("pnl_pct", 0)
-                    conn.execute("""
-                        UPDATE sell_trade_setups SET status=?, resolved_at=?,
-                        exit_premium=?, exit_reason=?, profit_loss_pct=?
-                        WHERE id=?
-                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
-                    conn.commit()
-            elif tracker_type == "dessert":
-                from database import get_connection
-                with get_connection() as conn:
-                    status = "WON" if action == "WON" else "LOST"
-                    pnl = exit_info.get("pnl_pct", 0)
-                    conn.execute("""
-                        UPDATE dessert_trades SET status=?, resolved_at=?,
-                        exit_premium=?, exit_reason=?, profit_loss_pct=?
-                        WHERE id=?
-                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
-                    conn.commit()
-            elif tracker_type == "momentum":
-                from database import get_connection
-                with get_connection() as conn:
-                    status = "WON" if action == "WON" else "LOST"
-                    pnl = exit_info.get("pnl_pct", 0)
-                    conn.execute("""
-                        UPDATE momentum_trades SET status=?, resolved_at=?,
-                        exit_premium=?, exit_reason=?, profit_loss_pct=?
-                        WHERE id=?
-                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
-                    conn.commit()
-            elif tracker_type == "pa":
-                from database import get_connection
-                with get_connection() as conn:
-                    status = "WON" if action == "WON" else "LOST"
-                    pnl = exit_info.get("pnl_pct", 0)
-                    conn.execute("""
-                        UPDATE pa_trades SET status=?, resolved_at=?,
-                        exit_premium=?, exit_reason=?, profit_loss_pct=?
-                        WHERE id=?
-                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
-                    conn.commit()
-            elif tracker_type == "scalper":
-                from database import get_connection
-                with get_connection() as conn:
-                    status = "WON" if action == "WON" else "LOST"
-                    pnl = exit_info.get("pnl_pct", 0)
-                    conn.execute("""
-                        UPDATE scalp_trades SET status=?, resolved_at=?,
-                        exit_premium=?, exit_reason=?, profit_loss_pct=?
-                        WHERE id=?
-                    """, (status, now.isoformat(), exit_premium, reason, pnl, trade_id))
-                    conn.commit()
+                strategy.force_exit(trade_id, exit_premium, reason, pnl,
+                                    alert_message=alert_msg)
+            else:
+                log.error("Unknown tracker type in premium exit", tracker=tracker_type)
 
             # Unregister from monitor
             self.premium_monitor.unregister_trade(trade_id)
-
-            # Send Telegram alert via the appropriate tracker method
-            try:
-                if tracker_type == "selling":
-                    from selling_tracker import get_connection
-                    with get_connection() as conn:
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT * FROM sell_trade_setups WHERE id = ?", (trade_id,))
-                        row = cursor.fetchone()
-                        if row:
-                            setup = dict(row)
-                            pnl = exit_info.get("pnl_pct", 0)
-                            exit_reason = "TARGET2" if action == "WON" else "SL"
-                            self.selling_tracker._send_exit_alert(setup, exit_premium, exit_reason, pnl)
-                else:
-                    from alerts import send_telegram
-                    emoji = "\U0001f7e2" if action == "WON" else "\U0001f534"
-                    msg = f"{emoji} {tracker_type.upper()} {action}\n{reason}\nExit: \u20b9{exit_premium:.2f}"
-                    send_telegram(msg)
-            except Exception as e:
-                log.error("Failed to send exit alert", error=str(e),
-                          trade_id=trade_id, tracker=tracker_type)
 
         except Exception as e:
             log.error("Error handling premium exit", error=str(e),

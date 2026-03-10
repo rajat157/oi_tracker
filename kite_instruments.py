@@ -10,7 +10,7 @@ import io
 import requests
 from datetime import date
 from typing import Optional, Dict, List, Tuple
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("kite_instruments")
 

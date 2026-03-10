@@ -19,7 +19,7 @@ from kiteconnect import KiteConnect
 from kite_instruments import InstrumentMap
 from iv_calculator import implied_volatility, time_to_expiry_years
 from kite_auth import load_token
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("kite_data")
 

@@ -13,7 +13,7 @@ from config import MomentumConfig, MarketConfig
 from core.base_tracker import BaseTracker
 from core.events import EventType
 from db.schema import MOMENTUM_TRADES_DDL
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("momentum_tracker")
 

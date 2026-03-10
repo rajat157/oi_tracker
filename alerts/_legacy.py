@@ -17,7 +17,7 @@ try:
 except ImportError:
     pass  # python-dotenv not installed, use env vars directly
 
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("alerts")
 

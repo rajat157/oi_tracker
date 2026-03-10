@@ -11,7 +11,7 @@ These have higher delta and better liquidity for quick scalps.
 from datetime import datetime, date
 from typing import Optional, Dict, List, Tuple
 from database import get_connection
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("scalper_engine")
 

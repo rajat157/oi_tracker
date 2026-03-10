@@ -1049,7 +1049,7 @@ def purge_old_data(keep_from_date):
 
         # Use lazy import to avoid circular dependency during module init
         try:
-            from logger import get_logger
+            from core.logger import get_logger
             log = get_logger("database")
             log.info("Purged old data", snapshots=snapshots_deleted, analysis=analysis_deleted)
         except ImportError:
@@ -1107,7 +1107,7 @@ def purge_old_orderflow(days: int = 30):
         conn.commit()
         if deleted > 0:
             try:
-                from logger import get_logger
+                from core.logger import get_logger
                 log = get_logger("database")
                 log.info("Purged old orderflow depth", deleted=deleted, days=days)
             except ImportError:
@@ -1122,7 +1122,7 @@ def purge_all_data():
         cursor.execute("DELETE FROM analysis_history")
         conn.commit()
         try:
-            from logger import get_logger
+            from core.logger import get_logger
             log = get_logger("database")
             log.info("All data purged from database")
         except ImportError:
@@ -1789,7 +1789,7 @@ def update_confidence_accuracy(lookback_days: int = 14):
 
         conn.commit()
         try:
-            from logger import get_logger
+            from core.logger import get_logger
             log = get_logger("database")
             log.debug("Updated confidence_accuracy", buckets=len(bucket_stats))
         except ImportError:
@@ -1942,7 +1942,7 @@ def update_verdict_accuracy(lookback_days: int = 14):
 
         conn.commit()
         try:
-            from logger import get_logger
+            from core.logger import get_logger
             log = get_logger("database")
             log.debug("Updated verdict_accuracy", verdicts=len(verdict_stats))
         except ImportError:
@@ -2295,7 +2295,7 @@ init_db()
 
 
 if __name__ == "__main__":
-    from logger import get_logger
+    from core.logger import get_logger
     log = get_logger("database")
 
     # Test database operations

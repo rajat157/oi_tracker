@@ -12,7 +12,7 @@ from config import DessertConfig, MarketConfig
 from core.base_tracker import BaseTracker
 from core.events import EventType
 from db.schema import DESSERT_TRADES_DDL
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("dessert_tracker")
 

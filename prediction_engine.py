@@ -15,7 +15,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional
 
 from database import get_connection
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("prediction")
 

@@ -14,7 +14,7 @@ from api.system import bp as system_bp
 from api.kite_auth import bp as kite_bp
 from database import get_latest_analysis
 from scheduler import OIScheduler
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("app")
 

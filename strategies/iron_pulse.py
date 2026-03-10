@@ -13,7 +13,7 @@ from config import IronPulseConfig
 from core.base_tracker import BaseTracker
 from core.events import EventType
 from db.schema import TRADE_SETUPS_DDL, TRADE_SETUPS_INDEXES
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("trade_tracker")
 

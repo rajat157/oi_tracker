@@ -22,7 +22,7 @@ from config import SellingConfig, MarketConfig
 from core.base_tracker import BaseTracker
 from core.events import EventType
 from db.schema import SELL_TRADE_SETUPS_DDL
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("selling_tracker")
 

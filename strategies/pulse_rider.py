@@ -14,7 +14,7 @@ from config import PulseRiderConfig, MarketConfig
 from core.base_tracker import BaseTracker
 from core.events import EventType
 from db.schema import PA_TRADES_DDL
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("pa_tracker")
 

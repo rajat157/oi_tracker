@@ -5,7 +5,7 @@ Places orders and GTTs using daily access token.
 import os
 import requests
 from datetime import datetime
-from logger import get_logger
+from core.logger import get_logger
 from kite_auth import load_token
 
 log = get_logger("kite_broker")

@@ -16,7 +16,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, List
-from logger import get_logger
+from core.logger import get_logger
 
 DB_PATH = Path(__file__).parent / "oi_tracker.db"
 log = get_logger("pattern_tracker")

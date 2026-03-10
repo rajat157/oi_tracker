@@ -26,7 +26,7 @@ from datetime import datetime, time, timedelta
 from typing import Optional, Dict, List
 
 from database import get_connection
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("v_shape_detector")
 

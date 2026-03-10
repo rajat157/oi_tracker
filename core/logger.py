@@ -53,7 +53,7 @@ class OILogger:
     Logger class for OI Tracker components.
 
     Usage:
-        from logger import get_logger
+        from core.logger import get_logger
         log = get_logger("scheduler")
 
         log.info("Fetching OI data")

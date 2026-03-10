@@ -31,7 +31,7 @@ from alerts.broker import AlertBroker
 from v_shape_detector import VShapeDetector
 from pattern_tracker import check_patterns, log_failed_entry
 from prediction_engine import PredictionEngine
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("scheduler")
 

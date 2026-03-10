@@ -15,7 +15,7 @@ import re
 import subprocess
 from datetime import datetime
 from typing import Optional, Dict
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("scalper_agent")
 

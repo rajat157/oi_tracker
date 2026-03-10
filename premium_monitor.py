@@ -14,7 +14,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Callable
 
-from logger import get_logger
+from core.logger import get_logger
 
 log = get_logger("premium_monitor")
 

@@ -35,10 +35,7 @@ oi_tracker/
 │   ├── tug_of_war.py      # Core OI tug-of-war analysis (was oi_analyzer.py)
 │   ├── pattern_tracker.py # Premium Momentum (PM) reversal detection
 │   ├── v_shape.py         # V-shape recovery detector
-│   ├── prediction.py      # Prediction tree engine
-│   ├── momentum.py        # Momentum calculation re-exports
-│   ├── regime_detector.py # Market regime detection re-exports
-│   └── confirmation.py    # Signal confidence re-exports
+│   └── prediction.py      # Prediction tree engine
 ├── strategies/            # Strategy implementations (extend BaseTracker)
 │   ├── momentum.py        # MomentumStrategy (trend-following 1:2 RR)
 │   ├── dessert.py         # DessertStrategy (Contra Sniper + Phantom PUT)

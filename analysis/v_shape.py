@@ -61,7 +61,13 @@ V_LIKELY_MIN_EARLY = 4              # need 4+ conditions before 9:45
 # Expiry-day scaling (NIFTY weekly expiry = Tuesday)
 EXPIRY_THRESHOLD_MULTIPLIER = 1.3
 
-# Frontend auto-dismiss durations (minutes)
+# Frontend display TTL — max age before stale signal is hidden (minutes)
+# True V-shapes are fast; if no progression within these windows, signal is stale.
+DISPLAY_TTL_FORMING_MIN = 20       # FORMING with no progression → stale
+DISPLAY_TTL_LIKELY_MIN = 20        # LIKELY with no CONFIRMED → stale
+DISPLAY_TTL_CONFIRMED_MIN = 45     # CONFIRMED with no resolution → stale
+
+# Frontend auto-dismiss durations after resolution (minutes)
 DISMISS_SUCCEEDED_MIN = 5
 DISMISS_PARTIAL_MIN = 5
 DISMISS_FAILED_MIN = 10
@@ -783,7 +789,19 @@ def get_v_shape_status() -> Optional[Dict]:
                 result["signal_level"] = resolution
 
             if level in ("FORMING", "LIKELY", "CONFIRMED"):
-                result["display"] = True
+                # Time-bound display: hide stale signals that never progressed
+                detected_at = result.get("detected_at")
+                try:
+                    det_time = datetime.strptime(detected_at, '%Y-%m-%d %H:%M:%S')
+                    age_min = (datetime.now() - det_time).total_seconds() / 60
+                    ttl = {
+                        "FORMING": DISPLAY_TTL_FORMING_MIN,
+                        "LIKELY": DISPLAY_TTL_LIKELY_MIN,
+                        "CONFIRMED": DISPLAY_TTL_CONFIRMED_MIN,
+                    }[level]
+                    result["display"] = age_min < ttl
+                except (ValueError, TypeError):
+                    result["display"] = True
             elif level in ("V_SUCCEEDED", "V_PARTIAL", "V_FAILED", "V_EXPIRED"):
                 if level == "V_EXPIRED":
                     result["display"] = False

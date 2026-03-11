@@ -6,14 +6,14 @@ daily-trade guards, and a standard interface that the scheduler can iterate.
 
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, time
 from typing import Any, Dict, List, Optional
 
 from core.events import EventBus, EventType, event_bus as _default_bus
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+log = get_logger("base_tracker")
 
 
 class BaseTracker(ABC):
@@ -125,7 +125,7 @@ class BaseTracker(ABC):
         Updates the DB row and publishes TRADE_EXITED.
         """
         if self.trade_repo is None:
-            logger.warning("force_exit called but trade_repo is None")
+            log.warning("force_exit called but trade_repo is None")
             return
         now = datetime.now()
         status = "WON" if pnl_pct > 0 else "LOST"
@@ -147,8 +147,7 @@ class BaseTracker(ABC):
         if alert_message:
             event_data["alert_message"] = alert_message
         self._publish(EventType.TRADE_EXITED, event_data)
-        logger.info("force_exit: %s trade %d %s (%.2f%%) — %s",
-                     self.tracker_type, trade_id, status, pnl_pct, reason)
+        log.info("force_exit", tracker=self.tracker_type, trade_id=trade_id, status=status, pnl=f"{pnl_pct:.2f}%", reason=reason)
 
     def _publish(self, event_type: EventType, data: dict) -> None:
         """Convenience wrapper to publish events with tracker_type injected."""

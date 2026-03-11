@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import List, Optional
 
 import requests
 
-logger = logging.getLogger(__name__)
+from core.logger import get_logger
+
+log = get_logger("telegram", db_enabled=False)
 
 
 class TelegramChannel:
@@ -35,7 +36,7 @@ class TelegramChannel:
         """Send *message* to a single chat. Returns True on success."""
         cid = chat_id or self.default_chat_id
         if not self.bot_token:
-            logger.warning("Telegram bot token not configured — alert not sent")
+            log.warning("Telegram bot token not configured")
             return False
         return self._post(self.bot_token, cid, message, parse_mode)
 
@@ -67,12 +68,10 @@ class TelegramChannel:
                 "disable_web_page_preview": True,
             }, timeout=10)
             if resp.status_code == 200:
-                logger.info("Telegram alert sent", extra={"chat_id": chat_id})
+                log.info("Telegram alert sent", chat_id=chat_id)
                 return True
-            logger.error("Telegram API error",
-                         extra={"status": resp.status_code, "chat_id": chat_id})
+            log.error("Telegram API error", status=resp.status_code, chat_id=chat_id)
             return False
         except Exception as e:
-            logger.error("Failed to send Telegram alert",
-                         extra={"error": str(e), "chat_id": chat_id})
+            log.error("Failed to send Telegram alert", error=str(e), chat_id=chat_id)
             return False

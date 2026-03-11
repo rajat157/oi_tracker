@@ -7,14 +7,14 @@ This fully decouples strategies from knowing about Telegram.
 
 from __future__ import annotations
 
-import logging
 import os
 from typing import Any, Optional
 
 from alerts.telegram import TelegramChannel
 from core.events import EventBus, EventType, event_bus as _default_bus
+from core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+log = get_logger("alert_broker", db_enabled=False)
 
 
 class AlertBroker:

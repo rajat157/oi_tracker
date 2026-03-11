@@ -3,7 +3,9 @@ Flask Web Server for OI Tracker Dashboard
 Main entry point for the application
 """
 
-from flask import Flask
+import logging
+
+from flask import Flask, request
 from flask_socketio import SocketIO
 
 from api.dashboard import bp as dashboard_bp
@@ -21,6 +23,15 @@ log = get_logger("app")
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "oi_tracker_secret_key"
+
+# Suppress default Werkzeug request logging — we route through OILogger instead
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+
+@app.after_request
+def log_request(response):
+    log.debug("HTTP request", method=request.method, path=request.path, status=response.status_code)
+    return response
 
 # Register API blueprints
 app.register_blueprint(dashboard_bp)

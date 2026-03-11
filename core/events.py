@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import logging
 from enum import Enum
 from typing import Any, Callable, Dict, List
 
-logger = logging.getLogger(__name__)
+from core.logger import get_logger
+
+log = get_logger("events", db_enabled=False)
 
 
 class EventType(str, Enum):
@@ -40,7 +41,7 @@ class EventBus:
             try:
                 cb(event_type, data)
             except Exception:
-                logger.exception("EventBus subscriber %s failed for %s", cb, key)
+                log.error("EventBus subscriber failed", subscriber=str(cb), event=key)
 
     def clear(self) -> None:
         """Remove all subscriptions (useful in tests)."""

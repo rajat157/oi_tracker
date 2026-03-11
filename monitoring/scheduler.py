@@ -25,7 +25,6 @@ from strategies.scalper import ScalperStrategy
 from alerts.broker import AlertBroker
 from analysis.v_shape import VShapeDetector
 from analysis.pattern_tracker import check_patterns, log_failed_entry
-from analysis.prediction import PredictionEngine
 from core.logger import get_logger
 
 log = get_logger("scheduler")
@@ -60,7 +59,6 @@ class OIScheduler:
         }
         self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
-        self.prediction_engine = PredictionEngine()
         self.force_enabled = False
         # Kite data fetcher (reusable, no browser)
         self.kite_fetcher = KiteDataFetcher()
@@ -280,14 +278,6 @@ class OIScheduler:
             self.last_analysis = analysis
 
             log.info("Analysis complete", verdict=analysis['verdict'])
-
-            # Prediction Tree: generate/match/deepen predictions
-            try:
-                prediction_result = self.prediction_engine.process_candle(analysis)
-                if prediction_result:
-                    analysis["prediction_tree"] = prediction_result
-            except Exception as e:
-                log.error("Error in prediction engine", error=str(e))
 
             # Pattern Tracker: detect patterns (PM reversal alerts disabled)
             try:

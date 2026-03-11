@@ -23,7 +23,6 @@ oi_tracker/
 │   ├── snapshot_repo.py   # SnapshotRepository
 │   ├── analysis_repo.py   # AnalysisRepository
 │   ├── signal_repo.py     # SignalRepository
-│   ├── prediction_repo.py # PredictionRepository
 │   └── log_repo.py        # LogRepository
 ├── kite/                  # Kite Connect API
 │   ├── iv.py              # Black-Scholes IV calculation
@@ -34,8 +33,7 @@ oi_tracker/
 ├── analysis/              # OI analysis, predictions, pattern detection
 │   ├── tug_of_war.py      # Core OI tug-of-war analysis (was oi_analyzer.py)
 │   ├── pattern_tracker.py # Premium Momentum (PM) reversal detection
-│   ├── v_shape.py         # V-shape recovery detector
-│   └── prediction.py      # Prediction tree engine
+│   └── v_shape.py         # V-shape recovery detector
 ├── strategies/            # Strategy implementations (extend BaseTracker)
 │   ├── scalper.py         # ScalperStrategy (Claude-powered multi-trade/day)
 │   ├── scalper_engine.py  # Technical analysis for premium charts (VWAP, S/R, swings)
@@ -127,8 +125,6 @@ Then open http://localhost:5000 in your browser.
 | `/api/history` | GET | Historical analysis for charts |
 | `/api/refresh` | GET | Trigger manual data fetch |
 | `/api/market-status` | GET | Market open/close status |
-| `/api/prediction-tree` | GET | Current prediction tree state (path, node, signal) |
-| `/api/prediction-stats` | GET | Prediction accuracy statistics |
 | `/api/scalp-trades` | GET | Scalper trade history |
 | `/api/scalp-stats` | GET | Scalper trade statistics |
 | `/api/logs` | GET | System logs with filtering |
@@ -142,8 +138,6 @@ Then open http://localhost:5000 in your browser.
 | `signal_outcomes` | Signal accuracy tracking |
 | `pm_history` | Premium momentum history |
 | `detected_patterns` | PM reversal patterns |
-| `prediction_nodes` | Prediction tree nodes (3 scenarios per candle) |
-| `prediction_paths` | Prediction path tracking (depth, conviction, contrarian weight) |
 | `scalp_trades` | Scalper trade lifecycle (multi-trade/day) |
 | `system_logs` | Structured log storage |
 

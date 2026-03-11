@@ -1,4 +1,4 @@
-"""System API routes: logs, predictions, V-shape."""
+"""System API routes: logs, V-shape."""
 
 from flask import Blueprint, jsonify, request
 
@@ -40,13 +40,3 @@ def api_v_shape_stats():
     return jsonify(get_v_shape_stats())
 
 
-@bp.route("/api/prediction-tree")
-def api_prediction_tree():
-    from analysis.prediction import get_prediction_state
-    return jsonify(get_prediction_state() or {})
-
-
-@bp.route("/api/prediction-stats")
-def api_prediction_stats():
-    from analysis.prediction import PredictionEngine
-    return jsonify(PredictionEngine().get_prediction_stats())

@@ -52,7 +52,6 @@ class TestBlueprintRegistration:
             "/api/scalp-trades",
             "/api/scalp-stats",
             "/api/logs", "/api/v-shape-signals", "/api/v-shape-stats",
-            "/api/prediction-tree", "/api/prediction-stats",
             "/kite/login", "/kite/callback", "/kite/status", "/kite/save-token",
         ]
         for route in expected_routes:

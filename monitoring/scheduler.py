@@ -21,11 +21,6 @@ from db.legacy import (
     get_previous_smoothed_score
 )
 from db.trade_repo import TradeRepository
-from strategies.iron_pulse import IronPulseStrategy
-from strategies.selling import SellingStrategy
-from strategies.dessert import DessertStrategy
-from strategies.momentum import MomentumStrategy
-from strategies.pulse_rider import PulseRiderStrategy
 from strategies.scalper import ScalperStrategy
 from alerts.broker import AlertBroker
 from analysis.v_shape import VShapeDetector
@@ -61,21 +56,12 @@ class OIScheduler:
         self.last_learning_date = None
         repo = TradeRepository()
         self.strategies = {
-            "iron_pulse": IronPulseStrategy(
-                trade_repo=repo,
-                price_trend_fn=lambda m: get_recent_price_trend(lookback_minutes=m),
-            ),
-            "selling": SellingStrategy(trade_repo=repo),
-            "dessert": DessertStrategy(trade_repo=repo),
-            "momentum": MomentumStrategy(trade_repo=repo),
-            "pulse_rider": PulseRiderStrategy(trade_repo=repo),
             "scalper": ScalperStrategy(trade_repo=repo),
         }
         self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
         self.prediction_engine = PredictionEngine()
         self.force_enabled = False
-        self.last_iron_pulse_time = None  # Track when Iron Pulse enters for selling decoupling
         # Kite data fetcher (reusable, no browser)
         self.kite_fetcher = KiteDataFetcher()
         # Premium monitor for real-time SL/target detection
@@ -328,140 +314,6 @@ class OIScheduler:
                 log.error("V-shape detector error", error=str(e))
                 analysis["v_shape"] = None
 
-            # ===== IRON PULSE (bread & butter 1:1 RR buying) =====
-            ip = self.strategies["iron_pulse"]
-            # 1. Check and update existing setup status (activation/resolution)
-            trade_update = ip.check_and_update(strikes_data, timestamp=timestamp)
-            if trade_update:
-                log.info("Trade setup updated", setup_id=trade_update['setup_id'],
-                         prev_status=trade_update['previous_status'], new_status=trade_update['new_status'])
-                # Register with WebSocket when trade becomes ACTIVE
-                if trade_update.get('new_status') == 'ACTIVE':
-                    self._register_trade_with_monitor(ip)
-                elif trade_update.get('new_status') in ('WON', 'LOST'):
-                    log.warning("Exit detected by 3-min poll, not WebSocket",
-                                tracker="iron_pulse", action=trade_update['new_status'])
-
-            # 2. Cancel PENDING setup if OI direction flipped
-            ip.cancel_on_direction_change(analysis)
-
-            # 3. Expire PENDING setups at market close
-            ip.expire_pending(timestamp)
-
-            # 4. Force close ACTIVE trades at market close (3:20 PM)
-            ip.force_close(timestamp, strikes_data)
-
-            # 5. Create new setup if conditions met (pass price_history for timing checks)
-            if ip.should_create(analysis, price_history=price_history):
-                ip.create_trade(True, analysis, {}, timestamp=timestamp)
-                self.last_iron_pulse_time = timestamp  # Track for selling decoupling
-
-            # ===== SELLING (dual T1/T2 option selling) =====
-            sell = self.strategies["selling"]
-            try:
-                # Check/update active selling trade
-                sell_update = sell.check_and_update(strikes_data)
-                if sell_update:
-                    log.info("Sell trade updated", action=sell_update['action'],
-                             pnl=f"{sell_update['pnl']:.2f}%", reason=sell_update['reason'])
-                    if sell_update['action'] in ('WON', 'LOST'):
-                        log.warning("Exit detected by 3-min poll, not WebSocket",
-                                    tracker="selling", action=sell_update['action'],
-                                    reason=sell_update['reason'])
-
-                # Selling decoupling: delay 6 minutes after Iron Pulse entry
-                # Prevents both strategies from losing on the same signal
-                selling_deferred = False
-                if self.last_iron_pulse_time:
-                    seconds_since_ip = (timestamp - self.last_iron_pulse_time).total_seconds()
-                    if seconds_since_ip < 360:  # 6 minutes
-                        selling_deferred = True
-                        log.info("Selling deferred: Iron Pulse entered recently",
-                                 seconds_since=f"{seconds_since_ip:.0f}s",
-                                 required="360s",
-                                 reason="decoupling")
-
-                # Create new selling setup if conditions met (and not deferred)
-                if not selling_deferred and sell.should_create(analysis):
-                    sell_id = sell.create_trade(True, analysis, strikes_data)
-                    if sell_id:
-                        self._register_trade_with_monitor(sell)
-            except Exception as e:
-                log.error("Error in selling tracker", error=str(e))
-
-            # ===== DESSERT (1:2 RR strategies) =====
-            dessert = self.strategies["dessert"]
-            try:
-                # Check/update active dessert trade
-                dessert_update = dessert.check_and_update(strikes_data)
-                if dessert_update:
-                    log.info("Dessert trade updated",
-                             strategy=dessert_update.get('strategy'),
-                             action=dessert_update['action'],
-                             pnl=f"{dessert_update['pnl']:.2f}%",
-                             reason=dessert_update['reason'])
-                    if dessert_update['action'] in ('WON', 'LOST'):
-                        log.warning("Exit detected by 3-min poll, not WebSocket",
-                                    tracker="dessert", action=dessert_update['action'],
-                                    reason=dessert_update['reason'])
-
-                # Create new dessert trade if conditions met
-                dessert_signal = dessert.evaluate(analysis)
-                if dessert_signal:
-                    dessert_id = dessert.create_trade(dessert_signal, analysis, strikes_data)
-                    if dessert_id:
-                        self._register_trade_with_monitor(dessert)
-            except Exception as e:
-                log.error("Error in dessert tracker", error=str(e))
-
-            # ===== MOMENTUM (1:2 RR trend-following) =====
-            mom = self.strategies["momentum"]
-            try:
-                # Check/update active momentum trade
-                momentum_update = mom.check_and_update(strikes_data)
-                if momentum_update:
-                    log.info("Momentum trade updated",
-                             action=momentum_update['action'],
-                             pnl=f"{momentum_update['pnl']:.2f}%",
-                             reason=momentum_update['reason'])
-                    if momentum_update['action'] in ('WON', 'LOST'):
-                        log.warning("Exit detected by 3-min poll, not WebSocket",
-                                    tracker="momentum", action=momentum_update['action'],
-                                    reason=momentum_update['reason'])
-
-                # Create new momentum trade if conditions met
-                direction = mom.evaluate(analysis)
-                if direction:
-                    mom_id = mom.create_trade(direction, analysis, strikes_data)
-                    if mom_id:
-                        self._register_trade_with_monitor(mom)
-            except Exception as e:
-                log.error("Error in momentum tracker", error=str(e))
-
-            # ===== PULSE RIDER (CHC-3 premium momentum) =====
-            pr = self.strategies["pulse_rider"]
-            try:
-                # Check/update active PA trade
-                pa_update = pr.check_and_update(strikes_data)
-                if pa_update:
-                    log.info("PA trade updated",
-                             action=pa_update['action'],
-                             pnl=f"{pa_update['pnl']:.2f}%",
-                             reason=pa_update['reason'])
-                    if pa_update['action'] in ('WON', 'LOST'):
-                        log.warning("Exit detected by 3-min poll, not WebSocket",
-                                    tracker="pulse_rider", action=pa_update['action'],
-                                    reason=pa_update['reason'])
-
-                # Create new PA trade if conditions met
-                pa_side = pr.evaluate(analysis, strikes_data)
-                if pa_side:
-                    pa_trade_id = pr.create_trade(pa_side, analysis, strikes_data)
-                    if pa_trade_id:
-                        self._register_trade_with_monitor(pr)
-            except Exception as e:
-                log.error("Error in PA tracker", error=str(e))
-
             # ===== SCALPER AGENT (Claude-powered premium chart analysis) =====
             scalper = self.strategies["scalper"]
             try:
@@ -487,82 +339,7 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in scalper agent", error=str(e))
 
-            # 6. Add trade tracker data to analysis for dashboard
-            analysis["active_trade"] = ip.get_active_setup_with_pnl(strikes_data)
-            analysis["trade_stats"] = ip.get_stats()
-
-            # Add selling tracker data
-            try:
-                active_sell = sell.get_active()
-                if active_sell:
-                    strike_d = strikes_data.get(active_sell["strike"], {})
-                    opt = active_sell["option_type"]
-                    cur_prem = strike_d.get("ce_ltp" if opt == "CE" else "pe_ltp", 0)
-                    if cur_prem > 0:
-                        sell_pnl = ((active_sell["entry_premium"] - cur_prem) / active_sell["entry_premium"]) * 100
-                        active_sell["current_premium"] = cur_prem
-                        active_sell["current_pnl"] = sell_pnl
-                analysis["active_sell_trade"] = active_sell
-                analysis["sell_stats"] = sell.get_stats()
-            except Exception as e:
-                log.error("Error getting sell data for dashboard", error=str(e))
-                analysis["active_sell_trade"] = None
-                analysis["sell_stats"] = {}
-
-            # Add dessert tracker data
-            try:
-                active_dessert = dessert.get_active()
-                if active_dessert:
-                    strike_d = strikes_data.get(active_dessert["strike"], {})
-                    cur_prem = strike_d.get("pe_ltp", 0)
-                    if cur_prem > 0:
-                        d_pnl = ((cur_prem - active_dessert["entry_premium"]) / active_dessert["entry_premium"]) * 100
-                        active_dessert["current_premium"] = cur_prem
-                        active_dessert["current_pnl"] = d_pnl
-                analysis["active_dessert_trade"] = active_dessert
-                analysis["dessert_stats"] = dessert.get_stats()
-            except Exception as e:
-                log.error("Error getting dessert data for dashboard", error=str(e))
-                analysis["active_dessert_trade"] = None
-                analysis["dessert_stats"] = {}
-
-            # Add momentum tracker data
-            try:
-                active_momentum = mom.get_active()
-                if active_momentum:
-                    strike_m = strikes_data.get(active_momentum["strike"], {})
-                    key = "pe_ltp" if active_momentum["option_type"] == "PE" else "ce_ltp"
-                    cur_prem = strike_m.get(key, 0)
-                    if cur_prem > 0:
-                        m_pnl = ((cur_prem - active_momentum["entry_premium"]) / active_momentum["entry_premium"]) * 100
-                        active_momentum["current_premium"] = cur_prem
-                        active_momentum["current_pnl"] = m_pnl
-                analysis["active_momentum_trade"] = active_momentum
-                analysis["momentum_stats"] = mom.get_stats()
-            except Exception as e:
-                log.error("Error getting momentum data for dashboard", error=str(e))
-                analysis["active_momentum_trade"] = None
-                analysis["momentum_stats"] = {}
-
-            # Add PA tracker data
-            try:
-                active_pa = pr.get_active()
-                if active_pa:
-                    strike_pa = strikes_data.get(active_pa["strike"], {})
-                    key = "pe_ltp" if active_pa["option_type"] == "PE" else "ce_ltp"
-                    cur_prem = strike_pa.get(key, 0)
-                    if cur_prem > 0:
-                        pa_pnl = ((cur_prem - active_pa["entry_premium"]) / active_pa["entry_premium"]) * 100
-                        active_pa["current_premium"] = cur_prem
-                        active_pa["current_pnl"] = pa_pnl
-                analysis["active_pa_trade"] = active_pa
-                analysis["pa_stats"] = pr.get_stats()
-            except Exception as e:
-                log.error("Error getting PA data for dashboard", error=str(e))
-                analysis["active_pa_trade"] = None
-                analysis["pa_stats"] = {}
-
-            # Add scalper data
+            # Add scalper data to analysis for dashboard
             try:
                 active_scalp = scalper.get_active()
                 if active_scalp:

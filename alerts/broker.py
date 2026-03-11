@@ -7,7 +7,6 @@ This fully decouples strategies from knowing about Telegram.
 
 from __future__ import annotations
 
-import os
 from typing import Any, Optional
 
 from alerts.telegram import TelegramChannel
@@ -33,20 +32,6 @@ class AlertBroker:
     ) -> None:
         self.channel = channel or TelegramChannel()
 
-        # Selling strategy uses a separate bot + extra recipients
-        self._selling_chat_ids = [
-            x.strip()
-            for x in os.getenv("SELLING_ALERT_CHAT_IDS",
-                               os.getenv("TELEGRAM_CHAT_ID", "")).split(",")
-            if x.strip()
-        ]
-        self._selling_extra_bot = os.getenv("SELLING_ALERT_BOT_TOKEN", "")
-        self._selling_extra_ids = [
-            x.strip()
-            for x in os.getenv("SELLING_ALERT_EXTRA_CHAT_IDS", "").split(",")
-            if x.strip()
-        ]
-
         bus = bus or _default_bus
         bus.subscribe(EventType.TRADE_CREATED, self._on_event)
         bus.subscribe(EventType.TRADE_EXITED, self._on_event)
@@ -61,14 +46,4 @@ class AlertBroker:
         if not message:
             return
 
-        tracker_type = data.get("tracker_type", "")
-
-        if tracker_type == "selling":
-            self.channel.send_multi(
-                message,
-                chat_ids=self._selling_chat_ids,
-                extra_bot_token=self._selling_extra_bot or None,
-                extra_chat_ids=self._selling_extra_ids or None,
-            )
-        else:
-            self.channel.send(message)
+        self.channel.send(message)

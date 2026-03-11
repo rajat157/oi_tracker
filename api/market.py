@@ -9,58 +9,6 @@ from db.legacy import (
 bp = Blueprint("market", __name__)
 
 
-def _get_setup_with_pnl(setup: dict, strikes_data: dict) -> dict:
-    """Calculate live P/L for a trade setup."""
-    if not setup or not strikes_data:
-        return setup
-
-    strike = setup["strike"]
-    option_type = setup.get("option_type", "CE" if setup["direction"] == "BUY_CALL" else "PE")
-    strike_data = strikes_data.get(strike, {})
-    current_premium = strike_data.get(
-        "ce_ltp" if option_type == "CE" else "pe_ltp", 0
-    )
-
-    if setup["status"] == "ACTIVE" and setup.get("activation_premium"):
-        activation_premium = setup["activation_premium"]
-        live_pnl_pct = ((current_premium - activation_premium) / activation_premium) * 100 if activation_premium else 0
-        live_pnl_points = current_premium - activation_premium
-    elif setup["status"] == "PENDING":
-        entry_premium = setup["entry_premium"]
-        live_pnl_pct = ((current_premium - entry_premium) / entry_premium) * 100 if entry_premium else 0
-        live_pnl_points = current_premium - entry_premium
-    else:
-        live_pnl_pct = 0
-        live_pnl_points = 0
-
-    return {
-        **setup,
-        "current_premium": round(current_premium, 2),
-        "live_pnl_pct": round(live_pnl_pct, 2),
-        "live_pnl_points": round(live_pnl_points, 2),
-        "support_ref": setup.get("support_at_creation"),
-        "resistance_ref": setup.get("resistance_at_creation"),
-        "max_pain": setup.get("max_pain_at_creation"),
-    }
-
-
-def _add_active_trade_pnl(trade: dict, strikes_data: dict, is_selling: bool = False) -> dict:
-    """Add current_premium and current_pnl to an active trade dict."""
-    if not trade or not strikes_data:
-        return trade
-    strike_data = strikes_data.get(trade["strike"], {})
-    key = "pe_ltp" if trade["option_type"] == "PE" else "ce_ltp"
-    cur = strike_data.get(key, 0)
-    if cur and cur > 0:
-        if is_selling:
-            pnl = ((trade["entry_premium"] - cur) / trade["entry_premium"]) * 100
-        else:
-            pnl = ((cur - trade["entry_premium"]) / trade["entry_premium"]) * 100
-        trade["current_premium"] = cur
-        trade["current_pnl"] = pnl
-    return trade
-
-
 def _get_strategies() -> dict:
     """Get strategies dict from the scheduler stored in app config."""
     from flask import current_app
@@ -78,69 +26,6 @@ def _enrich_analysis(analysis: dict) -> dict:
     snapshot = get_latest_snapshot()
     strikes = snapshot.get("strikes") if snapshot else None
     strategies = _get_strategies()
-
-    # Iron Pulse
-    try:
-        ip = strategies.get("iron_pulse")
-        if ip and strikes:
-            analysis["active_trade"] = ip.get_active_setup_with_pnl(strikes)
-            analysis["trade_stats"] = ip.get_stats()
-        else:
-            analysis["active_trade"] = None
-            analysis["trade_stats"] = {}
-    except Exception:
-        analysis["active_trade"] = None
-        analysis["trade_stats"] = {}
-
-    # Selling
-    try:
-        sell = strategies.get("selling")
-        analysis["active_sell_trade"] = _add_active_trade_pnl(
-            sell.get_active(), strikes, is_selling=True) if sell else None
-    except Exception:
-        analysis["active_sell_trade"] = None
-
-    # Dessert
-    try:
-        dessert = strategies.get("dessert")
-        if dessert:
-            analysis["active_dessert_trade"] = _add_active_trade_pnl(
-                dessert.get_active(), strikes)
-            analysis["dessert_stats"] = dessert.get_stats()
-        else:
-            analysis["active_dessert_trade"] = None
-            analysis["dessert_stats"] = {}
-    except Exception:
-        analysis["active_dessert_trade"] = None
-        analysis["dessert_stats"] = {}
-
-    # Momentum
-    try:
-        mom = strategies.get("momentum")
-        if mom:
-            analysis["active_momentum_trade"] = _add_active_trade_pnl(
-                mom.get_active(), strikes)
-            analysis["momentum_stats"] = mom.get_stats()
-        else:
-            analysis["active_momentum_trade"] = None
-            analysis["momentum_stats"] = {}
-    except Exception:
-        analysis["active_momentum_trade"] = None
-        analysis["momentum_stats"] = {}
-
-    # PA (PulseRider)
-    try:
-        pr = strategies.get("pulse_rider")
-        if pr:
-            analysis["active_pa_trade"] = _add_active_trade_pnl(
-                pr.get_active(), strikes)
-            analysis["pa_stats"] = pr.get_stats()
-        else:
-            analysis["active_pa_trade"] = None
-            analysis["pa_stats"] = {}
-    except Exception:
-        analysis["active_pa_trade"] = None
-        analysis["pa_stats"] = {}
 
     # V-shape
     try:

@@ -1,7 +1,7 @@
 # NIFTY OI Tracker - Development Guide
 
 ## Overview
-A Python-based web dashboard that fetches NIFTY option chain data from NSE every 3 minutes and analyzes OI to determine market direction using a "tug-of-war" concept. Includes automated trade tracking for both options buying and selling strategies.
+A Python-based web dashboard that fetches NIFTY option chain data from NSE every 3 minutes and analyzes OI to determine market direction using a "tug-of-war" concept. Includes a Claude-powered Scalper Agent for automated trade tracking.
 
 ## Project Structure
 ```
@@ -37,20 +37,15 @@ oi_tracker/
 │   ├── v_shape.py         # V-shape recovery detector
 │   └── prediction.py      # Prediction tree engine
 ├── strategies/            # Strategy implementations (extend BaseTracker)
-│   ├── momentum.py        # MomentumStrategy (trend-following 1:2 RR)
-│   ├── dessert.py         # DessertStrategy (Contra Sniper + Phantom PUT)
-│   ├── selling.py         # SellingStrategy (dual T1/T2 targets)
 │   ├── scalper.py         # ScalperStrategy (Claude-powered multi-trade/day)
 │   ├── scalper_engine.py  # Technical analysis for premium charts (VWAP, S/R, swings)
-│   ├── scalper_agent.py   # Claude Code FNO expert agent (subprocess via `claude -p`)
-│   ├── pulse_rider.py     # PulseRiderStrategy (CHC-3 price action)
-│   └── iron_pulse.py      # IronPulseStrategy (PENDING→ACTIVE lifecycle)
+│   └── scalper_agent.py   # Claude Code FNO expert agent (subprocess via `claude -p`)
 ├── monitoring/            # Scheduler + premium monitor
 │   ├── scheduler.py       # APScheduler for 3-minute polling + trade orchestration
 │   └── premium_monitor.py # Real-time premium monitoring via Kite WebSocket
 ├── alerts/                # Telegram notification system
 │   ├── __init__.py        # Re-exports send_telegram + AlertBroker
-│   ├── _legacy.py         # Legacy send_telegram/send_telegram_multi functions
+│   ├── _legacy.py         # Legacy send_telegram functions
 │   ├── telegram.py        # TelegramChannel (new OOP wrapper)
 │   └── broker.py          # AlertBroker (EventBus → Telegram routing)
 ├── templates/
@@ -65,8 +60,7 @@ oi_tracker/
 │   ├── test_events.py         # EventBus tests
 │   ├── test_base_tracker.py   # BaseTracker ABC tests
 │   ├── test_db_repos.py       # Repository pattern tests
-│   ├── test_strategies/       # Strategy implementation tests
-│   └── test_strategy.py       # Legacy strategy validation tests
+│   └── test_strategies/       # Strategy implementation tests
 ├── scripts/               # Operational tools
 │   ├── check_live_stats.py    # Win rate & P&L stats viewer
 │   ├── check_trades.py        # Trade history table viewer
@@ -96,38 +90,14 @@ Then open http://localhost:5000 in your browser.
 2. **Kite Data Fetcher** retrieves option chain data via Kite Connect API
 3. **OI Analyzer** performs tug-of-war analysis
 4. **Database** stores snapshots and analysis results
-5. **Strategy Trackers** (`strategies/`) evaluate signals: Iron Pulse, Selling, Dessert, Momentum, PulseRider, Scalper
+5. **Scalper Agent** (`strategies/`) evaluates signals via Claude-powered analysis
 6. **AlertBroker** (`alerts/broker.py`) subscribes to EventBus events and routes to Telegram
 7. **SocketIO** pushes updates to connected dashboard clients
 
-### Trading Strategies
+### Trading Strategy
 
-**Three independent strategies run simultaneously (one trade each per day):**
-
-#### 🫀 Iron Pulse (trade_tracker.py) — Bread & Butter
-- **WR:** 82% backtested | **RR:** 1:1.1
-- Time Window: 11:00 - 14:00 IST
-- Verdict-aligned, confidence >= 65%
-- Slightly Bullish → BUY CALL | Slightly Bearish → BUY PUT
-- SL: -20% | Target: +22%
-
-#### 💰 Selling (selling_tracker.py) — Dual Target
-- **WR:** 83% backtested | **RR:** 1:1 (T1) + 1:2 (T2)
-- Time Window: 11:00 - 14:00 IST
-- Verdict-aligned, confidence >= 65%, OTM-1 strike
-- SL: +25% premium rise | T1: -25% drop (notify) | T2: -50% drop (auto-exit)
-- EOD exit: 15:20
-
-#### 🍰 Dessert (dessert_tracker.py) — Premium 1:2 RR
-- **Combined WR:** 86% backtested | **RR:** 1:2
-- Time Window: 9:30 - 14:00 IST
-- One per day, first strategy to trigger wins:
-  - 🎯 **Contra Sniper:** BUY PUT when verdict Bullish + IV skew < 1 + below max pain (100% WR, 3 trades)
-  - 🔮 **Phantom PUT:** BUY PUT when conf < 50% + IV skew < 0 + spot rising 30m (83% WR, 6 trades)
-- SL: -25% | Target: +50%
-
-#### Scalper Agent (scalper_tracker.py + scalper_agent.py) — Claude-Powered
-- **WR:** 53% backtested (mechanical) | **RR:** 1:1
+#### Scalper Agent (scalper.py + scalper_agent.py) — Claude-Powered
+- **WR:** 57% backtested | **RR:** 1:1
 - Time Window: 9:30 - 14:30 IST
 - Multiple trades per day (max 5, 6-min cooldown)
 - Strikes: 2 below ATM for CE, 2 above ATM for PE (slightly ITM)
@@ -138,7 +108,6 @@ Then open http://localhost:5000 in your browser.
 
 ### Telegram Alerts
 - **Main bot** (`TELEGRAM_BOT_TOKEN`): All alerts to Mason
-- **External bot** (`SELLING_ALERT_BOT_TOKEN`): Selling alerts only to external users
 - Chat IDs configured in `.env` (comma-separated for multiple recipients)
 
 ### Tug-of-War Analysis Logic
@@ -158,13 +127,6 @@ Then open http://localhost:5000 in your browser.
 | `/api/history` | GET | Historical analysis for charts |
 | `/api/refresh` | GET | Trigger manual data fetch |
 | `/api/market-status` | GET | Market open/close status |
-| `/api/trades` | GET | Buying trade history (paginated) |
-| `/api/sell-trades` | GET | Selling trade history |
-| `/api/sell-stats` | GET | Selling trade statistics |
-| `/api/dessert-trades` | GET | Dessert trade history |
-| `/api/dessert-stats` | GET | Dessert trade statistics |
-| `/api/learning-report` | GET | Self-learning insights |
-| `/api/learning-status` | GET | Detailed learning status |
 | `/api/prediction-tree` | GET | Current prediction tree state (path, node, signal) |
 | `/api/prediction-stats` | GET | Prediction accuracy statistics |
 | `/api/scalp-trades` | GET | Scalper trade history |
@@ -177,13 +139,7 @@ Then open http://localhost:5000 in your browser.
 |-------|---------|
 | `oi_snapshots` | Raw option chain data per strike |
 | `analysis_history` | OI analysis results with verdicts |
-| `trade_setups` | Buying trade lifecycle |
-| `sell_trade_setups` | Selling trade lifecycle (with T1/T2) |
-| `dessert_trades` | Dessert trade lifecycle |
 | `signal_outcomes` | Signal accuracy tracking |
-| `confidence_accuracy` | Confidence bucket performance |
-| `verdict_accuracy` | Verdict type performance |
-| `learned_weights` | Self-learner adaptive weights |
 | `pm_history` | Premium momentum history |
 | `detected_patterns` | PM reversal patterns |
 | `prediction_nodes` | Prediction tree nodes (3 scenarios per candle) |
@@ -207,7 +163,6 @@ Then open http://localhost:5000 in your browser.
 ## Notes
 - NSE rate limits: 3-minute interval respects this
 - Database: SQLite file `oi_tracker.db` in project root
-- All three strategies are INDEPENDENT (one of each per day)
-- Telegram alerts: main bot for all (Mason), separate bot for selling (external users)
+- Telegram alerts: main bot for all (Mason)
 - All sensitive tokens/IDs in `.env` (gitignored)
 - Server restart required for Python code changes

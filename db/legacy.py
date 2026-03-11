@@ -131,56 +131,6 @@ def init_db():
             ON signal_outcomes(signal_timestamp)
         """)
 
-        # Table for persistent trade setups with lifecycle tracking
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS trade_setups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                -- Creation
-                created_at DATETIME NOT NULL,
-                direction TEXT NOT NULL,
-                strike INTEGER NOT NULL,
-                option_type TEXT NOT NULL,
-                moneyness TEXT NOT NULL,
-                entry_premium REAL NOT NULL,
-                sl_premium REAL NOT NULL,
-                target1_premium REAL NOT NULL,
-                target2_premium REAL,
-                risk_pct REAL NOT NULL,
-                spot_at_creation REAL NOT NULL,
-                verdict_at_creation TEXT NOT NULL,
-                signal_confidence REAL NOT NULL,
-                iv_at_creation REAL DEFAULT 0.0,
-                expiry_date TEXT NOT NULL,
-                -- Status
-                status TEXT NOT NULL DEFAULT 'PENDING',
-                -- Activation
-                activated_at DATETIME,
-                activation_premium REAL,
-                -- Resolution
-                resolved_at DATETIME,
-                exit_premium REAL,
-                hit_sl BOOLEAN DEFAULT 0,
-                hit_target BOOLEAN DEFAULT 0,
-                profit_loss_pct REAL,
-                profit_loss_points REAL,
-                -- Tracking
-                max_premium_reached REAL,
-                min_premium_reached REAL,
-                last_checked_at DATETIME,
-                last_premium REAL
-            )
-        """)
-
-        # Index for trade setups
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_trade_setups_status
-            ON trade_setups(status)
-        """)
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_trade_setups_created
-            ON trade_setups(created_at)
-        """)
-
         # Table for tracking all trade suggestions (for analysis)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS trade_suggestions (

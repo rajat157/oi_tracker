@@ -1,4 +1,4 @@
-"""Statistics API routes for all strategies."""
+"""Statistics API routes."""
 
 from flask import Blueprint, jsonify, current_app
 
@@ -11,30 +11,6 @@ def _get_strategy(name: str):
     if scheduler:
         return scheduler.strategies.get(name)
     return None
-
-
-@bp.route("/api/sell-stats")
-def api_sell_stats():
-    s = _get_strategy("selling")
-    return jsonify(s.get_stats() if s else {})
-
-
-@bp.route("/api/dessert-stats")
-def api_dessert_stats():
-    s = _get_strategy("dessert")
-    return jsonify(s.get_stats() if s else {})
-
-
-@bp.route("/api/momentum-stats")
-def api_momentum_stats():
-    s = _get_strategy("momentum")
-    return jsonify(s.get_stats() if s else {})
-
-
-@bp.route("/api/pa-stats")
-def api_pa_stats():
-    s = _get_strategy("pulse_rider")
-    return jsonify(s.get_stats() if s else {})
 
 
 @bp.route("/api/scalp-stats")

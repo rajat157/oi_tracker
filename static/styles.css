@@ -30,13 +30,6 @@
     --warning: #fbbf24;
     --warning-light: rgba(251, 191, 36, 0.12);
 
-    /* Strategy accents */
-    --iron-pulse: #7c6cf0;
-    --selling: #f59e0b;
-    --dessert: #ec4899;
-    --momentum: #06b6d4;
-    --pa: #8b5cf6;
-
     /* Borders */
     --border: rgba(255, 255, 255, 0.06);
     --border-light: rgba(255, 255, 255, 0.1);
@@ -641,17 +634,6 @@ body {
 .dock-abbr { font-weight: 700; }
 .dock-pnl { font-variant-numeric: tabular-nums; }
 
-.dock-iron-pulse { border-color: var(--iron-pulse); }
-.dock-iron-pulse .dock-abbr { color: var(--iron-pulse); }
-.dock-selling { border-color: var(--selling); }
-.dock-selling .dock-abbr { color: var(--selling); }
-.dock-dessert { border-color: var(--dessert); }
-.dock-dessert .dock-abbr { color: var(--dessert); }
-.dock-momentum { border-color: var(--momentum); }
-.dock-momentum .dock-abbr { color: var(--momentum); }
-.dock-pa { border-color: var(--pa); }
-.dock-pa .dock-abbr { color: var(--pa); }
-
 .dock-pill-active {
     box-shadow: 0 0 0 2px var(--accent), 0 0 8px rgba(99, 102, 241, 0.3);
 }
@@ -744,12 +726,6 @@ body {
     transform: scale(1.25);
     border-color: transparent;
 }
-
-.carousel-dot.dot-iron-pulse.active { background: var(--iron-pulse); box-shadow: 0 0 6px var(--iron-pulse); }
-.carousel-dot.dot-selling.active { background: var(--selling); box-shadow: 0 0 6px var(--selling); }
-.carousel-dot.dot-dessert.active { background: var(--dessert); box-shadow: 0 0 6px var(--dessert); }
-.carousel-dot.dot-momentum.active { background: var(--momentum); box-shadow: 0 0 6px var(--momentum); }
-.carousel-dot.dot-pa.active { background: var(--pa); box-shadow: 0 0 6px var(--pa); }
 
 @media (max-width: 479px) {
     .carousel-arrow-left { left: 4px; }
@@ -1681,22 +1657,6 @@ body {
 .trade-direction.sell-put { background: var(--bullish-light); color: var(--bullish); }
 .trade-direction.sell-call { background: var(--bearish-light); color: var(--bearish); }
 
-/* Strategy-specific card accents */
-.iron-pulse-card { border-left-color: var(--iron-pulse); }
-.iron-pulse-card .card-title { color: var(--iron-pulse); }
-
-.sell-trade-card { border-left-color: var(--selling); }
-.sell-trade-card .card-title { color: var(--selling); }
-
-.dessert-trade-card { border-left-color: var(--dessert); }
-.dessert-trade-card .card-title { color: var(--dessert); }
-
-.momentum-trade-card { border-left-color: var(--momentum); }
-.momentum-trade-card .card-title { color: var(--momentum); }
-
-.pa-trade-card { border-left-color: var(--pa); }
-.pa-trade-card .card-title { color: var(--pa); }
-
 .trade-strike {
     font-size: var(--text-sm);
     font-weight: 600;
@@ -2417,7 +2377,7 @@ body {
 
 /* ===== OI Flow Card ===== */
 .flow-card {
-    border-left: 3px solid var(--momentum);
+    border-left: 3px solid #06b6d4;
 }
 
 .flow-summary {
@@ -2498,7 +2458,7 @@ body {
 .flow-dot-fw { background: var(--warning); }
 .flow-dot-fb { background: var(--bullish); }
 .flow-dot-lu { background: var(--text-muted); }
-.flow-dot-sc { background: var(--momentum); }
+.flow-dot-sc { background: #06b6d4; }
 
 .flow-zones {
     display: flex;
@@ -2547,7 +2507,7 @@ body {
 .flow-seg-fw { background: var(--warning); }
 .flow-seg-fb { background: var(--bullish); }
 .flow-seg-lu { background: var(--text-muted); }
-.flow-seg-sc { background: var(--momentum); }
+.flow-seg-sc { background: #06b6d4; }
 
 /* ===== Flow Type Badges (in tables) ===== */
 .flow-badge {
@@ -2563,7 +2523,7 @@ body {
 .flow-fw { background: rgba(251, 191, 36, 0.15); color: var(--warning); }
 .flow-fb { background: rgba(34, 197, 94, 0.15); color: var(--bullish); }
 .flow-lu { background: rgba(160, 160, 184, 0.15); color: var(--text-muted); }
-.flow-sc { background: rgba(6, 182, 212, 0.15); color: var(--momentum); }
+.flow-sc { background: rgba(6, 182, 212, 0.15); color: #06b6d4; }
 .flow-n  { background: rgba(160, 160, 184, 0.08); color: var(--text-muted); }
 
 /* ===== Chart Controls (Zoom) ===== */

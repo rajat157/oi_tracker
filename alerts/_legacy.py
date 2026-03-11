@@ -24,10 +24,6 @@ log = get_logger("alerts")
 # Configuration - set these in environment or .env file
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7011095516")  # Default: Mason's chat
-SELLING_ALERT_CHAT_IDS = [x.strip() for x in os.getenv("SELLING_ALERT_CHAT_IDS", TELEGRAM_CHAT_ID).split(",")]
-SELLING_ALERT_BOT_TOKEN = os.getenv("SELLING_ALERT_BOT_TOKEN", "")  # Separate bot for external users
-SELLING_ALERT_EXTRA_CHAT_IDS = [x.strip() for x in os.getenv("SELLING_ALERT_EXTRA_CHAT_IDS", "").split(",") if x.strip()]
-
 # Alert cooldown to prevent spam (seconds)
 ALERT_COOLDOWN = 300  # 5 minutes between same-type alerts
 
@@ -72,43 +68,6 @@ def send_telegram(message: str, parse_mode: str = "HTML") -> bool:
         return False
 
 
-def send_telegram_multi(message: str, chat_ids: list, parse_mode: str = "HTML") -> bool:
-    """Send selling alerts to Mason (main bot) + external users (separate bot)."""
-    success = True
-    # Send to Mason via main bot
-    for cid in chat_ids:
-        if not TELEGRAM_BOT_TOKEN:
-            return False
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": cid, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True}
-        try:
-            response = requests.post(url, json=payload, timeout=10)
-            if response.status_code == 200:
-                log.info("Telegram alert sent", chat_id=cid)
-            else:
-                log.error("Telegram API error", chat_id=cid, status=response.status_code)
-                success = False
-        except Exception as e:
-            log.error("Failed to send Telegram alert", chat_id=cid, error=str(e))
-            success = False
-    # Send to external users via separate bot
-    if SELLING_ALERT_BOT_TOKEN and SELLING_ALERT_EXTRA_CHAT_IDS:
-        for cid in SELLING_ALERT_EXTRA_CHAT_IDS:
-            url = f"https://api.telegram.org/bot{SELLING_ALERT_BOT_TOKEN}/sendMessage"
-            payload = {"chat_id": cid, "text": message, "parse_mode": parse_mode, "disable_web_page_preview": True}
-            try:
-                response = requests.post(url, json=payload, timeout=10)
-                if response.status_code == 200:
-                    log.info("External alert sent", chat_id=cid)
-                else:
-                    log.error("External alert error", chat_id=cid, status=response.status_code)
-                    success = False
-            except Exception as e:
-                log.error("Failed to send external alert", chat_id=cid, error=str(e))
-                success = False
-    return success
-
-
 def _check_cooldown(alert_type: str) -> bool:
     """Check if we're in cooldown period for this alert type."""
     now = datetime.now()
@@ -122,65 +81,6 @@ def _check_cooldown(alert_type: str) -> bool:
     
     _last_alerts[alert_type] = now
     return True
-
-
-def send_pm_reversal_alert(
-    spot_price: float,
-    pm_score: float,
-    pm_change: float,
-    confidence: float,
-    strike: int,
-    entry_premium: float,
-    target_premium: float,
-    sl_premium: float
-) -> bool:
-    """
-    Send alert for PM Reversal CALL entry signal.
-    
-    Triggered when:
-    - PM was very negative (< -50)
-    - PM has now crossed above +50 (strong reversal confirmed)
-    
-    This is NOT the first reversal signal - it's the CONFIRMED one.
-    """
-    alert_type = "PM_REVERSAL_CALL"
-    
-    if not _check_cooldown(alert_type):
-        return False
-    
-    # Calculate risk/reward
-    risk = entry_premium - sl_premium
-    reward = target_premium - entry_premium
-    rr_ratio = reward / risk if risk > 0 else 0
-    
-    now = datetime.now()
-    
-    message = f"""
-<b>🟢 CALL ENTRY SIGNAL</b>
-
-<b>PM Reversal Confirmed</b>
-PM Score: <code>{pm_score:+.1f}</code> (was negative, now strong positive)
-PM Change: <code>{pm_change:+.1f}</code>
-Signal Confidence: <code>{confidence:.0f}%</code>
-
-<b>Setup Details</b>
-Spot: <code>{spot_price:.2f}</code>
-Strike: <code>{strike} CE</code>
-Entry: <code>₹{entry_premium:.2f}</code>
-Target: <code>₹{target_premium:.2f}</code> (+{reward:.1f})
-SL: <code>₹{sl_premium:.2f}</code> (-{risk:.1f})
-R:R = <code>1:{rr_ratio:.1f}</code>
-
-<b>Strategy</b>
-• Wait for pullback if entry seems high
-• Target: +40 pts on spot (or premium target)
-• SL: -50 pts on spot (or premium SL)
-• Max hold: 2 hours
-
-<i>Time: {now.strftime('%H:%M:%S')}</i>
-"""
-    
-    return send_telegram(message.strip())
 
 
 def _get_kite_trading_symbol(strike: int, option_type: str, expiry_date: str = "") -> str:
@@ -282,69 +182,6 @@ def _get_kite_basket_url(strike: int, option_type: str, entry_premium: float,
     
     encoded = urllib.parse.quote(json.dumps(basket))
     return f"https://kite.zerodha.com/connect/basket?api_key={api_key}&data={encoded}"
-
-
-def send_trade_setup_alert(
-    direction: str,
-    strike: str,
-    entry_premium: float,
-    sl_premium: float,
-    target_premium: float,
-    sl_pct: float,
-    target_pct: float,
-    verdict: str,
-    confidence: float,
-    expiry_date: str = ""
-) -> bool:
-    """
-    Send Telegram alert when a new trade setup is created.
-    Includes copy-ready order details for quick Kite execution.
-    """
-    alert_type = "TRADE_SETUP"
-    
-    if not _check_cooldown(alert_type):
-        return False
-    
-    now = datetime.now()
-    
-    # Parse strike number and option type from "25600 CE" format
-    parts = strike.split()
-    strike_num = int(parts[0])
-    ot = parts[1] if len(parts) > 1 else "CE"
-    
-    # Generate Kite chart URL
-    chart_url, trading_symbol = _get_kite_chart_url(strike_num, ot, expiry_date)
-    
-    kite_line = ""
-    if chart_url:
-        kite_line = f'\n\U0001f680 <a href="{chart_url}">Open in Kite</a>'
-    
-    message = f"""<b>\U0001f49a Iron Pulse \u2014 TRADE SETUP</b>
-
-<b>Direction:</b> <code>{direction}</code>
-<b>Strike:</b> <code>{strike}</code>
-<b>Entry:</b> <code>Rs {entry_premium:.2f}</code>
-<b>Stop Loss:</b> <code>Rs {sl_premium:.2f}</code> (-{sl_pct:.0f}%)
-<b>T1:</b> <code>Rs {target_premium:.2f}</code> (+{target_pct:.0f}%)
-<b>T2:</b> Trail 15% below peak
-<b>RR:</b> <code>1:1 (T1) / runner (T2)</code>
-
-<b>Verdict:</b> {verdict}
-<b>Confidence:</b> {confidence:.0f}%
-{kite_line}
-<code>{trading_symbol} | BUY LIMIT Rs {entry_premium:.2f} | Qty 65</code>
-<code>SL Rs {sl_premium:.2f} | T1 Rs {target_premium:.2f}</code>
-
-\u23f0 <i>Valid until 14:00 or entry hit</i>
-\U0001f4ca <i>One trade per day \u2014 bread &amp; butter!</i>
-
-<i>Time: {now.strftime('%H:%M:%S')}</i>"""
-    
-    log.info("Sending trade setup alert", direction=direction, strike=strike,
-             entry=f"\u20b9{entry_premium:.2f}", sl=f"\u20b9{sl_premium:.2f}", 
-             target=f"\u20b9{target_premium:.2f}", symbol=trading_symbol)
-    
-    return send_telegram(message.strip())
 
 
 def send_test_alert() -> bool:

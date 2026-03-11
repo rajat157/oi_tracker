@@ -111,34 +111,13 @@ class TestAlertBroker:
 
         channel.send.assert_not_called()
 
-    def test_selling_uses_multi(self):
-        bus = EventBus()
-        channel = MagicMock(spec=TelegramChannel)
-        broker = AlertBroker(bus=bus, channel=channel)
-        broker._selling_chat_ids = ["a", "b"]
-        broker._selling_extra_bot = "tok2"
-        broker._selling_extra_ids = ["c"]
-
-        bus.publish(EventType.TRADE_CREATED, {
-            "tracker_type": "selling",
-            "alert_message": "sell alert",
-        })
-
-        channel.send_multi.assert_called_once_with(
-            "sell alert",
-            chat_ids=["a", "b"],
-            extra_bot_token="tok2",
-            extra_chat_ids=["c"],
-        )
-        channel.send.assert_not_called()
-
     def test_t1_hit_event(self):
         bus = EventBus()
         channel = MagicMock(spec=TelegramChannel)
         AlertBroker(bus=bus, channel=channel)
 
         bus.publish(EventType.T1_HIT, {
-            "tracker_type": "iron_pulse",
+            "tracker_type": "scalper",
             "alert_message": "T1 hit!",
         })
 

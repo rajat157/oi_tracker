@@ -9,9 +9,7 @@ import pytest
 from db.base_repo import BaseRepository
 from db.trade_repo import TradeRepository
 from db.schema import (
-    TRADE_SETUPS_DDL, TRADE_SETUPS_INDEXES,
-    SELL_TRADE_SETUPS_DDL, DESSERT_TRADES_DDL,
-    MOMENTUM_TRADES_DDL, PA_TRADES_DDL, SCALP_TRADES_DDL,
+    SCALP_TRADES_DDL,
     ALL_TRADE_SCHEMAS,
 )
 
@@ -306,12 +304,11 @@ class TestSchema:
             yield conn
 
         repo = TradeRepository(conn_factory=factory)
-        repo.init_table(MOMENTUM_TRADES_DDL)
+        repo.init_table(SCALP_TRADES_DDL)
 
         trade_id = repo.insert_trade(
-            "momentum_trades",
+            "scalp_trades",
             created_at="2025-01-15 12:00:00",
-            strategy_name="Momentum",
             direction="BUY_CALL",
             strike=24500,
             option_type="CE",
@@ -322,9 +319,8 @@ class TestSchema:
             verdict_at_creation="Bulls Winning",
         )
         assert trade_id == 1
-        row = repo.get_active("momentum_trades")
+        row = repo.get_active("scalp_trades")
         assert row is not None
         assert row["strike"] == 24500
-        assert row["strategy_name"] == "Momentum"
 
         conn.close()

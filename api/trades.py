@@ -21,3 +21,15 @@ def api_scalp_trades():
         (cutoff,),
     )
     return jsonify({"trades": trades})
+
+
+@bp.route("/api/mc-trades")
+def api_mc_trades():
+    """Get historical MC (momentum continuation) trades."""
+    days = request.args.get("days", 30, type=int)
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    trades = _repo._fetch_all(
+        "SELECT * FROM mc_trades WHERE created_at >= ? ORDER BY created_at DESC",
+        (cutoff,),
+    )
+    return jsonify({"trades": trades})

@@ -17,3 +17,9 @@ def _get_strategy(name: str):
 def api_scalp_stats():
     s = _get_strategy("scalper")
     return jsonify(s.get_stats() if s else {})
+
+
+@bp.route("/api/mc-stats")
+def api_mc_stats():
+    s = _get_strategy("mc")
+    return jsonify(s.get_stats() if s else {})

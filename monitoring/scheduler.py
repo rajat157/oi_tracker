@@ -22,6 +22,7 @@ from db.legacy import (
 )
 from db.trade_repo import TradeRepository
 from strategies.scalper import ScalperStrategy
+from strategies.mc_strategy import MCStrategy
 from alerts.broker import AlertBroker
 from analysis.v_shape import VShapeDetector
 from analysis.pattern_tracker import check_patterns, log_failed_entry
@@ -56,6 +57,7 @@ class OIScheduler:
         repo = TradeRepository()
         self.strategies = {
             "scalper": ScalperStrategy(trade_repo=repo),
+            "mc": MCStrategy(trade_repo=repo),
         }
         self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
@@ -329,6 +331,25 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in scalper agent", error=str(e))
 
+            # ===== MC STRATEGY (Mechanical momentum continuation) =====
+            mc = self.strategies["mc"]
+            try:
+                mc_update = mc.check_and_update(strikes_data)
+                if mc_update:
+                    log.info("MC trade updated",
+                             action=mc_update['action'],
+                             pnl=f"{mc_update['pnl']:.2f}%",
+                             reason=mc_update['reason'])
+
+                if mc.should_create(analysis):
+                    mc_signal = mc.evaluate_signal(analysis, strikes_data)
+                    if mc_signal:
+                        mc_id = mc.create_trade(mc_signal, analysis, strikes_data)
+                        if mc_id:
+                            self._register_trade_with_monitor(mc)
+            except Exception as e:
+                log.error("Error in MC strategy", error=str(e))
+
             # Add scalper data to analysis for dashboard
             try:
                 active_scalp = scalper.get_active()
@@ -346,6 +367,24 @@ class OIScheduler:
                 log.error("Error getting scalper data for dashboard", error=str(e))
                 analysis["active_scalp_trade"] = None
                 analysis["scalp_stats"] = {}
+
+            # Add MC data to analysis for dashboard
+            try:
+                active_mc = mc.get_active()
+                if active_mc:
+                    strike_mc = strikes_data.get(active_mc["strike"], {})
+                    key_mc = "pe_ltp" if active_mc["option_type"] == "PE" else "ce_ltp"
+                    cur_mc = strike_mc.get(key_mc, 0)
+                    if cur_mc > 0:
+                        mc_pnl = ((cur_mc - active_mc["entry_premium"]) / active_mc["entry_premium"]) * 100
+                        active_mc["current_premium"] = cur_mc
+                        active_mc["current_pnl"] = mc_pnl
+                analysis["active_mc_trade"] = active_mc
+                analysis["mc_stats"] = mc.get_stats()
+            except Exception as e:
+                log.error("Error getting MC data for dashboard", error=str(e))
+                analysis["active_mc_trade"] = None
+                analysis["mc_stats"] = {}
 
             # Run daily learning update at market close
             self._check_daily_learning_update()

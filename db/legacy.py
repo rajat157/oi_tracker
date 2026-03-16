@@ -1022,17 +1022,18 @@ def save_orderflow_depth(records: list):
         for r in records:
             cursor.execute("""
                 INSERT INTO orderflow_depth
-                (timestamp, instrument_token, strike, option_type,
+                (timestamp, instrument_token, strike, option_type, spot_price,
                  total_bid_qty, total_ask_qty, bid_ask_imbalance,
                  best_bid_price, best_bid_qty, best_bid_orders,
                  best_ask_price, best_ask_qty, best_ask_orders,
                  depth_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 ts,
                 r.get("instrument_token", 0),
                 r.get("strike", 0),
                 r.get("option_type", ""),
+                r.get("spot_price", 0.0),
                 r.get("total_bid_qty", 0),
                 r.get("total_ask_qty", 0),
                 r.get("bid_ask_imbalance", 0.0),

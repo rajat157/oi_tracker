@@ -19,7 +19,7 @@ from core.logger import get_logger
 
 log = get_logger("scalper_agent")
 
-CLAUDE_TIMEOUT = 90  # seconds
+CLAUDE_TIMEOUT = 120  # seconds
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 SYSTEM_PROMPT = """You are an expert NIFTY FNO (Futures & Options) scalper. You analyze 3-minute option premium charts and identify quick scalping LONG (buy) opportunities.
@@ -116,9 +116,11 @@ Respond with ONLY valid JSON (no markdown, no explanation outside the JSON):
             env.pop("CLAUDECODE", None)
 
             result = subprocess.run(
-                ["claude", "-p", prompt, "--no-session-persistence"],
+                ["claude", "-p", "-", "--no-session-persistence"],
+                input=prompt,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=CLAUDE_TIMEOUT,
                 env=env,
                 cwd=PROJECT_ROOT,

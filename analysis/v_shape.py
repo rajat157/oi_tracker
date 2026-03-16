@@ -623,9 +623,12 @@ class VShapeDetector:
                     UPDATE v_shape_signals
                     SET spot_at_resolution = ?, resolved_at = ?,
                         resolution_type = ?, was_correct = ?, notes = ?
-                    WHERE DATE(detected_at) = ? AND signal_level = 'CONFIRMED'
-                    AND resolved_at IS NULL
-                    ORDER BY detected_at DESC LIMIT 1
+                    WHERE rowid = (
+                        SELECT rowid FROM v_shape_signals
+                        WHERE DATE(detected_at) = ? AND signal_level = 'CONFIRMED'
+                        AND resolved_at IS NULL
+                        ORDER BY detected_at DESC LIMIT 1
+                    )
                 """, (spot, now.strftime('%Y-%m-%d %H:%M:%S'),
                       resolution_type, was_correct, notes, today))
                 conn.commit()

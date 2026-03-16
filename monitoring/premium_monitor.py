@@ -71,6 +71,11 @@ class PremiumMonitor:
         # Tick counter for health diagnostics
         self._tick_count: int = 0
 
+        # Core strike tokens — always subscribed for orderflow collection
+        # (ATM, ATM±100 — both CE and PE = 6 strikes)
+        self._core_tokens: Dict[int, dict] = {}  # token -> {strike, option_type}
+        self._core_spot: float = 0.0  # spot price for core depth snapshots
+
     def set_exit_callback(self, callback: Callable):
         """Set the callback for SL/target hit detection.
 
@@ -186,12 +191,15 @@ class PremiumMonitor:
         log.info("Premium monitor stopped")
 
     def _on_connect(self, ws, response):
-        """WebSocket connected — subscribe to all tracked tokens."""
+        """WebSocket connected — subscribe to all tracked + core tokens."""
         tokens = list(self._token_to_trades.keys())
-        if tokens:
-            ws.subscribe(tokens)
-            ws.set_mode(ws.MODE_FULL, tokens)
-            log.info("WebSocket connected, subscribed", tokens=len(tokens))
+        core_tokens = list(self._core_tokens.keys())
+        all_tokens = list(set(tokens + core_tokens))
+        if all_tokens:
+            ws.subscribe(all_tokens)
+            ws.set_mode(ws.MODE_FULL, all_tokens)
+            log.info("WebSocket connected, subscribed",
+                     trade_tokens=len(tokens), core_tokens=len(core_tokens))
         else:
             log.info("WebSocket connected, no tokens to subscribe")
 
@@ -347,6 +355,96 @@ class PremiumMonitor:
             }
 
         return result
+
+    def update_core_strikes(self, spot_price: float):
+        """Subscribe to 6 core strikes (ATM, ATM±100 CE+PE) for orderflow collection.
+
+        Called every 3-min cycle by the scheduler after spot price is known.
+        Only re-subscribes if ATM has changed.
+
+        # TODO: Future orderflow strategy — use core-strike OBI (bid/ask imbalance)
+        # across 6 strikes to detect institutional positioning shifts.
+        # Need 30+ full-session days of clean data before validating.
+        # Key research: contrarian OBI signal showed 56.4% accuracy at 9-min horizon.
+        """
+        if not self._instrument_map or not self._ticker or not self._running:
+            return
+        if spot_price <= 0:
+            return
+
+        step = 50  # NIFTY strike interval
+        atm = round(spot_price / step) * step
+        strikes = [atm - 100, atm, atm + 100]
+        option_types = ["CE", "PE"]
+
+        expiry = self._instrument_map.get_current_expiry()
+        if not expiry:
+            return
+
+        new_tokens: Dict[int, dict] = {}
+        for s in strikes:
+            for ot in option_types:
+                inst = self._instrument_map.get_option_instrument(s, ot, expiry)
+                if inst:
+                    token = inst.get("instrument_token", 0)
+                    if token:
+                        new_tokens[token] = {"strike": s, "option_type": ot}
+
+        # Diff: find tokens to subscribe/unsubscribe
+        old_keys = set(self._core_tokens.keys())
+        new_keys = set(new_tokens.keys())
+        to_sub = new_keys - old_keys
+        to_unsub = old_keys - new_keys
+
+        # Don't unsub tokens that are also used by active trades
+        trade_tokens = set(self._token_to_trades.keys())
+        to_unsub -= trade_tokens
+
+        if to_sub or to_unsub:
+            try:
+                if to_unsub:
+                    self._ticker.unsubscribe(list(to_unsub))
+                if to_sub:
+                    self._ticker.subscribe(list(to_sub))
+                    self._ticker.set_mode(self._ticker.MODE_FULL, list(to_sub))
+                log.debug("Core strikes updated",
+                          subscribed=len(to_sub), unsubscribed=len(to_unsub),
+                          total_core=len(new_tokens))
+            except Exception as e:
+                log.error("Failed to update core strikes", error=str(e))
+
+        self._core_tokens = new_tokens
+        self._core_spot = spot_price
+
+    def get_core_depth_snapshot(self) -> list:
+        """Return depth snapshots for all core strike tokens with spot_price."""
+        snapshots = []
+        for token, info in self._core_tokens.items():
+            depth = self._latest_depth.get(token)
+            if not depth:
+                continue
+            buy_levels = depth.get('buy', [])
+            sell_levels = depth.get('sell', [])
+            total_bid = sum(l.get('quantity', 0) for l in buy_levels)
+            total_ask = sum(l.get('quantity', 0) for l in sell_levels)
+            obi = round(total_bid / total_ask, 3) if total_ask > 0 else 0.0
+            snapshots.append({
+                "instrument_token": token,
+                "strike": info["strike"],
+                "option_type": info["option_type"],
+                "spot_price": self._core_spot,
+                "total_bid_qty": total_bid,
+                "total_ask_qty": total_ask,
+                "bid_ask_imbalance": obi,
+                "best_bid_price": buy_levels[0]['price'] if buy_levels else 0,
+                "best_bid_qty": buy_levels[0]['quantity'] if buy_levels else 0,
+                "best_bid_orders": buy_levels[0].get('orders', 0) if buy_levels else 0,
+                "best_ask_price": sell_levels[0]['price'] if sell_levels else 0,
+                "best_ask_qty": sell_levels[0]['quantity'] if sell_levels else 0,
+                "best_ask_orders": sell_levels[0].get('orders', 0) if sell_levels else 0,
+                "depth_json": json.dumps(depth),
+            })
+        return snapshots
 
     def get_depth_snapshot(self) -> list:
         """Return depth snapshots for all monitored trades with cached WebSocket depth."""

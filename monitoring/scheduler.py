@@ -165,6 +165,9 @@ class OIScheduler:
             # Save snapshot to database
             save_snapshot(timestamp, spot_price, strikes_data, current_expiry)
 
+            # Update core strike subscriptions for orderflow collection
+            self.premium_monitor.update_core_strikes(spot_price)
+
             # Get price history for momentum calculation
             price_history = get_recent_price_trend(lookback_minutes=9)
 
@@ -588,10 +591,17 @@ class OIScheduler:
             self.socketio.emit("pnl_update", pnl_data)
 
     def _save_orderflow_depth(self):
-        """Save orderflow depth snapshot every 10s for active trades."""
+        """Save orderflow depth snapshot every 10s for active trades + core strikes."""
         if not self.is_market_open():
             return
         depth_records = self.premium_monitor.get_depth_snapshot()
+        core_records = self.premium_monitor.get_core_depth_snapshot()
+        # Merge, deduplicating by instrument_token
+        seen_tokens = {r["instrument_token"] for r in depth_records}
+        for r in core_records:
+            if r["instrument_token"] not in seen_tokens:
+                depth_records.append(r)
+                seen_tokens.add(r["instrument_token"])
         if depth_records:
             save_orderflow_depth(depth_records)
 

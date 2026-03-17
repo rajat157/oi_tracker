@@ -58,37 +58,6 @@ class ScalperConfig:
 
 
 # ---------------------------------------------------------------------------
-# MC (Momentum Continuation) — mechanical rally catcher
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class MCConfig:
-    """Mechanical momentum continuation strategy — catches intraday rallies."""
-    TIME_START: time = time(10, 0)
-    TIME_END: time = time(14, 0)
-    FORCE_CLOSE_TIME: time = time(15, 15)
-    MAX_TRADES_PER_DAY: int = 1
-    COOLDOWN_MINUTES: int = 12
-    MIN_PREMIUM: float = 100.0
-    MAX_PREMIUM: float = 500.0
-    # Rally detection
-    RALLY_MIN_PTS: float = 25.0
-    PULLBACK_MIN_PCT: float = 0.20
-    PULLBACK_MAX_PCT: float = 0.65
-    PULLBACK_CANDLES: int = 5       # 15 min window
-    # Exit management
-    SL_PCT: float = 15.0            # -15% premium
-    TARGET_PCT: float = 8.0         # +8% premium
-    TRAIL_1_TRIGGER: float = 10.0   # after +10%, SL → +4%
-    TRAIL_1_LOCK: float = 4.0
-    TRAIL_2_TRIGGER: float = 15.0   # after +15%, SL → +10%
-    TRAIL_2_LOCK: float = 10.0
-    TIME_EXIT_MIN: int = 30         # exit flat trades after 30m
-    TIME_EXIT_DEAD_PCT: float = 3.0 # "flat" = |P&L| < 3%
-    MAX_DURATION_MIN: int = 45      # force exit after 45m
-
-
-# ---------------------------------------------------------------------------
 # RR (Rally Rider) — regime-adaptive, Claude-agent-powered rally catcher
 # ---------------------------------------------------------------------------
 

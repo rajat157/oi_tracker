@@ -38,8 +38,6 @@ oi_tracker/
 │   ├── scalper.py         # ScalperStrategy (Claude-powered multi-trade/day)
 │   ├── scalper_engine.py  # Technical analysis for premium charts (VWAP, S/R, swings)
 │   ├── scalper_agent.py   # Claude Code FNO expert agent (subprocess via `claude -p`)
-│   ├── mc_strategy.py     # MCStrategy (mechanical rally catcher, max 1/day)
-│   ├── mc_engine.py       # MC signal detection (rally + pullback + resumption)
 │   ├── rr_strategy.py     # RRStrategy (regime-adaptive, Claude-agent-powered)
 │   ├── rr_engine.py       # RR signal detection (MC/MOM/VWAP) + regime classification
 │   └── rr_agent.py        # RR Claude subprocess with regime-aware prompt
@@ -94,9 +92,8 @@ Then open http://localhost:5000 in your browser.
 3. **OI Analyzer** performs tug-of-war analysis
 4. **Database** stores snapshots and analysis results
 5. **Scalper Agent** (`strategies/`) evaluates signals via Claude-powered analysis
-6. **MC Strategy** (`strategies/mc_strategy.py`) detects momentum continuation rallies mechanically
-7. **Rally Rider** (`strategies/rr_strategy.py`) regime-adaptive rally catcher with Claude agent
-8. **AlertBroker** (`alerts/broker.py`) subscribes to EventBus events and routes to Telegram
+6. **Rally Rider** (`strategies/rr_strategy.py`) regime-adaptive rally catcher with Claude agent
+7. **AlertBroker** (`alerts/broker.py`) subscribes to EventBus events and routes to Telegram
 7. **SocketIO** pushes updates to connected dashboard clients
 
 ### Trading Strategy
@@ -110,17 +107,6 @@ Then open http://localhost:5000 in your browser.
 - Signal: Claude Code subprocess (`claude -p`) analyzes full premium chart
 - SL: -10% (technical level) | Target: +10%
 - Real-time monitoring via WebSocket between 3-min cycles
-
-#### MC Strategy (mc_strategy.py + mc_engine.py) — Mechanical Rally Catcher
-- **WR:** 54.2% backtested (300 days) | **PF:** 1.21 | **Max DD:** 7.7%
-- Time Window: 10:00 - 14:00 IST
-- Max 1 trade per day (12-min cooldown)
-- Strikes: Same as scalper (2 ITM)
-- Signal: Mechanical — 25+ pt rally from open, 20-65% pullback, resumption + weekly trend filter
-- SL: -15% | Target: +8% | 2-stage trailing stop (+10%→4%, +15%→10%)
-- Time exits: 30m flat, 45m forced, 15:15 EOD
-- Paper trading only (no real orders)
-- Independent from Scalper Agent — both run simultaneously
 
 #### Rally Rider (rr_strategy.py + rr_engine.py + rr_agent.py) — Regime-Adaptive Claude Agent
 - **WR:** 60.2% backtested (300 days, 727 trades) | **PF:** 1.90 | Passes all 15 months
@@ -157,8 +143,6 @@ Then open http://localhost:5000 in your browser.
 | `/api/market-status` | GET | Market open/close status |
 | `/api/scalp-trades` | GET | Scalper trade history |
 | `/api/scalp-stats` | GET | Scalper trade statistics |
-| `/api/mc-trades` | GET | MC strategy trade history |
-| `/api/mc-stats` | GET | MC strategy trade statistics |
 | `/api/rr-trades` | GET | Rally Rider trade history |
 | `/api/rr-stats` | GET | Rally Rider trade statistics |
 | `/api/logs` | GET | System logs with filtering |
@@ -173,7 +157,6 @@ Then open http://localhost:5000 in your browser.
 | `pm_history` | Premium momentum history |
 | `detected_patterns` | PM reversal patterns |
 | `scalp_trades` | Scalper trade lifecycle (multi-trade/day) |
-| `mc_trades` | MC rally catcher trade lifecycle (max 1/day) |
 | `rr_trades` | Rally Rider trade lifecycle (regime-adaptive, max 3/day) |
 | `nifty_history` | NIFTY 50 3-min OHLC candles (300 days) |
 | `vix_history` | India VIX 3-min candles (300 days) |

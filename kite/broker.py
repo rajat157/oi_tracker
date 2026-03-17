@@ -79,6 +79,39 @@ def place_order(trading_symbol: str, transaction_type: str = "BUY",
         return {"status": "error", "message": str(e)}
 
 
+def get_order_status(order_id: str) -> dict:
+    """Get order fill details from Kite API.
+
+    Returns: {"status": "success", "average_price": float,
+              "filled_quantity": int, "order_status": str} or error dict.
+    """
+    headers = _headers()
+    if not headers:
+        return {"status": "error", "message": "No access token"}
+
+    try:
+        resp = requests.get(f"{BASE_URL}/orders/{order_id}", headers=headers, timeout=10)
+        result = resp.json()
+
+        if result.get("status") == "success":
+            # Kite returns list of order state transitions; last is current
+            history = result.get("data", [])
+            if history:
+                last = history[-1] if isinstance(history, list) else history
+                return {
+                    "status": "success",
+                    "average_price": float(last.get("average_price", 0)),
+                    "filled_quantity": int(last.get("filled_quantity", 0)),
+                    "order_status": last.get("status", ""),
+                }
+
+        log.error("Order status query failed", result=result)
+        return {"status": "error", "message": result.get("message", "Unknown")}
+    except Exception as e:
+        log.error("Order status query error", error=str(e))
+        return {"status": "error", "message": str(e)}
+
+
 def place_gtt_oco(trading_symbol: str, entry_price: float,
                   sl_price: float, target_price: float,
                   quantity: int = 65, product: str = "NRML") -> dict:

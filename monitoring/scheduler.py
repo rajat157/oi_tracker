@@ -315,7 +315,9 @@ class OIScheduler:
             scalper = self.strategies["scalper"]
             try:
                 # Check/update active scalp trade
-                scalp_update = scalper.check_and_update(strikes_data)
+                scalp_update = scalper.check_and_update(
+                        strikes_data, analysis=analysis,
+                        premium_monitor=self.premium_monitor)
                 if scalp_update:
                     log.info("Scalp trade updated",
                              action=scalp_update['action'],
@@ -339,7 +341,9 @@ class OIScheduler:
             # ===== RALLY RIDER (Regime-adaptive, Claude-agent-powered) =====
             rr = self.strategies["rally_rider"]
             try:
-                rr_update = rr.check_and_update(strikes_data)
+                rr_update = rr.check_and_update(
+                        strikes_data, analysis=analysis,
+                        premium_monitor=self.premium_monitor)
                 if rr_update:
                     log.info("RR trade updated",
                              action=rr_update['action'],

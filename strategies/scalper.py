@@ -214,10 +214,12 @@ class ScalperStrategy(BaseTracker):
 
         # Place real order if live trading enabled
         if self.order_executor and trade_id:
-            self.order_executor.place_entry(
+            order_result = self.order_executor.place_entry(
                 trade_id=trade_id, strike=strike, option_type=option_type,
                 entry_premium=entry, sl_premium=sl, target_premium=target,
             )
+            if order_result.actual_fill_price > 0:
+                entry = order_result.actual_fill_price
 
         self._publish(EventType.TRADE_CREATED, {
             "trade_id": trade_id, "direction": direction, "strike": strike,
@@ -277,6 +279,99 @@ class ScalperStrategy(BaseTracker):
             return _resolve("WON", "TARGET")
         if self.is_past_force_close(now):
             return _resolve("WON" if ((current - entry) / entry * 100) > 0 else "LOST", "EOD")
+
+        # Claude active trade monitoring
+        created = (datetime.fromisoformat(trade["created_at"])
+                   if isinstance(trade["created_at"], str) else trade["created_at"])
+        elapsed_min = (now - created).total_seconds() / 60
+        analysis = kwargs.get("analysis", {})
+        premium_monitor = kwargs.get("premium_monitor")
+
+        if elapsed_min >= 6 and now.time() < time(14, 45) and self._agent is not None:
+            monitor_result = self._call_trade_monitor(
+                trade, current, analysis, premium_monitor, elapsed_min)
+            if monitor_result:
+                return monitor_result
+
+        return None
+
+    def _call_trade_monitor(
+        self, trade: Dict, current: float,
+        analysis: dict, premium_monitor, elapsed_min: float,
+    ) -> Optional[Dict]:
+        """Call Claude to monitor active trade. Returns exit dict or None."""
+        try:
+            spot = analysis.get("spot_price", 0)
+            if spot <= 0:
+                return None
+            chart = self.engine.build_premium_chart(
+                spot,
+                ce_strike=trade["strike"] if trade["option_type"] == "CE" else None,
+                pe_strike=trade["strike"] if trade["option_type"] == "PE" else None,
+            )
+            if not chart:
+                return None
+            chart_text = self.engine.format_chart_for_prompt(chart)
+
+            entry = trade["entry_premium"]
+            trade_context = {
+                "trade_id": trade["id"],
+                "entry_premium": entry,
+                "current_premium": current,
+                "pnl_pct": ((current - entry) / entry) * 100,
+                "sl_premium": trade["sl_premium"],
+                "target_premium": trade["target_premium"],
+                "trail_stage": trade.get("trail_stage", 0),
+                "option_type": trade["option_type"],
+                "strike": trade["strike"],
+                "direction": trade["direction"],
+                "time_in_trade_min": elapsed_min,
+                "max_premium_reached": trade.get("max_premium_reached", current),
+            }
+
+            result = self.agent.monitor_active_trade(chart_text, trade_context, analysis)
+            if not result:
+                return None
+
+            action = result.get("action", "HOLD")
+            now = datetime.now()
+
+            if action == "TIGHTEN_SL":
+                from kite.order_executor import OrderExecutor
+                new_sl = OrderExecutor.round_to_tick(result["new_sl_premium"], "down")
+                self.trade_repo.update_trade(
+                    self.table_name, trade["id"], sl_premium=new_sl)
+                if self.order_executor:
+                    self.order_executor.modify_sl(
+                        trade["id"], new_sl, current, trade["target_premium"])
+                if premium_monitor:
+                    premium_monitor.update_trade_sl(trade["id"], new_sl)
+                log.info("Claude tightened SL", trade_id=trade["id"],
+                         old_sl=trade["sl_premium"], new_sl=new_sl,
+                         reasoning=result.get("reasoning", ""))
+                return None  # SL modified, don't exit
+
+            if action == "EXIT_NOW":
+                if self.order_executor:
+                    self.order_executor.place_exit(
+                        trade["id"], trade["strike"], trade["option_type"])
+                pnl = ((current - entry) / entry) * 100
+                status = "WON" if pnl > 0 else "LOST"
+                self.trade_repo.update_trade(
+                    self.table_name, trade["id"],
+                    status=status, resolved_at=now,
+                    exit_premium=current, exit_reason="CLAUDE_EXIT",
+                    profit_loss_pct=pnl)
+                self._publish(EventType.TRADE_EXITED, {
+                    "trade_id": trade["id"], "action": status, "pnl": pnl,
+                    "reason": "CLAUDE_EXIT",
+                    "alert_message": self._format_exit_alert(
+                        trade, current, f"CLAUDE_EXIT: {result.get('reasoning', '')}", pnl),
+                })
+                return {"action": status, "pnl": pnl, "reason": "CLAUDE_EXIT"}
+
+        except Exception as e:
+            log.error("Trade monitor error", error=str(e), trade_id=trade["id"])
         return None
 
     def get_active(self) -> Optional[Dict]:

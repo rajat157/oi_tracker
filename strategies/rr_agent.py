@@ -295,3 +295,45 @@ Respond with ONLY valid JSON (no markdown, no explanation outside the JSON):
                  confidence=result.get("confidence"))
 
         return result
+
+    def monitor_active_trade(
+        self,
+        chart_text: str,
+        trade_context: Dict,
+        analysis_context: Dict,
+    ) -> Optional[Dict]:
+        """Evaluate an active trade: HOLD, TIGHTEN_SL, or EXIT_NOW.
+
+        Returns dict with action/new_sl_premium/reasoning, or None (= HOLD).
+        """
+        from strategies.trade_monitor import (
+            build_monitor_prompt, validate_monitor_response,
+        )
+
+        prompt = build_monitor_prompt(chart_text, trade_context, analysis_context)
+
+        log.info("Calling Claude for RR trade monitoring",
+                 trade_id=trade_context.get("trade_id"),
+                 pnl=f"{trade_context.get('pnl_pct', 0):+.1f}%",
+                 prompt_length=len(prompt))
+
+        result = self.call_claude(prompt)
+        if not result:
+            return None
+
+        action = result.get("action", "HOLD")
+        if action == "HOLD":
+            log.info("Claude RR monitor: HOLD",
+                     reasoning=result.get("reasoning", ""))
+            return None
+
+        if not validate_monitor_response(result, trade_context):
+            log.warning("Claude RR monitor response invalid", result=result)
+            return None
+
+        log.info("Claude RR monitor action",
+                 action=action,
+                 new_sl=result.get("new_sl_premium"),
+                 reasoning=result.get("reasoning", ""))
+
+        return result

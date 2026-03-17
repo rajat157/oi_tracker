@@ -31,6 +31,7 @@ class OrderResult:
     gtt_trigger_id: int = 0
     error: str = ""
     is_paper: bool = True
+    actual_fill_price: float = 0.0
 
 
 class OrderExecutor:
@@ -135,13 +136,29 @@ class OrderExecutor:
 
         order_id = entry_result["data"]["order_id"]
 
-        # Step 2: Place GTT OCO for SL + target
+        # Step 2: Query actual fill price for MARKET orders
+        actual_fill = entry
+        if order_type == "MARKET":
+            actual_fill = self._query_fill_price(order_id, expected=entry)
+
+        # Step 3: Recompute SL/target preserving percentage ratios
+        entry_for_gtt = entry
+        if actual_fill != entry and actual_fill > 0 and entry > 0:
+            sl_pct = (entry - sl) / entry
+            tgt_pct = (target - entry) / entry
+            sl = self.round_to_tick(actual_fill * (1 - sl_pct), "down")
+            target = self.round_to_tick(actual_fill * (1 + tgt_pct), "up")
+            entry_for_gtt = actual_fill
+            log.info("Fill price correction", trade_id=trade_id,
+                     expected=entry, actual=actual_fill, new_sl=sl, new_target=target)
+
+        # Step 4: Place GTT OCO for SL + target
         log.info("Placing GTT OCO", trade_id=trade_id, symbol=symbol,
                  sl=sl, target=target)
 
         gtt_result = place_gtt_oco(
             trading_symbol=symbol,
-            entry_price=entry,
+            entry_price=entry_for_gtt,
             sl_price=sl,
             target_price=target,
             quantity=self._quantity,
@@ -155,25 +172,31 @@ class OrderExecutor:
             log.error("GTT placement failed — entry order is LIVE, manual monitoring needed",
                       trade_id=trade_id, order_id=order_id, result=gtt_result)
 
-        # Step 3: Store in internal mapping
+        # Step 5: Store in internal mapping
         with self._lock:
             self._active_orders[trade_id] = order_id
             self._trade_symbols[trade_id] = symbol
             if gtt_trigger_id:
                 self._active_gtts[trade_id] = gtt_trigger_id
 
-        # Step 4: Update trade DB with order tracking
-        self._update_trade_order_info(trade_id, order_id, gtt_trigger_id)
+        # Step 6: Update trade DB with order tracking + corrected prices
+        self._update_trade_order_info(
+            trade_id, order_id, gtt_trigger_id,
+            actual_fill_price=actual_fill,
+            corrected_sl=sl if actual_fill != entry else 0,
+            corrected_target=target if actual_fill != entry else 0,
+        )
 
         log.info("Entry + GTT placed",
                  trade_id=trade_id, order_id=order_id,
-                 gtt_trigger_id=gtt_trigger_id)
+                 gtt_trigger_id=gtt_trigger_id, fill=actual_fill)
 
         return OrderResult(
             success=True,
             order_id=order_id,
             gtt_trigger_id=gtt_trigger_id,
             is_paper=False,
+            actual_fill_price=actual_fill,
         )
 
     def modify_sl(
@@ -347,18 +370,56 @@ class OrderExecutor:
                       strike=strike, type=option_type)
         return None
 
+    def _query_fill_price(self, order_id: str, expected: float,
+                          max_retries: int = 3, delay: float = 0.5) -> float:
+        """Query Kite API for actual fill price of a MARKET order.
+
+        Retries up to max_retries times since MARKET orders fill
+        near-instantly but status propagation may have slight delay.
+        Returns actual fill price, or expected price on failure.
+        """
+        import time as time_mod
+        from kite.broker import get_order_status
+
+        for attempt in range(max_retries):
+            result = get_order_status(order_id)
+            if result.get("status") == "success":
+                avg_price = result.get("average_price", 0)
+                order_status = result.get("order_status", "")
+                if order_status == "COMPLETE" and avg_price > 0:
+                    return self.round_to_tick(avg_price, "nearest")
+                if order_status in ("REJECTED", "CANCELLED"):
+                    log.warning("Order rejected/cancelled", order_id=order_id,
+                                status=order_status)
+                    return expected
+            if attempt < max_retries - 1:
+                time_mod.sleep(delay)
+
+        log.warning("Fill price query exhausted retries, using expected",
+                    order_id=order_id, expected=expected)
+        return expected
+
     def _update_trade_order_info(self, trade_id: int, order_id: str,
-                                  gtt_trigger_id: int) -> None:
-        """Update trade DB row with order tracking IDs."""
+                                  gtt_trigger_id: int,
+                                  actual_fill_price: float = 0.0,
+                                  corrected_sl: float = 0.0,
+                                  corrected_target: float = 0.0) -> None:
+        """Update trade DB row with order tracking IDs and fill price."""
         try:
             from db.trade_repo import TradeRepository
             repo = TradeRepository()
+            updates = dict(order_id=order_id, gtt_trigger_id=gtt_trigger_id)
+            if actual_fill_price > 0:
+                updates["actual_fill_price"] = actual_fill_price
+                updates["entry_premium"] = actual_fill_price
+            if corrected_sl > 0:
+                updates["sl_premium"] = corrected_sl
+            if corrected_target > 0:
+                updates["target_premium"] = corrected_target
             # Try scalp_trades first, then rr_trades
             for table in ("scalp_trades", "rr_trades"):
                 try:
-                    repo.update_trade(table, trade_id,
-                                      order_id=order_id,
-                                      gtt_trigger_id=gtt_trigger_id)
+                    repo.update_trade(table, trade_id, **updates)
                     return
                 except Exception:
                     continue
@@ -373,7 +434,8 @@ class OrderExecutor:
             with get_connection() as conn:
                 for table in ("scalp_trades", "rr_trades"):
                     for col, col_type in [("order_id", "TEXT"),
-                                           ("gtt_trigger_id", "INTEGER")]:
+                                           ("gtt_trigger_id", "INTEGER"),
+                                           ("actual_fill_price", "REAL")]:
                         try:
                             conn.execute(
                                 f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")

@@ -89,6 +89,13 @@ class PremiumMonitor:
         """Check if a trade is being monitored via WebSocket."""
         return trade_id in self._all_trades
 
+    def update_trade_sl(self, trade_id: int, new_sl: float) -> None:
+        """Update the SL for an actively monitored trade (e.g. Claude tightened SL)."""
+        trade = self._all_trades.get(trade_id)
+        if trade:
+            trade.sl_premium = new_sl
+            log.info("Monitor SL updated", trade_id=trade_id, new_sl=new_sl)
+
     def register_trade(self, trade: ActiveTrade):
         """Register a trade for real-time monitoring."""
         token = trade.instrument_token

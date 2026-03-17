@@ -1,0 +1,303 @@
+"""Tests for strategies/rr_strategy.py — RRStrategy (Rally Rider)."""
+
+from datetime import datetime, time
+from unittest.mock import patch, MagicMock
+
+import pytest
+
+from strategies.rr_strategy import RRStrategy, RREngine_round_to_tick
+from core.events import EventBus, EventType
+
+
+@pytest.fixture
+def repo():
+    r = MagicMock()
+    r.get_todays_trades.return_value = []
+    r.get_active.return_value = None
+    return r
+
+
+@pytest.fixture
+def strategy(repo):
+    return RRStrategy(trade_repo=repo)
+
+
+def _analysis(**kw):
+    d = {"spot_price": 24500.0, "verdict": "Slightly Bullish",
+         "signal_confidence": 70, "vix": 12.0}
+    d.update(kw)
+    return d
+
+
+class TestRRStrategy:
+    def test_tracker_type(self, strategy):
+        assert strategy.tracker_type == "rally_rider"
+        assert strategy.table_name == "rr_trades"
+        assert strategy.max_trades_per_day == 3
+        assert strategy.is_selling is False
+
+    def test_get_active_delegates(self, strategy, repo):
+        repo.get_active.return_value = None
+        assert strategy.get_active() is None
+        repo.get_active.assert_called_with("rr_trades")
+
+
+class TestShouldCreate:
+    def _setup_engine(self, strategy):
+        """Replace strategy engine with a mock configured for NORMAL regime."""
+        eng = MagicMock()
+        eng.classify_regime.return_value = "NORMAL"
+        eng.get_regime_params.return_value = {
+            "signals": {"MC", "MOM"}, "sl_pts": 40, "tgt_pts": 20, "max_hold": 35,
+            "direction": "BOTH", "time_start": time(9, 45),
+            "time_end": time(14, 15),
+            "cooldown": 8, "max_trades": 3,
+        }
+        strategy._engine = eng
+        return eng
+
+    def test_valid(self, strategy, repo):
+        self._setup_engine(strategy)
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            now = datetime(2025, 1, 1, 11, 0)
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert strategy.should_create(_analysis()) is True
+
+    def test_rejects_outside_regime_time(self, strategy, repo):
+        self._setup_engine(strategy)
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            now = datetime(2025, 1, 1, 9, 0)  # before 9:45
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert strategy.should_create(_analysis()) is False
+
+    def test_rejects_max_trades(self, strategy, repo):
+        self._setup_engine(strategy)
+        repo.get_todays_trades.return_value = [{"id": 1}, {"id": 2}, {"id": 3}]
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            now = datetime(2025, 1, 1, 11, 0)
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert strategy.should_create(_analysis()) is False
+
+    def test_rejects_cooldown(self, strategy, repo):
+        self._setup_engine(strategy)
+        # Last trade resolved 2 minutes ago, cooldown is 8
+        repo.get_todays_trades.return_value = [
+            {"id": 1, "resolved_at": "2025-01-01T10:58:00"}
+        ]
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            now = datetime(2025, 1, 1, 11, 0)
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            assert strategy.should_create(_analysis()) is False
+
+    def test_rejects_no_spot(self, strategy, repo):
+        self._setup_engine(strategy)
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            now = datetime(2025, 1, 1, 11, 0)
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert strategy.should_create(_analysis(spot_price=0)) is False
+
+    def test_rejects_active_trade(self, strategy, repo):
+        self._setup_engine(strategy)
+        repo.get_active.return_value = {"id": 1}
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            now = datetime(2025, 1, 1, 11, 0)
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            assert strategy.should_create(_analysis()) is False
+
+
+class TestCreateTrade:
+    def _signal(self, **overrides):
+        s = {
+            "action": "BUY_CE", "option_type": "CE", "strike": 24400,
+            "entry_premium": 200.05, "sl_premium": 180.10,
+            "target_premium": 220.15, "confidence": 75,
+            "reasoning": "Strong VWAP reclaim with momentum",
+            "signal_type": "MC", "regime": "NORMAL",
+            "signal_data": {"rally_pts": 35.0, "pullback_pct": 0.4,
+                            "regime": "NORMAL", "max_hold": 35,
+                            "weekly_trend": "UP"},
+        }
+        s.update(overrides)
+        return s
+
+    def test_creates_trade(self, repo):
+        bus = EventBus()
+        received = []
+        bus.subscribe(EventType.TRADE_CREATED, lambda et, d: received.append(d))
+
+        strategy = RRStrategy(trade_repo=repo, bus=bus)
+        repo.insert_trade.return_value = 42
+
+        trade_id = strategy.create_trade(self._signal(), _analysis(), {})
+
+        assert trade_id == 42
+        repo.insert_trade.assert_called_once()
+        call_kw = repo.insert_trade.call_args[1]
+        assert call_kw["direction"] == "BUY_CE"
+        assert call_kw["strike"] == 24400
+        assert call_kw["signal_type"] == "MC"
+        assert call_kw["regime"] == "NORMAL"
+        assert call_kw["agent_confidence"] == 75
+        assert call_kw["trail_stage"] == 0
+        assert len(received) == 1
+
+    def test_skips_low_confidence(self, strategy, repo):
+        result = strategy.create_trade(
+            self._signal(confidence=40), _analysis(), {})
+        assert result is None
+        repo.insert_trade.assert_not_called()
+
+    def test_skips_low_premium(self, strategy, repo):
+        result = strategy.create_trade(
+            self._signal(entry_premium=50.0), _analysis(), {})
+        assert result is None
+        repo.insert_trade.assert_not_called()
+
+    def test_skips_high_premium(self, strategy, repo):
+        result = strategy.create_trade(
+            self._signal(entry_premium=600.0), _analysis(), {})
+        assert result is None
+        repo.insert_trade.assert_not_called()
+
+    def test_tick_rounding_in_signal(self):
+        """Verify round_to_tick works as used in evaluate_signal."""
+        assert RREngine_round_to_tick(200.03) == 200.05
+        assert RREngine_round_to_tick(200.07) == 200.05
+        assert RREngine_round_to_tick(200.12) == 200.10
+
+
+class TestCheckAndUpdate:
+    def _trade(self, **overrides):
+        t = {
+            "id": 1, "strike": 24400, "option_type": "CE",
+            "direction": "BUY_CE", "created_at": "2025-01-01T10:00:00",
+            "entry_premium": 200.0, "sl_premium": 170.0,
+            "target_premium": 220.0, "trade_number": 1,
+            "max_premium_reached": 200.0, "min_premium_reached": 200.0,
+            "trail_stage": 0, "regime": "NORMAL",
+            "signal_data_json": '{"max_hold": 35}',
+        }
+        t.update(overrides)
+        return t
+
+    def test_sl_hit(self, strategy, repo):
+        repo.get_active.return_value = self._trade()
+        result = strategy.check_and_update({24400: {"ce_ltp": 165.0}})
+        assert result["action"] == "LOST"
+        assert result["reason"] == "SL"
+
+    def test_target_hit(self, strategy, repo):
+        repo.get_active.return_value = self._trade()
+        result = strategy.check_and_update({24400: {"ce_ltp": 225.0}})
+        assert result["action"] == "WON"
+        assert result["reason"] == "TARGET"
+
+    def test_trailing_stop_stage_1(self, strategy, repo):
+        # Premium at +12% from entry -> trail stage 1
+        repo.get_active.return_value = self._trade(target_premium=250.0)
+        result = strategy.check_and_update({24400: {"ce_ltp": 224.0}})
+        # Should NOT exit (target is 250), but trail should update
+        updates = repo.update_trade.call_args_list
+        found_trail = False
+        for call in updates:
+            kw = call[1] if len(call) > 1 else call.kwargs
+            if kw.get("trail_stage") == 1:
+                found_trail = True
+                # SL should be entry * 1.04 = 208.0 rounded to tick
+                assert kw["sl_premium"] == 208.0
+                break
+        assert found_trail
+
+    def test_trailing_stop_stage_2(self, strategy, repo):
+        # Premium at +18% from entry -> trail stage 2
+        repo.get_active.return_value = self._trade(trail_stage=1, sl_premium=208.0,
+                                                    target_premium=280.0)
+        result = strategy.check_and_update({24400: {"ce_ltp": 236.0}})
+        updates = repo.update_trade.call_args_list
+        found_trail = False
+        for call in updates:
+            kw = call[1] if len(call) > 1 else call.kwargs
+            if kw.get("trail_stage") == 2:
+                found_trail = True
+                assert kw["sl_premium"] == 220.0  # entry * 1.10
+                break
+        assert found_trail
+
+    def test_trail_sl_exit(self, strategy, repo):
+        # Trail stage 1 active, SL at 208, premium drops to 205
+        repo.get_active.return_value = self._trade(trail_stage=1, sl_premium=208.0,
+                                                    target_premium=280.0)
+        result = strategy.check_and_update({24400: {"ce_ltp": 205.0}})
+        assert result["action"] == "LOST"
+        assert result["reason"] == "TRAIL_SL"
+
+    def test_time_flat_exit(self, strategy, repo):
+        # Trade created 40 minutes ago, premium flat (max_hold=35)
+        repo.get_active.return_value = self._trade(
+            created_at="2025-01-01T10:00:00",
+            target_premium=280.0,
+            signal_data_json='{"max_hold": 35}',
+        )
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2025, 1, 1, 10, 40)
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            result = strategy.check_and_update({24400: {"ce_ltp": 201.0}})
+            # +0.5% < 3% dead zone, 40min > 35min max_hold
+            assert result is not None
+            assert result["reason"] == "TIME_FLAT"
+
+    def test_eod_exit(self, strategy, repo):
+        # Created 10 min ago (so MAX_TIME won't trigger), now past force close 15:15
+        repo.get_active.return_value = self._trade(
+            created_at="2025-01-01T15:10:00",
+            target_premium=280.0,
+        )
+        now = datetime(2025, 1, 1, 15, 20)
+        with patch("strategies.rr_strategy.datetime") as mock_dt, \
+             patch("core.base_tracker.datetime") as mock_bdt:
+            mock_dt.now.return_value = now
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            mock_bdt.now.return_value = now
+            mock_bdt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            result = strategy.check_and_update({24400: {"ce_ltp": 205.0}})
+            assert result is not None
+            assert result["reason"] == "EOD"
+
+    def test_max_time_exit(self, strategy, repo):
+        repo.get_active.return_value = self._trade(
+            created_at="2025-01-01T09:30:00",
+            target_premium=280.0,
+        )
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2025, 1, 1, 10, 20)  # 50 min
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            result = strategy.check_and_update({24400: {"ce_ltp": 210.0}})
+            assert result is not None
+            assert result["reason"] == "MAX_TIME"
+
+    def test_no_active(self, strategy, repo):
+        repo.get_active.return_value = None
+        assert strategy.check_and_update({}) is None
+
+
+class TestGetStats:
+    def test_delegates_to_repo(self, strategy, repo):
+        repo.get_stats.return_value = {"total": 5, "wins": 3}
+        stats = strategy.get_stats()
+        assert stats["total"] == 5
+        repo.get_stats.assert_called_once_with("rr_trades", 30)
+
+    def test_no_repo(self):
+        strategy = RRStrategy(trade_repo=None)
+        stats = strategy.get_stats()
+        assert stats["total"] == 0

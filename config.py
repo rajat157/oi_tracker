@@ -86,3 +86,50 @@ class MCConfig:
     TIME_EXIT_MIN: int = 30         # exit flat trades after 30m
     TIME_EXIT_DEAD_PCT: float = 3.0 # "flat" = |P&L| < 3%
     MAX_DURATION_MIN: int = 45      # force exit after 45m
+
+
+# ---------------------------------------------------------------------------
+# RR (Rally Rider) — regime-adaptive, Claude-agent-powered rally catcher
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RRConfig:
+    """Rally Rider — regime-adaptive, Claude-agent-powered rally catcher."""
+    TIME_START: time = time(9, 30)       # widest window (regime narrows it)
+    TIME_END: time = time(14, 30)
+    FORCE_CLOSE_TIME: time = time(15, 15)
+    MAX_TRADES_PER_DAY: int = 3
+    COOLDOWN_MINUTES: int = 8
+    MIN_PREMIUM: float = 80.0
+    MAX_PREMIUM: float = 500.0
+    MIN_AGENT_CONFIDENCE: int = 60
+    TRAIL_1_TRIGGER: float = 10.0
+    TRAIL_1_LOCK: float = 4.0
+    TRAIL_2_TRIGGER: float = 15.0
+    TRAIL_2_LOCK: float = 10.0
+    TIME_EXIT_DEAD_PCT: float = 3.0
+    MAX_DURATION_MIN: int = 45
+    REGIME_LOOKBACK_DAYS: int = 5
+
+
+# Regime -> per-regime params (SL/TGT in spot pts, converted to premium via delta)
+RR_REGIME_PARAMS = {
+    "HIGH_VOL_DOWN": {"signals": {"MC", "MOM"}, "sl_pts": 30, "tgt_pts": 40, "max_hold": 15,
+                      "direction": "CE_ONLY", "time_start": time(10, 30), "time_end": time(14, 0),
+                      "cooldown": 8, "max_trades": 2},
+    "HIGH_VOL_UP":   {"signals": {"MC", "VWAP"}, "sl_pts": 25, "tgt_pts": 35, "max_hold": 35,
+                      "direction": "PE_ONLY", "time_start": time(9, 45), "time_end": time(14, 15),
+                      "cooldown": 8, "max_trades": 2},
+    "LOW_VOL":       {"signals": {"MC"}, "sl_pts": 40, "tgt_pts": 25, "max_hold": 40,
+                      "direction": "PE_ONLY", "time_start": time(10, 30), "time_end": time(14, 0),
+                      "cooldown": 12, "max_trades": 1},
+    "NORMAL":        {"signals": {"MC", "MOM"}, "sl_pts": 40, "tgt_pts": 20, "max_hold": 35,
+                      "direction": "BOTH", "time_start": time(9, 45), "time_end": time(14, 15),
+                      "cooldown": 8, "max_trades": 3},
+    "TRENDING_DOWN": {"signals": {"MOM", "VWAP"}, "sl_pts": 40, "tgt_pts": 50, "max_hold": 30,
+                      "direction": "PE_ONLY", "time_start": time(9, 30), "time_end": time(14, 30),
+                      "cooldown": 6, "max_trades": 3},
+    "TRENDING_UP":   {"signals": {"MC", "MOM"}, "sl_pts": 40, "tgt_pts": 50, "max_hold": 40,
+                      "direction": "CE_ONLY", "time_start": time(9, 30), "time_end": time(14, 30),
+                      "cooldown": 6, "max_trades": 3},
+}

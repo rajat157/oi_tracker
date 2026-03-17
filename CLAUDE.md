@@ -1,7 +1,7 @@
 # NIFTY OI Tracker - Development Guide
 
 ## Overview
-A Python-based web dashboard that fetches NIFTY option chain data from NSE every 3 minutes and analyzes OI to determine market direction using a "tug-of-war" concept. Includes a Claude-powered Scalper Agent for automated trade tracking.
+A Python-based web dashboard that fetches NIFTY option chain data from NSE every 3 minutes and analyzes OI to determine market direction using a "tug-of-war" concept. Includes Claude-powered trading agents (Scalper + Rally Rider) for automated trade tracking.
 
 ## Project Structure
 ```
@@ -39,7 +39,10 @@ oi_tracker/
 │   ├── scalper_engine.py  # Technical analysis for premium charts (VWAP, S/R, swings)
 │   ├── scalper_agent.py   # Claude Code FNO expert agent (subprocess via `claude -p`)
 │   ├── mc_strategy.py     # MCStrategy (mechanical rally catcher, max 1/day)
-│   └── mc_engine.py       # MC signal detection (rally + pullback + resumption)
+│   ├── mc_engine.py       # MC signal detection (rally + pullback + resumption)
+│   ├── rr_strategy.py     # RRStrategy (regime-adaptive, Claude-agent-powered)
+│   ├── rr_engine.py       # RR signal detection (MC/MOM/VWAP) + regime classification
+│   └── rr_agent.py        # RR Claude subprocess with regime-aware prompt
 ├── monitoring/            # Scheduler + premium monitor
 │   ├── scheduler.py       # APScheduler for 3-minute polling + trade orchestration
 │   └── premium_monitor.py # Real-time premium monitoring via Kite WebSocket
@@ -92,7 +95,8 @@ Then open http://localhost:5000 in your browser.
 4. **Database** stores snapshots and analysis results
 5. **Scalper Agent** (`strategies/`) evaluates signals via Claude-powered analysis
 6. **MC Strategy** (`strategies/mc_strategy.py`) detects momentum continuation rallies mechanically
-7. **AlertBroker** (`alerts/broker.py`) subscribes to EventBus events and routes to Telegram
+7. **Rally Rider** (`strategies/rr_strategy.py`) regime-adaptive rally catcher with Claude agent
+8. **AlertBroker** (`alerts/broker.py`) subscribes to EventBus events and routes to Telegram
 7. **SocketIO** pushes updates to connected dashboard clients
 
 ### Trading Strategy
@@ -117,6 +121,18 @@ Then open http://localhost:5000 in your browser.
 - Time exits: 30m flat, 45m forced, 15:15 EOD
 - Paper trading only (no real orders)
 - Independent from Scalper Agent — both run simultaneously
+
+#### Rally Rider (rr_strategy.py + rr_engine.py + rr_agent.py) — Regime-Adaptive Claude Agent
+- **WR:** 60.2% backtested (300 days, 727 trades) | **PF:** 1.90 | Passes all 15 months
+- 6 market regimes: HIGH_VOL_DOWN, HIGH_VOL_UP, LOW_VOL, NORMAL, TRENDING_DOWN, TRENDING_UP
+- Per-regime parameters: time window, direction filter, SL/TGT pts, max trades, cooldown
+- 3 signal types: MC (rally+pullback), MOM (4 consecutive candles), VWAP (spot crosses VWAP)
+- Claude agent confirms/rejects mechanical signals with regime context + premium chart
+- Tick rounding: all premiums at 0.05 increments
+- 2-stage trailing stop (+10%→4%, +15%→10%)
+- Time exits: regime-specific max_hold (flat), 45m forced, 15:15 EOD
+- Max 3 trades/day (regime may narrow), 8-min cooldown (regime may adjust)
+- Strikes: ATM - 100 for CE, ATM + 100 for PE (2 ITM)
 
 ### Telegram Alerts
 - **Main bot** (`TELEGRAM_BOT_TOKEN`): All alerts to Mason
@@ -143,6 +159,8 @@ Then open http://localhost:5000 in your browser.
 | `/api/scalp-stats` | GET | Scalper trade statistics |
 | `/api/mc-trades` | GET | MC strategy trade history |
 | `/api/mc-stats` | GET | MC strategy trade statistics |
+| `/api/rr-trades` | GET | Rally Rider trade history |
+| `/api/rr-stats` | GET | Rally Rider trade statistics |
 | `/api/logs` | GET | System logs with filtering |
 
 ## Database Tables
@@ -156,6 +174,7 @@ Then open http://localhost:5000 in your browser.
 | `detected_patterns` | PM reversal patterns |
 | `scalp_trades` | Scalper trade lifecycle (multi-trade/day) |
 | `mc_trades` | MC rally catcher trade lifecycle (max 1/day) |
+| `rr_trades` | Rally Rider trade lifecycle (regime-adaptive, max 3/day) |
 | `nifty_history` | NIFTY 50 3-min OHLC candles (300 days) |
 | `vix_history` | India VIX 3-min candles (300 days) |
 | `system_logs` | Structured log storage |
@@ -171,7 +190,7 @@ Then open http://localhost:5000 in your browser.
 - Python 3.11+
 - Kite Connect API credentials (in `.env`)
 - UV package manager
-- Claude Code CLI (`claude` on PATH) — required for Scalper Agent
+- Claude Code CLI (`claude` on PATH) — required for Scalper Agent and Rally Rider Agent
 
 ## Notes
 - NSE rate limits: 3-minute interval respects this

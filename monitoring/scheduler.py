@@ -23,6 +23,7 @@ from db.legacy import (
 from db.trade_repo import TradeRepository
 from strategies.scalper import ScalperStrategy
 from strategies.mc_strategy import MCStrategy
+from strategies.rr_strategy import RRStrategy
 from alerts.broker import AlertBroker
 from analysis.v_shape import VShapeDetector
 from analysis.pattern_tracker import check_patterns, log_failed_entry
@@ -58,6 +59,7 @@ class OIScheduler:
         self.strategies = {
             "scalper": ScalperStrategy(trade_repo=repo),
             "mc": MCStrategy(trade_repo=repo),
+            "rally_rider": RRStrategy(trade_repo=repo),
         }
         self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
@@ -353,6 +355,25 @@ class OIScheduler:
             except Exception as e:
                 log.error("Error in MC strategy", error=str(e))
 
+            # ===== RALLY RIDER (Regime-adaptive, Claude-agent-powered) =====
+            rr = self.strategies["rally_rider"]
+            try:
+                rr_update = rr.check_and_update(strikes_data)
+                if rr_update:
+                    log.info("RR trade updated",
+                             action=rr_update['action'],
+                             pnl=f"{rr_update['pnl']:.2f}%",
+                             reason=rr_update['reason'])
+
+                if rr.should_create(analysis):
+                    rr_signal = rr.evaluate_signal(analysis, strikes_data)
+                    if rr_signal:
+                        rr_id = rr.create_trade(rr_signal, analysis, strikes_data)
+                        if rr_id:
+                            self._register_trade_with_monitor(rr)
+            except Exception as e:
+                log.error("Error in Rally Rider strategy", error=str(e))
+
             # Add scalper data to analysis for dashboard
             try:
                 active_scalp = scalper.get_active()
@@ -388,6 +409,24 @@ class OIScheduler:
                 log.error("Error getting MC data for dashboard", error=str(e))
                 analysis["active_mc_trade"] = None
                 analysis["mc_stats"] = {}
+
+            # Add RR data to analysis for dashboard
+            try:
+                active_rr = rr.get_active()
+                if active_rr:
+                    strike_rr = strikes_data.get(active_rr["strike"], {})
+                    key_rr = "pe_ltp" if active_rr["option_type"] == "PE" else "ce_ltp"
+                    cur_rr = strike_rr.get(key_rr, 0)
+                    if cur_rr > 0:
+                        rr_pnl = ((cur_rr - active_rr["entry_premium"]) / active_rr["entry_premium"]) * 100
+                        active_rr["current_premium"] = cur_rr
+                        active_rr["current_pnl"] = rr_pnl
+                analysis["active_rr_trade"] = active_rr
+                analysis["rr_stats"] = rr.get_stats()
+            except Exception as e:
+                log.error("Error getting RR data for dashboard", error=str(e))
+                analysis["active_rr_trade"] = None
+                analysis["rr_stats"] = {}
 
             # Run daily learning update at market close
             self._check_daily_learning_update()

@@ -23,3 +23,9 @@ def api_scalp_stats():
 def api_mc_stats():
     s = _get_strategy("mc")
     return jsonify(s.get_stats() if s else {})
+
+
+@bp.route("/api/rr-stats")
+def api_rr_stats():
+    s = _get_strategy("rally_rider")
+    return jsonify(s.get_stats() if s else {})

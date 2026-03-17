@@ -248,6 +248,7 @@ class RRStrategy(BaseTracker):
             order_result = self.order_executor.place_entry(
                 trade_id=trade_id, strike=strike, option_type=option_type,
                 entry_premium=entry, sl_premium=sl, target_premium=target,
+                tracker_type=self.tracker_type,
             )
             if order_result.actual_fill_price > 0:
                 entry = order_result.actual_fill_price
@@ -317,7 +318,8 @@ class RRStrategy(BaseTracker):
         def _resolve(status, reason):
             # Place market exit for time-based exits (GTT handles SL/target)
             if reason in ("EOD", "MAX_TIME", "TIME_FLAT") and self.order_executor:
-                self.order_executor.place_exit(trade["id"], strike, option_type)
+                self.order_executor.place_exit(
+                    trade["id"], strike, option_type, tracker_type=self.tracker_type)
             final_pnl = ((current - entry) / entry) * 100
             self.trade_repo.update_trade(
                 self.table_name, trade["id"],
@@ -439,7 +441,8 @@ class RRStrategy(BaseTracker):
             if action == "EXIT_NOW":
                 if self.order_executor:
                     self.order_executor.place_exit(
-                        trade["id"], trade["strike"], trade["option_type"])
+                        trade["id"], trade["strike"], trade["option_type"],
+                        tracker_type=self.tracker_type)
                 pnl = ((current - entry) / entry) * 100
                 status = "WON" if pnl > 0 else "LOST"
                 self.trade_repo.update_trade(

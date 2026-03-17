@@ -15,6 +15,7 @@ def live_executor():
     ex._lots = 1
     ex._quantity = 65
     ex._product = "NRML"
+    ex._live_strategies = set()  # empty = all strategies live
     ex._active_gtts = {}
     ex._active_orders = {}
     ex._trade_symbols = {}

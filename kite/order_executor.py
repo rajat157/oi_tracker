@@ -46,6 +46,10 @@ class OrderExecutor:
         self._lots = _live_cfg.LOTS
         self._quantity = _live_cfg.quantity
         self._product = _live_cfg.PRODUCT
+        # Per-strategy override: comma-separated list of tracker_types allowed to trade live
+        # Empty string = all strategies live when ENABLED=true
+        _strats = _live_cfg.STRATEGIES.strip()
+        self._live_strategies: set = set(s.strip() for s in _strats.split(",") if s.strip()) if _strats else set()
         self._instrument_map = instrument_map
         self._active_gtts: Dict[int, int] = {}      # trade_id -> gtt_trigger_id
         self._active_orders: Dict[int, str] = {}     # trade_id -> order_id
@@ -53,10 +57,23 @@ class OrderExecutor:
         self._lock = threading.Lock()
 
         if self._enabled:
-            log.info("OrderExecutor LIVE mode",
-                     lots=self._lots, qty=self._quantity, product=self._product)
+            if self._live_strategies:
+                log.info("OrderExecutor LIVE mode (selective)",
+                         strategies=self._live_strategies,
+                         lots=self._lots, qty=self._quantity)
+            else:
+                log.info("OrderExecutor LIVE mode (all strategies)",
+                         lots=self._lots, qty=self._quantity, product=self._product)
         else:
             log.info("OrderExecutor paper mode (LIVE_TRADING_ENABLED=false)")
+
+    def is_strategy_live(self, tracker_type: str) -> bool:
+        """Check if a specific strategy is enabled for live trading."""
+        if not self._enabled:
+            return False
+        if not self._live_strategies:
+            return True  # empty = all strategies live
+        return tracker_type in self._live_strategies
 
     def set_instrument_map(self, instrument_map) -> None:
         """Set instrument map (called after Kite auth in scheduler.start)."""
@@ -83,14 +100,14 @@ class OrderExecutor:
         sl_premium: float,
         target_premium: float,
         order_type: str = "MARKET",
+        tracker_type: str = "",
     ) -> OrderResult:
         """Place entry order + GTT OCO for SL/target.
 
         Called by strategy.create_trade() AFTER DB insert succeeds.
-        If not enabled, returns paper result. If order fails, logs error
-        but does NOT roll back the DB trade.
+        If not enabled (globally or for this strategy), returns paper result.
         """
-        if not self._enabled:
+        if not self.is_strategy_live(tracker_type):
             return OrderResult(success=True, is_paper=True)
 
         from kite.broker import is_authenticated, place_order, place_gtt_oco
@@ -281,12 +298,13 @@ class OrderExecutor:
         trade_id: int,
         strike: int,
         option_type: str,
+        tracker_type: str = "",
     ) -> OrderResult:
         """Place market sell order for time-based exits (EOD, MAX_TIME, TIME_FLAT).
 
         Cancels GTT first, then places market sell.
         """
-        if not self._enabled:
+        if not self.is_strategy_live(tracker_type):
             return OrderResult(success=True, is_paper=True)
 
         # Cancel GTT first

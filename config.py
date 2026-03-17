@@ -62,9 +62,14 @@ class LiveTradingConfig:
     """Live trading master switch and parameters.
 
     Controls whether strategies place real Kite orders or remain paper-only.
+    Per-strategy override: LIVE_TRADING_STRATEGIES (comma-separated list).
+    If empty, all strategies are live when ENABLED=true.
     """
     ENABLED: bool = field(
         default_factory=lambda: os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
+    )
+    STRATEGIES: str = field(
+        default_factory=lambda: os.getenv("LIVE_TRADING_STRATEGIES", "")
     )
     LOTS: int = field(
         default_factory=lambda: int(os.getenv("LIVE_TRADING_LOTS", "1"))

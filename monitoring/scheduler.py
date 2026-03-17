@@ -23,6 +23,7 @@ from db.legacy import (
 from db.trade_repo import TradeRepository
 from strategies.scalper import ScalperStrategy
 from strategies.rr_strategy import RRStrategy
+from kite.order_executor import OrderExecutor
 from alerts.broker import AlertBroker
 from analysis.v_shape import VShapeDetector
 from analysis.pattern_tracker import check_patterns, log_failed_entry
@@ -54,10 +55,11 @@ class OIScheduler:
         self.is_running = False
         self.last_purge_date = None
         self.last_learning_date = None
+        self.order_executor = OrderExecutor()
         repo = TradeRepository()
         self.strategies = {
-            "scalper": ScalperStrategy(trade_repo=repo),
-            "rally_rider": RRStrategy(trade_repo=repo),
+            "scalper": ScalperStrategy(trade_repo=repo, order_executor=self.order_executor),
+            "rally_rider": RRStrategy(trade_repo=repo, order_executor=self.order_executor),
         }
         self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
@@ -491,6 +493,8 @@ class OIScheduler:
             self.kite_fetcher._refresh_token()
             self.kite_fetcher._instrument_map.refresh()
             self.premium_monitor._instrument_map = self.kite_fetcher._instrument_map
+            self.order_executor.set_instrument_map(self.kite_fetcher._instrument_map)
+            self.order_executor._migrate_schema()
             self.premium_monitor.scan_existing_trades(self.strategies)
             self.premium_monitor.start()
         except Exception as e:

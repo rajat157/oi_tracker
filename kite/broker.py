@@ -15,15 +15,16 @@ BASE_URL = "https://api.kite.trade"
 
 
 def round_to_tick(price: float, direction: str = "nearest") -> float:
-    """Round price to nearest 0.5 (e.g., 86.2 -> 86.0 or 86.5).
+    """Round price to nearest 0.05 (NSE option tick size).
+
     direction: 'up' for targets, 'down' for SL, 'nearest' for entry.
     """
     import math
     if direction == "up":
-        return math.ceil(price * 2) / 2  # Round up to 0.5
+        return round(math.ceil(price * 20) / 20, 2)
     elif direction == "down":
-        return math.floor(price * 2) / 2  # Round down to 0.5
-    return round(price * 2) / 2  # Nearest 0.5
+        return round(math.floor(price * 20) / 20, 2)
+    return round(round(price * 20) / 20, 2)
 
 
 def _headers():

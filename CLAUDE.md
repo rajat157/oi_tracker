@@ -28,7 +28,8 @@ oi_tracker/
 │   ├── iv.py              # Black-Scholes IV calculation
 │   ├── auth.py            # OAuth login flow + token storage
 │   ├── instruments.py     # NFO instrument lookup and caching
-│   ├── broker.py          # Order placement + GTT
+│   ├── broker.py          # Raw Kite API: place_order, place_gtt_oco, modify_gtt, delete_gtt
+│   ├── order_executor.py  # Unified OrderExecutor: entry + GTT OCO + trailing SL + exit
 │   └── data.py            # KiteDataFetcher (option chain + futures OI)
 ├── analysis/              # OI analysis, predictions, pattern detection
 │   ├── tug_of_war.py      # Core OI tug-of-war analysis (was oi_analyzer.py)
@@ -120,6 +121,15 @@ Then open http://localhost:5000 in your browser.
 - Max 3 trades/day (regime may narrow), 8-min cooldown (regime may adjust)
 - Strikes: ATM - 100 for CE, ATM + 100 for PE (2 ITM)
 
+### Live Trading (OrderExecutor)
+- **Master switch**: `LIVE_TRADING_ENABLED=false` in `.env` (default: paper trading)
+- **Lots**: `LIVE_TRADING_LOTS=1` (1 lot = 65 qty)
+- **Flow**: Entry order (MARKET/LIMIT) → GTT OCO (SL + target) → trailing SL modifies GTT → exit cancels GTT
+- **Tick rounding**: All prices at 0.05 increments (`round_to_tick` in `kite/order_executor.py`)
+- **Unified**: Any strategy (Scalper, RR) uses the same `OrderExecutor` instance
+- **Error handling**: If order fails, paper trade continues. If GTT fails, WebSocket still monitors.
+- **Schema**: `order_id` + `gtt_trigger_id` columns on trade tables
+
 ### Telegram Alerts
 - **Main bot** (`TELEGRAM_BOT_TOKEN`): All alerts to Mason
 - Chat IDs configured in `.env` (comma-separated for multiple recipients)
@@ -172,6 +182,7 @@ Then open http://localhost:5000 in your browser.
 ## Requirements
 - Python 3.11+
 - Kite Connect API credentials (in `.env`)
+- For live trading: `LIVE_TRADING_ENABLED=true` + `LIVE_TRADING_LOTS=1` in `.env`
 - UV package manager
 - Claude Code CLI (`claude` on PATH) — required for Scalper Agent and Rally Rider Agent
 

@@ -40,9 +40,11 @@ class BaseTracker(ABC):
     is_selling: bool = False
     supports_pending: bool = False
 
-    def __init__(self, trade_repo: Any = None, bus: EventBus | None = None) -> None:
+    def __init__(self, trade_repo: Any = None, bus: EventBus | None = None,
+                 order_executor: Any = None) -> None:
         self.trade_repo = trade_repo
         self.bus = bus or _default_bus
+        self.order_executor = order_executor
 
     # ------------------------------------------------------------------
     # Abstract interface — each strategy implements these
@@ -147,6 +149,8 @@ class BaseTracker(ABC):
         if alert_message:
             event_data["alert_message"] = alert_message
         self._publish(EventType.TRADE_EXITED, event_data)
+        if self.order_executor:
+            self.order_executor.cancel_exit_orders(trade_id)
         log.info("force_exit", tracker=self.tracker_type, trade_id=trade_id, status=status, pnl=f"{pnl_pct:.2f}%", reason=reason)
 
     def _publish(self, event_type: EventType, data: dict) -> None:

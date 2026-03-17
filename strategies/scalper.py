@@ -212,6 +212,13 @@ class ScalperStrategy(BaseTracker):
                  entry=entry, sl=sl, target=target,
                  confidence=confidence, trade_num=trade_number)
 
+        # Place real order if live trading enabled
+        if self.order_executor and trade_id:
+            self.order_executor.place_entry(
+                trade_id=trade_id, strike=strike, option_type=option_type,
+                entry_premium=entry, sl_premium=sl, target_premium=target,
+            )
+
         self._publish(EventType.TRADE_CREATED, {
             "trade_id": trade_id, "direction": direction, "strike": strike,
             "option_type": option_type, "entry": entry, "sl": sl, "target": target,
@@ -245,6 +252,9 @@ class ScalperStrategy(BaseTracker):
         )
 
         def _resolve(status, reason):
+            # Place market exit for time-based exits (GTT handles SL/target)
+            if reason == "EOD" and self.order_executor:
+                self.order_executor.place_exit(trade["id"], strike, option_type)
             pnl = ((current - entry) / entry) * 100
             self.trade_repo.update_trade(
                 self.table_name, trade["id"],

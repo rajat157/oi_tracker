@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS scalp_trades (
     min_premium_reached REAL,
     last_checked_at DATETIME,
     last_premium REAL,
-    trade_number INTEGER DEFAULT 1
+    trade_number INTEGER DEFAULT 1,
+    order_id TEXT,
+    gtt_trigger_id INTEGER
 )
 """
 
@@ -64,7 +66,9 @@ CREATE TABLE IF NOT EXISTS rr_trades (
     last_checked_at DATETIME,
     last_premium REAL,
     trail_stage INTEGER DEFAULT 0,
-    trade_number INTEGER DEFAULT 1
+    trade_number INTEGER DEFAULT 1,
+    order_id TEXT,
+    gtt_trigger_id INTEGER
 )
 """
 

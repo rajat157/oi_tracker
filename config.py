@@ -51,10 +51,30 @@ class ScalperConfig:
     FALLBACK_SL_PCT: float = 8.0
     FALLBACK_TARGET_PCT: float = 10.0
     MAX_SL_PCT: float = 15.0
-    PLACE_ORDER: bool = field(
-        default_factory=lambda: os.getenv("SCALP_PLACE_ORDER", "false").lower() == "true"
+
+
+# ---------------------------------------------------------------------------
+# Live Trading — unified order execution
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class LiveTradingConfig:
+    """Live trading master switch and parameters.
+
+    Controls whether strategies place real Kite orders or remain paper-only.
+    """
+    ENABLED: bool = field(
+        default_factory=lambda: os.getenv("LIVE_TRADING_ENABLED", "false").lower() == "true"
     )
-    LOTS: int = field(default_factory=lambda: int(os.getenv("SCALP_LOTS", "1")))
+    LOTS: int = field(
+        default_factory=lambda: int(os.getenv("LIVE_TRADING_LOTS", "1"))
+    )
+    PRODUCT: str = "NRML"
+
+    @property
+    def quantity(self) -> int:
+        """Total quantity = lots * NIFTY lot size."""
+        return self.LOTS * MarketConfig().NIFTY_LOT_SIZE
 
 
 # ---------------------------------------------------------------------------

@@ -85,13 +85,9 @@ class RRStrategy(BaseTracker):
         if self.trade_repo.get_active(self.table_name):
             return False
 
-        # Check regime-specific max trades
-        regime_max = regime_config.get("max_trades", self.max_trades_per_day)
         todays = self.trade_repo.get_todays_trades(self.table_name)
-        if len(todays) >= regime_max:
-            return False
 
-        # Cooldown since last trade
+        # Cooldown since last trade (applies to both real and paper)
         regime_cooldown = regime_config.get("cooldown", _cfg.COOLDOWN_MINUTES)
         if todays:
             last = todays[-1]
@@ -110,6 +106,13 @@ class RRStrategy(BaseTracker):
             return False
 
         return True
+
+    def _count_real_trades_today(self) -> int:
+        """Count today's non-paper trades."""
+        if self.trade_repo is None:
+            return 0
+        todays = self.trade_repo.get_todays_trades(self.table_name)
+        return sum(1 for t in todays if not t.get("is_paper"))
 
     def evaluate_signal(self, analysis: dict, strikes_data: dict) -> Optional[Dict]:
         """Detect signals, pick best, call Claude agent for confirmation."""
@@ -211,6 +214,12 @@ class RRStrategy(BaseTracker):
         todays = self.trade_repo.get_todays_trades(self.table_name)
         trade_number = len(todays) + 1
 
+        # Determine if past max real trades → paper-only
+        regime_config_for_max = self.engine.get_regime_params(regime)
+        regime_max = regime_config_for_max.get("max_trades", _cfg.MAX_TRADES_PER_DAY)
+        real_count = self._count_real_trades_today()
+        is_paper = real_count >= regime_max
+
         now = datetime.now()
         trade_id = self.trade_repo.insert_trade(
             self.table_name,
@@ -234,6 +243,7 @@ class RRStrategy(BaseTracker):
             min_premium_reached=entry,
             trail_stage=0,
             trade_number=trade_number,
+            is_paper=1 if is_paper else 0,
         )
 
         log.info("RR trade created",
@@ -241,10 +251,10 @@ class RRStrategy(BaseTracker):
                  signal_type=signal_type,
                  strike=f"{strike} {option_type}",
                  entry=entry, sl=sl, target=target,
-                 confidence=confidence)
+                 confidence=confidence, paper=is_paper)
 
-        # Place real order if live trading enabled
-        if self.order_executor and trade_id:
+        # Place real order only if NOT paper
+        if self.order_executor and trade_id and not is_paper:
             order_result = self.order_executor.place_entry(
                 trade_id=trade_id, strike=strike, option_type=option_type,
                 entry_premium=entry, sl_premium=sl, target_premium=target,
@@ -253,13 +263,17 @@ class RRStrategy(BaseTracker):
             if order_result.actual_fill_price > 0:
                 entry = order_result.actual_fill_price
 
+        alert_msg = self._format_entry_alert(
+            direction, strike, option_type, entry, sl, target,
+            spot, verdict, vix, confidence, reasoning,
+            regime, signal_type, signal_data, trade_number)
+        if is_paper:
+            alert_msg = "\U0001f4dd PAPER | " + alert_msg
+
         self._publish(EventType.TRADE_CREATED, {
             "trade_id": trade_id, "direction": direction, "strike": strike,
             "option_type": option_type, "entry": entry, "sl": sl, "target": target,
-            "alert_message": self._format_entry_alert(
-                direction, strike, option_type, entry, sl, target,
-                spot, verdict, vix, confidence, reasoning,
-                regime, signal_type, signal_data, trade_number),
+            "alert_message": alert_msg,
         })
         return trade_id
 
@@ -309,7 +323,7 @@ class RRStrategy(BaseTracker):
             updates["trail_stage"] = new_trail_stage
             updates["sl_premium"] = sl
             # Modify GTT to reflect new trailing SL
-            if self.order_executor:
+            if self.order_executor and not trade.get("is_paper"):
                 self.order_executor.modify_sl(
                     trade["id"], sl, current, trade["target_premium"])
 
@@ -319,7 +333,7 @@ class RRStrategy(BaseTracker):
 
         def _resolve(status, reason):
             # Place market exit for time-based exits (GTT handles SL/target)
-            if reason in ("EOD", "MAX_TIME", "TIME_FLAT") and self.order_executor:
+            if reason in ("EOD", "MAX_TIME", "TIME_FLAT") and self.order_executor and not trade.get("is_paper"):
                 self.order_executor.place_exit(
                     trade["id"], strike, option_type, tracker_type=self.tracker_type)
             final_pnl = ((current - entry) / entry) * 100
@@ -433,7 +447,7 @@ class RRStrategy(BaseTracker):
                 new_sl = RREngine_round_to_tick(result["new_sl_premium"])
                 self.trade_repo.update_trade(
                     self.table_name, trade["id"], sl_premium=new_sl)
-                if self.order_executor:
+                if self.order_executor and not trade.get("is_paper"):
                     self.order_executor.modify_sl(
                         trade["id"], new_sl, current, trade["target_premium"])
                 if premium_monitor:
@@ -444,7 +458,7 @@ class RRStrategy(BaseTracker):
                 return None
 
             if action == "EXIT_NOW":
-                if self.order_executor:
+                if self.order_executor and not trade.get("is_paper"):
                     self.order_executor.place_exit(
                         trade["id"], trade["strike"], trade["option_type"],
                         tracker_type=self.tracker_type)

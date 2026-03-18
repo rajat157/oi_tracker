@@ -71,10 +71,8 @@ class ScalperStrategy(BaseTracker):
             return False
 
         todays = self.trade_repo.get_todays_trades(self.table_name)
-        if len(todays) >= self.max_trades_per_day:
-            return False
 
-        # Cooldown since last trade
+        # Cooldown since last trade (applies to both real and paper)
         if todays:
             last = todays[-1]
             resolved_at = last.get("resolved_at")
@@ -95,6 +93,13 @@ class ScalperStrategy(BaseTracker):
             return False
 
         return True
+
+    def _count_real_trades_today(self) -> int:
+        """Count today's non-paper trades."""
+        if self.trade_repo is None:
+            return 0
+        todays = self.trade_repo.get_todays_trades(self.table_name)
+        return sum(1 for t in todays if not t.get("is_paper"))
 
     def get_agent_signal(self, analysis: dict, strikes_data: dict) -> Optional[Dict]:
         """Build chart -> run pre-filter -> call Claude -> return signal."""
@@ -183,6 +188,10 @@ class ScalperStrategy(BaseTracker):
         todays = self.trade_repo.get_todays_trades(self.table_name)
         trade_number = len(todays) + 1
 
+        # Determine if past max real trades → paper-only
+        real_count = self._count_real_trades_today()
+        is_paper = real_count >= self.max_trades_per_day
+
         now = datetime.now()
         trade_id = self.trade_repo.insert_trade(
             self.table_name,
@@ -204,16 +213,18 @@ class ScalperStrategy(BaseTracker):
             max_premium_reached=entry,
             min_premium_reached=entry,
             trade_number=trade_number,
+            is_paper=1 if is_paper else 0,
         )
 
         log.info("Created scalp trade",
                  trade_id=trade_id, direction=direction,
                  strike=f"{strike} {option_type}",
                  entry=entry, sl=sl, target=target,
-                 confidence=confidence, trade_num=trade_number)
+                 confidence=confidence, trade_num=trade_number,
+                 paper=is_paper)
 
-        # Place real order if live trading enabled
-        if self.order_executor and trade_id:
+        # Place real order only if NOT paper
+        if self.order_executor and trade_id and not is_paper:
             order_result = self.order_executor.place_entry(
                 trade_id=trade_id, strike=strike, option_type=option_type,
                 entry_premium=entry, sl_premium=sl, target_premium=target,
@@ -222,12 +233,16 @@ class ScalperStrategy(BaseTracker):
             if order_result.actual_fill_price > 0:
                 entry = order_result.actual_fill_price
 
+        alert_msg = self._format_entry_alert(
+            direction, strike, option_type, entry, sl, target,
+            spot, verdict, confidence, vix, reasoning, trade_number)
+        if is_paper:
+            alert_msg = "\U0001f4dd PAPER | " + alert_msg
+
         self._publish(EventType.TRADE_CREATED, {
             "trade_id": trade_id, "direction": direction, "strike": strike,
             "option_type": option_type, "entry": entry, "sl": sl, "target": target,
-            "alert_message": self._format_entry_alert(
-                direction, strike, option_type, entry, sl, target,
-                spot, verdict, confidence, vix, reasoning, trade_number),
+            "alert_message": alert_msg,
         })
         return trade_id
 
@@ -255,10 +270,11 @@ class ScalperStrategy(BaseTracker):
         )
 
         premium_monitor = kwargs.get("premium_monitor")
+        is_paper = trade.get("is_paper", 0)
 
         def _resolve(status, reason):
             # Place market exit for time-based exits (GTT handles SL/target)
-            if reason == "EOD" and self.order_executor:
+            if reason == "EOD" and self.order_executor and not is_paper:
                 self.order_executor.place_exit(
                         trade["id"], strike, option_type, tracker_type=self.tracker_type)
             pnl = ((current - entry) / entry) * 100
@@ -348,7 +364,7 @@ class ScalperStrategy(BaseTracker):
                 new_sl = OrderExecutor.round_to_tick(result["new_sl_premium"], "down")
                 self.trade_repo.update_trade(
                     self.table_name, trade["id"], sl_premium=new_sl)
-                if self.order_executor:
+                if self.order_executor and not trade.get("is_paper"):
                     self.order_executor.modify_sl(
                         trade["id"], new_sl, current, trade["target_premium"])
                 if premium_monitor:
@@ -359,7 +375,7 @@ class ScalperStrategy(BaseTracker):
                 return None  # SL modified, don't exit
 
             if action == "EXIT_NOW":
-                if self.order_executor:
+                if self.order_executor and not trade.get("is_paper"):
                     self.order_executor.place_exit(
                         trade["id"], trade["strike"], trade["option_type"],
                         tracker_type=self.tracker_type)

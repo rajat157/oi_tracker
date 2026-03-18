@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS scalp_trades (
     trade_number INTEGER DEFAULT 1,
     order_id TEXT,
     gtt_trigger_id INTEGER,
-    actual_fill_price REAL
+    actual_fill_price REAL,
+    is_paper INTEGER DEFAULT 0
 )
 """
 
@@ -70,7 +71,8 @@ CREATE TABLE IF NOT EXISTS rr_trades (
     trade_number INTEGER DEFAULT 1,
     order_id TEXT,
     gtt_trigger_id INTEGER,
-    actual_fill_price REAL
+    actual_fill_price REAL,
+    is_paper INTEGER DEFAULT 0
 )
 """
 

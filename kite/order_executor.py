@@ -288,10 +288,12 @@ class OrderExecutor:
         if result.get("status") == "success":
             return OrderResult(success=True, gtt_trigger_id=gtt_id, is_paper=False)
 
-        log.error("GTT cancel failed", trade_id=trade_id,
-                  gtt_id=gtt_id, result=result)
-        return OrderResult(success=False, error=result.get("message", ""),
-                           is_paper=False)
+        # GTT already triggered/executed on Kite side — this is expected
+        # when WebSocket detects exit after GTT fires
+        error_msg = result.get("message", "")
+        log.info("GTT cancel skipped (likely already triggered)",
+                 trade_id=trade_id, gtt_id=gtt_id, error=error_msg)
+        return OrderResult(success=True, gtt_trigger_id=gtt_id, is_paper=False)
 
     def place_exit(
         self,

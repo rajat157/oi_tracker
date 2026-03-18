@@ -254,6 +254,8 @@ class ScalperStrategy(BaseTracker):
             max_premium_reached=max_p, min_premium_reached=min_p,
         )
 
+        premium_monitor = kwargs.get("premium_monitor")
+
         def _resolve(status, reason):
             # Place market exit for time-based exits (GTT handles SL/target)
             if reason == "EOD" and self.order_executor:
@@ -266,6 +268,9 @@ class ScalperStrategy(BaseTracker):
                 exit_premium=current, exit_reason=reason,
                 profit_loss_pct=pnl,
             )
+            # Unregister from WebSocket monitor to prevent double exit
+            if premium_monitor:
+                premium_monitor.unregister_trade(trade["id"])
             log.info(f"Scalp {status} ({reason})", pnl=f"{pnl:.2f}%",
                      entry=entry, exit=current)
             self._publish(EventType.TRADE_EXITED, {

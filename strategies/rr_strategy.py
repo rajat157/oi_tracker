@@ -315,6 +315,8 @@ class RRStrategy(BaseTracker):
 
         self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
 
+        premium_monitor = kwargs.get("premium_monitor")
+
         def _resolve(status, reason):
             # Place market exit for time-based exits (GTT handles SL/target)
             if reason in ("EOD", "MAX_TIME", "TIME_FLAT") and self.order_executor:
@@ -327,6 +329,9 @@ class RRStrategy(BaseTracker):
                 exit_premium=current, exit_reason=reason,
                 profit_loss_pct=final_pnl,
             )
+            # Unregister from WebSocket monitor to prevent double exit
+            if premium_monitor:
+                premium_monitor.unregister_trade(trade["id"])
             log.info(f"RR {status} ({reason})", pnl=f"{final_pnl:.2f}%",
                      entry=entry, exit=current, trade_id=trade["id"])
             self._publish(EventType.TRADE_EXITED, {

@@ -323,7 +323,7 @@ class OIScheduler:
                              action=scalp_update['action'],
                              pnl=f"{scalp_update['pnl']:.2f}%",
                              reason=scalp_update['reason'])
-                    if scalp_update['action'] in ('WON', 'LOST'):
+                    if scalp_update['action'] in ('WON', 'LOST') and scalp_update.get('reason') != 'CLAUDE_EXIT':
                         log.warning("Exit detected by 3-min poll, not WebSocket",
                                     tracker="scalper", action=scalp_update['action'],
                                     reason=scalp_update['reason'])

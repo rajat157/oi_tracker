@@ -89,20 +89,11 @@ class TestValidateMonitorResponse:
         assert validate_monitor_response({}, self._ctx()) is False
 
 
-class TestScalperAgentMonitor:
-    @patch("strategies.scalper_agent.ScalperAgent.call_claude")
-    def test_hold_returns_none(self, mock_claude):
-        from strategies.scalper_agent import ScalperAgent
-        agent = ScalperAgent()
-        mock_claude.return_value = {"action": "HOLD", "reasoning": "Trend intact"}
-        result = agent.monitor_active_trade(
-            "chart", {"pnl_pct": 5, "sl_premium": 180, "current_premium": 210}, {})
-        assert result is None
-
-    @patch("strategies.scalper_agent.ScalperAgent.call_claude")
+class TestRRAgentMonitorFull:
+    @patch("strategies.rr_agent.RRAgent.call_claude")
     def test_tighten_sl_returned(self, mock_claude):
-        from strategies.scalper_agent import ScalperAgent
-        agent = ScalperAgent()
+        from strategies.rr_agent import RRAgent
+        agent = RRAgent()
         mock_claude.return_value = {
             "action": "TIGHTEN_SL", "new_sl_premium": 195.0,
             "reasoning": "Lower highs forming",
@@ -113,10 +104,10 @@ class TestScalperAgentMonitor:
         assert result["action"] == "TIGHTEN_SL"
         assert result["new_sl_premium"] == 195.0
 
-    @patch("strategies.scalper_agent.ScalperAgent.call_claude")
+    @patch("strategies.rr_agent.RRAgent.call_claude")
     def test_exit_now_returned(self, mock_claude):
-        from strategies.scalper_agent import ScalperAgent
-        agent = ScalperAgent()
+        from strategies.rr_agent import RRAgent
+        agent = RRAgent()
         mock_claude.return_value = {
             "action": "EXIT_NOW", "reasoning": "Broke VWAP with volume",
         }
@@ -125,19 +116,19 @@ class TestScalperAgentMonitor:
         assert result is not None
         assert result["action"] == "EXIT_NOW"
 
-    @patch("strategies.scalper_agent.ScalperAgent.call_claude")
+    @patch("strategies.rr_agent.RRAgent.call_claude")
     def test_timeout_returns_none(self, mock_claude):
-        from strategies.scalper_agent import ScalperAgent
-        agent = ScalperAgent()
+        from strategies.rr_agent import RRAgent
+        agent = RRAgent()
         mock_claude.return_value = None
         result = agent.monitor_active_trade(
             "chart", {"pnl_pct": 5, "sl_premium": 180, "current_premium": 210}, {})
         assert result is None
 
-    @patch("strategies.scalper_agent.ScalperAgent.call_claude")
+    @patch("strategies.rr_agent.RRAgent.call_claude")
     def test_invalid_response_returns_none(self, mock_claude):
-        from strategies.scalper_agent import ScalperAgent
-        agent = ScalperAgent()
+        from strategies.rr_agent import RRAgent
+        agent = RRAgent()
         mock_claude.return_value = {"action": "TIGHTEN_SL", "new_sl_premium": 170.0}
         # new_sl_premium < current sl_premium → invalid
         result = agent.monitor_active_trade(

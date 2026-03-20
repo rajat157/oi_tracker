@@ -447,12 +447,8 @@ class OrderExecutor:
             if table_name:
                 repo.update_trade(table_name, trade_id, **updates)
             else:
-                # Fallback: try both tables
-                for table in ("scalp_trades", "rr_trades"):
-                    try:
-                        repo.update_trade(table, trade_id, **updates)
-                    except Exception:
-                        continue
+                # Fallback: try rr_trades
+                repo.update_trade("rr_trades", trade_id, **updates)
         except Exception as e:
             log.error("Failed to update trade order info",
                       trade_id=trade_id, error=str(e))
@@ -462,7 +458,7 @@ class OrderExecutor:
         try:
             from db.connection import get_connection
             with get_connection() as conn:
-                for table in ("scalp_trades", "rr_trades"):
+                for table in ("rr_trades",):
                     for col, col_type in [("order_id", "TEXT"),
                                            ("gtt_trigger_id", "INTEGER"),
                                            ("actual_fill_price", "REAL"),

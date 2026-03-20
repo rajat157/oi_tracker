@@ -13,12 +13,6 @@ def _get_strategy(name: str):
     return None
 
 
-@bp.route("/api/scalp-stats")
-def api_scalp_stats():
-    s = _get_strategy("scalper")
-    return jsonify(s.get_stats() if s else {})
-
-
 @bp.route("/api/rr-stats")
 def api_rr_stats():
     s = _get_strategy("rally_rider")

@@ -39,7 +39,7 @@ class RRStrategy(BaseTracker):
             self.trade_repo.init_table(RR_TRADES_DDL)
         self._engine = None
         self._agent = None
-        self._scalper_engine = None
+        self._premium_engine = None
 
     @property
     def engine(self):
@@ -56,11 +56,11 @@ class RRStrategy(BaseTracker):
         return self._agent
 
     @property
-    def scalper_engine(self):
-        if self._scalper_engine is None:
-            from strategies.scalper_engine import ScalperEngine
-            self._scalper_engine = ScalperEngine()
-        return self._scalper_engine
+    def premium_engine(self):
+        if self._premium_engine is None:
+            from strategies.premium_engine import PremiumEngine
+            self._premium_engine = PremiumEngine()
+        return self._premium_engine
 
     # ------------------------------------------------------------------
     # Abstract interface
@@ -135,7 +135,7 @@ class RRStrategy(BaseTracker):
         strike = self.engine.get_rr_strike(spot, option_type)
 
         # Step 3: Build premium chart
-        chart = self.scalper_engine.build_premium_chart(
+        chart = self.premium_engine.build_premium_chart(
             spot,
             ce_strike=strike if option_type == "CE" else None,
             pe_strike=strike if option_type == "PE" else None,
@@ -144,7 +144,7 @@ class RRStrategy(BaseTracker):
             log.info("No chart data for RR signal")
             return None
 
-        chart_text = self.scalper_engine.format_chart_for_prompt(chart)
+        chart_text = self.premium_engine.format_chart_for_prompt(chart)
 
         # Step 4: Call Claude agent
         todays = self.trade_repo.get_todays_trades(self.table_name) if self.trade_repo else []
@@ -415,14 +415,14 @@ class RRStrategy(BaseTracker):
             spot = analysis.get("spot_price", 0)
             if spot <= 0:
                 return None
-            chart = self.scalper_engine.build_premium_chart(
+            chart = self.premium_engine.build_premium_chart(
                 spot,
                 ce_strike=trade["strike"] if trade["option_type"] == "CE" else None,
                 pe_strike=trade["strike"] if trade["option_type"] == "PE" else None,
             )
             if not chart:
                 return None
-            chart_text = self.scalper_engine.format_chart_for_prompt(chart)
+            chart_text = self.premium_engine.format_chart_for_prompt(chart)
 
             entry = trade["entry_premium"]
             trade_context = {

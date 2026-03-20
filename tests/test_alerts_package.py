@@ -117,7 +117,7 @@ class TestAlertBroker:
         AlertBroker(bus=bus, channel=channel)
 
         bus.publish(EventType.T1_HIT, {
-            "tracker_type": "scalper",
+            "tracker_type": "rally_rider",
             "alert_message": "T1 hit!",
         })
 

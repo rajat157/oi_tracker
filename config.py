@@ -34,26 +34,6 @@ class AlertConfig:
 
 
 # ---------------------------------------------------------------------------
-# Scalper (scalper_tracker.py)
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class ScalperConfig:
-    """Claude-powered FNO scalper agent."""
-    TIME_START: time = time(9, 30)
-    TIME_END: time = time(14, 30)
-    FORCE_CLOSE_TIME: time = time(15, 15)
-    MAX_TRADES_PER_DAY: int = 5
-    COOLDOWN_MINUTES: int = 6
-    MIN_PREMIUM: float = 50.0
-    MAX_PREMIUM: float = 500.0
-    MIN_AGENT_CONFIDENCE: int = 60
-    FALLBACK_SL_PCT: float = 8.0
-    FALLBACK_TARGET_PCT: float = 10.0
-    MAX_SL_PCT: float = 15.0
-
-
-# ---------------------------------------------------------------------------
 # Live Trading — unified order execution
 # ---------------------------------------------------------------------------
 

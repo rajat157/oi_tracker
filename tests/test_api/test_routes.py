@@ -49,8 +49,8 @@ class TestBlueprintRegistration:
             "/", "/trades",
             "/api/latest", "/api/history", "/api/market-status", "/api/refresh",
             "/api/learning-report", "/api/learning-status",
-            "/api/scalp-trades",
-            "/api/scalp-stats",
+            "/api/rr-trades",
+            "/api/rr-stats",
             "/api/logs", "/api/v-shape-signals", "/api/v-shape-stats",
             "/kite/login", "/kite/callback", "/kite/status", "/kite/save-token",
         ]

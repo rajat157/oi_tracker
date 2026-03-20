@@ -1,7 +1,7 @@
 # NIFTY OI Tracker - Development Guide
 
 ## Overview
-A Python-based web dashboard that fetches NIFTY option chain data from NSE every 3 minutes and analyzes OI to determine market direction using a "tug-of-war" concept. Includes Claude-powered trading agents (Scalper + Rally Rider) for automated trade tracking.
+A Python-based web dashboard that fetches NIFTY option chain data from NSE every 3 minutes and analyzes OI to determine market direction using a "tug-of-war" concept. Includes a Claude-powered Rally Rider agent for automated trade tracking.
 
 ## Project Structure
 ```
@@ -36,9 +36,7 @@ oi_tracker/
 │   ├── pattern_tracker.py # Premium Momentum (PM) reversal detection
 │   └── v_shape.py         # V-shape recovery detector
 ├── strategies/            # Strategy implementations (extend BaseTracker)
-│   ├── scalper.py         # ScalperStrategy (Claude-powered multi-trade/day)
-│   ├── scalper_engine.py  # Technical analysis for premium charts (VWAP, S/R, swings)
-│   ├── scalper_agent.py   # Claude Code FNO expert agent (subprocess via `claude -p`)
+│   ├── premium_engine.py  # Technical analysis for premium charts (VWAP, S/R, swings)
 │   ├── rr_strategy.py     # RRStrategy (regime-adaptive, Claude-agent-powered)
 │   ├── rr_engine.py       # RR signal detection (MC/MOM/VWAP) + regime classification
 │   └── rr_agent.py        # RR Claude subprocess with regime-aware prompt
@@ -92,22 +90,11 @@ Then open http://localhost:5000 in your browser.
 2. **Kite Data Fetcher** retrieves option chain data via Kite Connect API
 3. **OI Analyzer** performs tug-of-war analysis
 4. **Database** stores snapshots and analysis results
-5. **Scalper Agent** (`strategies/`) evaluates signals via Claude-powered analysis
-6. **Rally Rider** (`strategies/rr_strategy.py`) regime-adaptive rally catcher with Claude agent
+5. **Rally Rider** (`strategies/rr_strategy.py`) regime-adaptive rally catcher with Claude agent
 7. **AlertBroker** (`alerts/broker.py`) subscribes to EventBus events and routes to Telegram
 7. **SocketIO** pushes updates to connected dashboard clients
 
 ### Trading Strategy
-
-#### Scalper Agent (scalper.py + scalper_agent.py) — Claude-Powered
-- **WR:** 57% backtested | **RR:** 1:1
-- Time Window: 9:30 - 14:30 IST
-- Multiple trades per day (max 5, 6-min cooldown)
-- Strikes: 2 below ATM for CE, 2 above ATM for PE (slightly ITM)
-- Pre-filter: Python engine detects VWAP breakout / support bounce / momentum burst
-- Signal: Claude Code subprocess (`claude -p`) analyzes full premium chart
-- SL: -10% (technical level) | Target: +10%
-- Real-time monitoring via WebSocket between 3-min cycles
 
 #### Rally Rider (rr_strategy.py + rr_engine.py + rr_agent.py) — Regime-Adaptive Claude Agent
 - **WR:** 60.2% backtested (300 days, 727 trades) | **PF:** 1.90 | Passes all 15 months
@@ -126,7 +113,7 @@ Then open http://localhost:5000 in your browser.
 - **Lots**: `LIVE_TRADING_LOTS=1` (1 lot = 65 qty)
 - **Flow**: Entry order (MARKET/LIMIT) → GTT OCO (SL + target) → trailing SL modifies GTT → exit cancels GTT
 - **Tick rounding**: All prices at 0.05 increments (`round_to_tick` in `kite/order_executor.py`)
-- **Unified**: Any strategy (Scalper, RR) uses the same `OrderExecutor` instance
+- **Unified**: Any strategy uses the same `OrderExecutor` instance
 - **Error handling**: If order fails, paper trade continues. If GTT fails, WebSocket still monitors.
 - **Schema**: `order_id` + `gtt_trigger_id` columns on trade tables
 
@@ -151,8 +138,6 @@ Then open http://localhost:5000 in your browser.
 | `/api/history` | GET | Historical analysis for charts |
 | `/api/refresh` | GET | Trigger manual data fetch |
 | `/api/market-status` | GET | Market open/close status |
-| `/api/scalp-trades` | GET | Scalper trade history |
-| `/api/scalp-stats` | GET | Scalper trade statistics |
 | `/api/rr-trades` | GET | Rally Rider trade history |
 | `/api/rr-stats` | GET | Rally Rider trade statistics |
 | `/api/logs` | GET | System logs with filtering |
@@ -166,7 +151,6 @@ Then open http://localhost:5000 in your browser.
 | `signal_outcomes` | Signal accuracy tracking |
 | `pm_history` | Premium momentum history |
 | `detected_patterns` | PM reversal patterns |
-| `scalp_trades` | Scalper trade lifecycle (multi-trade/day) |
 | `rr_trades` | Rally Rider trade lifecycle (regime-adaptive, max 3/day) |
 | `nifty_history` | NIFTY 50 3-min OHLC candles (300 days) |
 | `vix_history` | India VIX 3-min candles (300 days) |
@@ -184,7 +168,7 @@ Then open http://localhost:5000 in your browser.
 - Kite Connect API credentials (in `.env`)
 - For live trading: `LIVE_TRADING_ENABLED=true` + `LIVE_TRADING_LOTS=1` in `.env`
 - UV package manager
-- Claude Code CLI (`claude` on PATH) — required for Scalper Agent and Rally Rider Agent
+- Claude Code CLI (`claude` on PATH) — required for Rally Rider Agent
 
 ## Notes
 - NSE rate limits: 3-minute interval respects this

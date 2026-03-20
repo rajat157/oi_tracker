@@ -1,6 +1,6 @@
 """Shared trade monitoring prompt and validation for Claude active monitoring.
 
-Used by both ScalperAgent and RRAgent to evaluate active trades every
+Used by RRAgent to evaluate active trades every
 3-min cycle. Claude can HOLD, TIGHTEN_SL, or EXIT_NOW.
 """
 

@@ -9,7 +9,7 @@ import pytest
 from db.base_repo import BaseRepository
 from db.trade_repo import TradeRepository
 from db.schema import (
-    SCALP_TRADES_DDL,
+    RR_TRADES_DDL,
     ALL_TRADE_SCHEMAS,
 )
 
@@ -304,10 +304,10 @@ class TestSchema:
             yield conn
 
         repo = TradeRepository(conn_factory=factory)
-        repo.init_table(SCALP_TRADES_DDL)
+        repo.init_table(RR_TRADES_DDL)
 
         trade_id = repo.insert_trade(
-            "scalp_trades",
+            "rr_trades",
             created_at="2025-01-15 12:00:00",
             direction="BUY_CALL",
             strike=24500,
@@ -319,7 +319,7 @@ class TestSchema:
             verdict_at_creation="Bulls Winning",
         )
         assert trade_id == 1
-        row = repo.get_active("scalp_trades")
+        row = repo.get_active("rr_trades")
         assert row is not None
         assert row["strike"] == 24500
 

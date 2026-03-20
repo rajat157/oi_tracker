@@ -1,4 +1,4 @@
-"""Check scalper trade history."""
+"""Check trade history."""
 import sqlite3, os
 
 DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'oi_tracker.db')
@@ -11,13 +11,13 @@ c.execute("SELECT name FROM sqlite_master WHERE type='table'")
 tables = [r[0] for r in c.fetchall()]
 print("Tables:", tables)
 
-# Check scalp_trades
-if 'scalp_trades' in tables:
-    c.execute("SELECT * FROM scalp_trades ORDER BY created_at")
+# Check rr_trades
+if 'rr_trades' in tables:
+    c.execute("SELECT * FROM rr_trades ORDER BY created_at")
     rows = c.fetchall()
-    print(f"\nscalp_trades: {len(rows)} total")
-    print(f"\n{'ID':<5} {'Date':<20} {'Dir':<10} {'Strike':>7} {'Entry':>7} {'SL':>7} {'Target':>7} {'Status':<12} {'P&L':>8}")
-    print("-" * 100)
+    print(f"\nrr_trades: {len(rows)} total")
+    print(f"\n{'ID':<5} {'Date':<20} {'Dir':<10} {'Strike':>7} {'Entry':>7} {'SL':>7} {'Target':>7} {'Status':<12} {'P&L':>8} {'Regime':<15}")
+    print("-" * 120)
     for r in rows:
         d = dict(r)
         date = d.get('created_at', '')[:19]
@@ -28,7 +28,8 @@ if 'scalp_trades' in tables:
         target = d.get('target_premium', 0) or 0
         status = d.get('status', '')
         pnl = d.get('profit_loss_pct', 0) or 0
+        regime = d.get('regime', '') or ''
         tid = d.get('id', '')
-        print(f"{tid:<5} {date:<20} {direction:<10} {strike:>7} {entry:>7.1f} {sl:>7.1f} {target:>7.1f} {status:<12} {pnl:>+7.1f}%")
+        print(f"{tid:<5} {date:<20} {direction:<10} {strike:>7} {entry:>7.1f} {sl:>7.1f} {target:>7.1f} {status:<12} {pnl:>+7.1f}% {regime:<15}")
 
 conn.close()

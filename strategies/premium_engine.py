@@ -1,11 +1,11 @@
 """
-Scalper Engine -- Technical analysis on 3-minute option premium charts.
+Premium Engine -- Technical analysis on 3-minute option premium charts.
 
 Builds premium time-series from oi_snapshots, computes VWAP, support/resistance,
-swing highs/lows, breakouts, and momentum for the scalper agent.
+swing highs/lows, breakouts, and momentum. Used by all trading strategies.
 
 Strikes: 2 below ATM for CE (slightly ITM), 2 above ATM for PE (slightly ITM).
-These have higher delta and better liquidity for quick scalps.
+These have higher delta and better liquidity.
 """
 
 from datetime import datetime, date
@@ -13,7 +13,7 @@ from typing import Optional, Dict, List, Tuple
 from db.connection import get_connection
 from core.logger import get_logger
 
-log = get_logger("scalper_engine")
+log = get_logger("premium_engine")
 
 NIFTY_STEP = 50
 STRIKES_OFFSET = 2  # 2 strikes from ATM
@@ -22,11 +22,11 @@ SR_CLUSTER_PCT = 2.0  # % tolerance for clustering S/R levels
 MOMENTUM_PERIODS = 3  # candles for momentum calculation
 
 
-class ScalperEngine:
-    """Builds premium charts and computes technical indicators for scalping."""
+class PremiumEngine:
+    """Builds premium charts and computes technical indicators for option trading."""
 
-    def get_scalp_strikes(self, spot_price: float) -> Dict[str, int]:
-        """Return CE and PE scalping strikes (2 below / 2 above ATM)."""
+    def get_itm_strikes(self, spot_price: float) -> Dict[str, int]:
+        """Return CE and PE slightly-ITM strikes (2 below / 2 above ATM)."""
         atm = round(spot_price / NIFTY_STEP) * NIFTY_STEP
         return {
             "ce_strike": atm - (NIFTY_STEP * STRIKES_OFFSET),

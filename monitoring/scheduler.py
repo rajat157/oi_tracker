@@ -21,7 +21,6 @@ from db.legacy import (
     get_previous_smoothed_score
 )
 from db.trade_repo import TradeRepository
-from strategies.scalper import ScalperStrategy
 from strategies.rr_strategy import RRStrategy
 from kite.order_executor import OrderExecutor
 from alerts.broker import AlertBroker
@@ -58,7 +57,6 @@ class OIScheduler:
         self.order_executor = OrderExecutor()
         repo = TradeRepository()
         self.strategies = {
-            "scalper": ScalperStrategy(trade_repo=repo, order_executor=self.order_executor),
             "rally_rider": RRStrategy(trade_repo=repo, order_executor=self.order_executor),
         }
         self._alert_broker = AlertBroker()
@@ -311,33 +309,6 @@ class OIScheduler:
                 log.error("V-shape detector error", error=str(e))
                 analysis["v_shape"] = None
 
-            # ===== SCALPER AGENT (Claude-powered premium chart analysis) =====
-            scalper = self.strategies["scalper"]
-            try:
-                # Check/update active scalp trade
-                scalp_update = scalper.check_and_update(
-                        strikes_data, analysis=analysis,
-                        premium_monitor=self.premium_monitor)
-                if scalp_update:
-                    log.info("Scalp trade updated",
-                             action=scalp_update['action'],
-                             pnl=f"{scalp_update['pnl']:.2f}%",
-                             reason=scalp_update['reason'])
-                    if scalp_update['action'] in ('WON', 'LOST') and scalp_update.get('reason') != 'CLAUDE_EXIT':
-                        log.warning("Exit detected by 3-min poll, not WebSocket",
-                                    tracker="scalper", action=scalp_update['action'],
-                                    reason=scalp_update['reason'])
-
-                # Evaluate new scalp opportunity via Claude agent
-                if scalper.should_create(analysis):
-                    signal = scalper.get_agent_signal(analysis, strikes_data)
-                    if signal:
-                        scalp_id = scalper.create_trade(signal, analysis, strikes_data)
-                        if scalp_id:
-                            self._register_trade_with_monitor(scalper)
-            except Exception as e:
-                log.error("Error in scalper agent", error=str(e))
-
             # ===== RALLY RIDER (Regime-adaptive, Claude-agent-powered) =====
             rr = self.strategies["rally_rider"]
             try:
@@ -358,24 +329,6 @@ class OIScheduler:
                             self._register_trade_with_monitor(rr)
             except Exception as e:
                 log.error("Error in Rally Rider strategy", error=str(e))
-
-            # Add scalper data to analysis for dashboard
-            try:
-                active_scalp = scalper.get_active()
-                if active_scalp:
-                    strike_sc = strikes_data.get(active_scalp["strike"], {})
-                    key = "pe_ltp" if active_scalp["option_type"] == "PE" else "ce_ltp"
-                    cur_prem = strike_sc.get(key, 0)
-                    if cur_prem > 0:
-                        sc_pnl = ((cur_prem - active_scalp["entry_premium"]) / active_scalp["entry_premium"]) * 100
-                        active_scalp["current_premium"] = cur_prem
-                        active_scalp["current_pnl"] = sc_pnl
-                analysis["active_scalp_trade"] = active_scalp
-                analysis["scalp_stats"] = scalper.get_stats()
-            except Exception as e:
-                log.error("Error getting scalper data for dashboard", error=str(e))
-                analysis["active_scalp_trade"] = None
-                analysis["scalp_stats"] = {}
 
             # Add RR data to analysis for dashboard
             try:

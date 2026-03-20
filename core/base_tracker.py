@@ -25,7 +25,7 @@ class BaseTracker(ABC):
         time_start          — earliest signal creation time
         time_end            — latest signal creation time
         force_close_time    — hard exit time for open trades
-        max_trades_per_day  — cap (1 for most, 5 for scalper)
+        max_trades_per_day  — daily trade cap
         is_selling          — True flips P&L direction
         supports_pending    — True only for IronPulse (PENDING→ACTIVE flow)
     """

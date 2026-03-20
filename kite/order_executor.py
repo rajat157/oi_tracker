@@ -101,6 +101,7 @@ class OrderExecutor:
         target_premium: float,
         order_type: str = "MARKET",
         tracker_type: str = "",
+        table_name: str = "",
     ) -> OrderResult:
         """Place entry order + GTT OCO for SL/target.
 
@@ -202,6 +203,7 @@ class OrderExecutor:
             actual_fill_price=actual_fill,
             corrected_sl=sl if actual_fill != entry else 0,
             corrected_target=target if actual_fill != entry else 0,
+            table_name=table_name,
         )
 
         log.info("Entry + GTT placed",
@@ -423,7 +425,8 @@ class OrderExecutor:
                                   gtt_trigger_id: int,
                                   actual_fill_price: float = 0.0,
                                   corrected_sl: float = 0.0,
-                                  corrected_target: float = 0.0) -> None:
+                                  corrected_target: float = 0.0,
+                                  table_name: str = "") -> None:
         """Update trade DB row with order tracking IDs and fill price."""
         try:
             from db.trade_repo import TradeRepository
@@ -436,13 +439,16 @@ class OrderExecutor:
                 updates["sl_premium"] = corrected_sl
             if corrected_target > 0:
                 updates["target_premium"] = corrected_target
-            # Try scalp_trades first, then rr_trades
-            for table in ("scalp_trades", "rr_trades"):
-                try:
-                    repo.update_trade(table, trade_id, **updates)
-                    return
-                except Exception:
-                    continue
+
+            if table_name:
+                repo.update_trade(table_name, trade_id, **updates)
+            else:
+                # Fallback: try both tables
+                for table in ("scalp_trades", "rr_trades"):
+                    try:
+                        repo.update_trade(table, trade_id, **updates)
+                    except Exception:
+                        continue
         except Exception as e:
             log.error("Failed to update trade order info",
                       trade_id=trade_id, error=str(e))

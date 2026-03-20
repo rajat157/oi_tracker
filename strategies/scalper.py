@@ -228,7 +228,7 @@ class ScalperStrategy(BaseTracker):
             order_result = self.order_executor.place_entry(
                 trade_id=trade_id, strike=strike, option_type=option_type,
                 entry_premium=entry, sl_premium=sl, target_premium=target,
-                tracker_type=self.tracker_type,
+                tracker_type=self.tracker_type, table_name=self.table_name,
             )
             if order_result.actual_fill_price > 0:
                 entry = order_result.actual_fill_price

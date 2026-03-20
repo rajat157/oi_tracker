@@ -273,6 +273,12 @@ class OrderExecutor:
     def cancel_exit_orders(self, trade_id: int) -> OrderResult:
         """Cancel GTT OCO for a trade (cleanup on exit).
 
+        Checks GTT status on Kite first:
+        - If 'triggered': GTT already sold the position — safe to clean up.
+        - If 'active': GTT hasn't fired yet — we must place a market sell
+          BEFORE cancelling, otherwise the position is left unguarded.
+        - If already gone (error): treat as no-op.
+
         Idempotent: safe to call even if no GTT exists.
         """
         if not self._enabled:
@@ -280,25 +286,64 @@ class OrderExecutor:
 
         with self._lock:
             gtt_id = self._active_gtts.pop(trade_id, None)
-            self._active_orders.pop(trade_id, None)
-            self._trade_symbols.pop(trade_id, None)
+            order_id = self._active_orders.pop(trade_id, None)
+            symbol = self._trade_symbols.pop(trade_id, None)
 
         if not gtt_id:
             return OrderResult(success=True, is_paper=False)
 
-        from kite.broker import delete_gtt
+        from kite.broker import get_gtt_status, delete_gtt, place_order, is_authenticated
 
-        log.info("Cancelling GTT", trade_id=trade_id, gtt_id=gtt_id)
+        # Step 1: Check GTT status on Kite
+        gtt_check = get_gtt_status(gtt_id)
+        gtt_status = gtt_check.get("gtt_status", "unknown")
 
-        result = delete_gtt(gtt_id)
-        if result.get("status") == "success":
+        log.info("GTT status check", trade_id=trade_id,
+                 gtt_id=gtt_id, gtt_status=gtt_status)
+
+        if gtt_status == "triggered":
+            # GTT already fired and sold — position is closed, just clean up
+            log.info("GTT already triggered, position sold",
+                     trade_id=trade_id, gtt_id=gtt_id)
             return OrderResult(success=True, gtt_trigger_id=gtt_id, is_paper=False)
 
-        # GTT already triggered/executed on Kite side — this is expected
-        # when WebSocket detects exit after GTT fires
-        error_msg = result.get("message", "")
-        log.info("GTT cancel skipped (likely already triggered)",
-                 trade_id=trade_id, gtt_id=gtt_id, error=error_msg)
+        if gtt_status == "active":
+            # GTT hasn't fired yet — cancel it, then sell at market
+            log.info("GTT still active, cancelling and placing market sell",
+                     trade_id=trade_id, gtt_id=gtt_id)
+
+            delete_result = delete_gtt(gtt_id)
+            if delete_result.get("status") != "success":
+                log.error("GTT cancel failed while active",
+                          trade_id=trade_id, gtt_id=gtt_id, result=delete_result)
+
+            # Place market sell to close the position
+            if symbol and is_authenticated():
+                sell_result = place_order(
+                    trading_symbol=symbol,
+                    transaction_type="SELL",
+                    quantity=self._quantity,
+                    order_type="MARKET",
+                    product=self._product,
+                )
+                if sell_result.get("status") == "success":
+                    log.info("Market sell placed after GTT cancel",
+                             trade_id=trade_id,
+                             order_id=sell_result["data"]["order_id"])
+                else:
+                    log.error("Market sell failed after GTT cancel — POSITION MAY BE OPEN",
+                              trade_id=trade_id, result=sell_result)
+            else:
+                log.error("Cannot place market sell — no symbol or not authenticated",
+                          trade_id=trade_id)
+
+            return OrderResult(success=True, gtt_trigger_id=gtt_id, is_paper=False)
+
+        # GTT in other state (cancelled, expired, disabled, error querying)
+        # Try to delete anyway, ignore errors
+        log.info("GTT in non-active state, attempting cleanup",
+                 trade_id=trade_id, gtt_id=gtt_id, gtt_status=gtt_status)
+        delete_gtt(gtt_id)
         return OrderResult(success=True, gtt_trigger_id=gtt_id, is_paper=False)
 
     def place_exit(

@@ -246,6 +246,33 @@ def delete_gtt(trigger_id: int) -> dict:
         return {"status": "error", "message": str(e)}
 
 
+def get_gtt_status(trigger_id: int) -> dict:
+    """Get GTT trigger status from Kite API.
+
+    Returns: {"status": "success", "gtt_status": str} or error dict.
+    GTT statuses: "active", "triggered", "disabled", "expired", "cancelled", "rejected"
+    """
+    headers = _headers()
+    if not headers:
+        return {"status": "error", "message": "No access token"}
+
+    try:
+        resp = requests.get(f"{BASE_URL}/gtt/triggers/{trigger_id}", headers=headers, timeout=10)
+        result = resp.json()
+
+        if result.get("status") == "success":
+            data = result.get("data", {})
+            return {
+                "status": "success",
+                "gtt_status": data.get("status", "unknown"),
+            }
+
+        return {"status": "error", "message": result.get("message", "Unknown")}
+    except Exception as e:
+        log.error("GTT status query error", error=str(e))
+        return {"status": "error", "message": str(e)}
+
+
 def is_authenticated() -> bool:
     """Check if we have a valid access token for today."""
     return bool(load_token())

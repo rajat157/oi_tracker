@@ -232,6 +232,10 @@ class ScalperStrategy(BaseTracker):
             )
             if order_result.actual_fill_price > 0:
                 entry = order_result.actual_fill_price
+            if order_result.corrected_sl > 0:
+                sl = order_result.corrected_sl
+            if order_result.corrected_target > 0:
+                target = order_result.corrected_target
 
         alert_msg = self._format_entry_alert(
             direction, strike, option_type, entry, sl, target,

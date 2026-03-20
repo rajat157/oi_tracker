@@ -32,6 +32,8 @@ class OrderResult:
     error: str = ""
     is_paper: bool = True
     actual_fill_price: float = 0.0
+    corrected_sl: float = 0.0
+    corrected_target: float = 0.0
 
 
 class OrderExecutor:
@@ -216,6 +218,8 @@ class OrderExecutor:
             gtt_trigger_id=gtt_trigger_id,
             is_paper=False,
             actual_fill_price=actual_fill,
+            corrected_sl=sl if actual_fill != entry else 0,
+            corrected_target=target if actual_fill != entry else 0,
         )
 
     def modify_sl(

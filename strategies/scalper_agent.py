@@ -155,9 +155,8 @@ Respond with ONLY valid JSON (no markdown, no explanation outside the JSON):
         # Try direct JSON parse first
         try:
             data = json.loads(raw)
-            if self._validate_signal(data):
+            if isinstance(data, dict):
                 return data
-            return data  # Return even if NO_TRADE
         except json.JSONDecodeError:
             pass
 

@@ -290,6 +290,63 @@ class TestCheckAndUpdate:
         assert strategy.check_and_update({}) is None
 
 
+class TestIntegration:
+    """Integration tests — real objects, no mocks. Catches rename/import issues."""
+
+    def test_premium_engine_instantiates(self):
+        from strategies.premium_engine import PremiumEngine
+        pe = PremiumEngine()
+        strikes = pe.get_itm_strikes(23000.0)
+        assert "ce_strike" in strikes
+        assert "pe_strike" in strikes
+
+    def test_premium_engine_build_chart_callable(self):
+        from strategies.premium_engine import PremiumEngine
+        pe = PremiumEngine()
+        assert callable(pe.build_premium_chart)
+        assert callable(pe.format_chart_for_prompt)
+        assert callable(pe.compute_vwap)
+
+    def test_rr_strategy_premium_engine_wired(self):
+        strategy = RRStrategy(trade_repo=MagicMock())
+        pe = strategy.premium_engine
+        assert pe is not None
+        strikes = pe.get_itm_strikes(23000.0)
+        assert strikes["ce_strike"] == 22900
+
+    def test_rr_strategy_engine_wired(self):
+        strategy = RRStrategy(trade_repo=MagicMock())
+        eng = strategy.engine
+        assert eng is not None
+        strike = eng.get_rr_strike(23000.0, "CE")
+        assert strike == 22900
+
+    def test_rr_strategy_agent_wired(self):
+        strategy = RRStrategy(trade_repo=MagicMock())
+        agent = strategy.agent
+        assert agent is not None
+        assert callable(agent.build_prompt)
+        assert callable(agent.monitor_active_trade)
+
+    def test_order_executor_methods_exist(self):
+        from kite.order_executor import OrderExecutor
+        oe = OrderExecutor()
+        assert callable(oe.place_entry)
+        assert callable(oe.modify_sl)
+        assert callable(oe.cancel_exit_orders)
+        assert callable(oe.place_exit)
+        assert callable(oe.round_to_tick)
+        assert callable(oe.is_strategy_live)
+
+    def test_trade_monitor_importable(self):
+        from strategies.trade_monitor import (
+            build_monitor_prompt, validate_monitor_response, MONITOR_SYSTEM_PROMPT
+        )
+        assert callable(build_monitor_prompt)
+        assert callable(validate_monitor_response)
+        assert "HOLD" in MONITOR_SYSTEM_PROMPT
+
+
 class TestGetStats:
     def test_delegates_to_repo(self, strategy, repo):
         repo.get_stats.return_value = {"total": 5, "wins": 3}

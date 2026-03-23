@@ -48,7 +48,7 @@ class PremiumEngine:
             date_str = date.today().strftime("%Y-%m-%d")
 
         if not ce_strike or not pe_strike:
-            strikes = self.get_scalp_strikes(spot_price)
+            strikes = self.get_itm_strikes(spot_price)
             ce_strike = strikes["ce_strike"]
             pe_strike = strikes["pe_strike"]
 

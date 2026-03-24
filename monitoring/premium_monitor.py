@@ -23,14 +23,17 @@ log = get_logger("premium_monitor")
 class ActiveTrade:
     """Represents an active trade being monitored."""
     trade_id: int
-    tracker_type: str  # "iron_pulse", "selling", "dessert", "momentum"
+    tracker_type: str
     strike: int
     option_type: str  # "CE" or "PE"
     instrument_token: int
     entry_premium: float
-    sl_premium: float
+    sl_premium: float        # hard SL (GTT on exchange, disaster protection)
     target_premium: float
     is_selling: bool = False
+    soft_sl: float = 0.0              # Claude-managed trailing SL (internal only)
+    soft_sl_breached: bool = False     # flagged when premium drops below soft_sl
+    soft_sl_breach_premium: float = 0.0  # lowest premium during breach
 
 
 class PremiumMonitor:
@@ -90,11 +93,31 @@ class PremiumMonitor:
         return trade_id in self._all_trades
 
     def update_trade_sl(self, trade_id: int, new_sl: float) -> None:
-        """Update the SL for an actively monitored trade (e.g. Claude tightened SL)."""
+        """Update the hard SL for an actively monitored trade."""
         trade = self._all_trades.get(trade_id)
         if trade:
             trade.sl_premium = new_sl
-            log.info("Monitor SL updated", trade_id=trade_id, new_sl=new_sl)
+            log.info("Monitor hard SL updated", trade_id=trade_id, new_sl=new_sl)
+
+    def update_soft_sl(self, trade_id: int, new_soft_sl: float) -> None:
+        """Update Claude's soft SL (internal trailing, not on exchange)."""
+        trade = self._all_trades.get(trade_id)
+        if trade:
+            trade.soft_sl = new_soft_sl
+            trade.soft_sl_breached = False
+            trade.soft_sl_breach_premium = 0.0
+            log.info("Soft SL updated", trade_id=trade_id, soft_sl=new_soft_sl)
+
+    def get_soft_sl_status(self, trade_id: int) -> dict:
+        """Get soft SL breach status for Claude's monitoring prompt."""
+        trade = self._all_trades.get(trade_id)
+        if not trade:
+            return {}
+        return {
+            "soft_sl": trade.soft_sl,
+            "soft_sl_breached": trade.soft_sl_breached,
+            "soft_sl_breach_premium": trade.soft_sl_breach_premium,
+        }
 
     def register_trade(self, trade: ActiveTrade):
         """Register a trade for real-time monitoring."""
@@ -305,6 +328,7 @@ class PremiumMonitor:
                 }
         else:
             # Buying: premium falling is bad, rising is good
+            # Hard SL check — disaster protection, auto-exit
             if current_premium <= trade.sl_premium:
                 pnl = ((current_premium - trade.entry_premium) / trade.entry_premium) * 100
                 return {
@@ -315,7 +339,17 @@ class PremiumMonitor:
                     "pnl_pct": pnl,
                     "reason": f"SL hit: premium fell to {current_premium:.2f} (SL: {trade.sl_premium:.2f})",
                 }
-            elif current_premium >= trade.target_premium:
+            # Soft SL check — flag only, Claude decides at next cycle
+            if trade.soft_sl > 0 and current_premium <= trade.soft_sl:
+                if not trade.soft_sl_breached:
+                    trade.soft_sl_breached = True
+                    trade.soft_sl_breach_premium = current_premium
+                else:
+                    trade.soft_sl_breach_premium = min(
+                        trade.soft_sl_breach_premium, current_premium)
+                # Do NOT return exit — flag only
+            # Target check
+            if current_premium >= trade.target_premium:
                 pnl = ((current_premium - trade.entry_premium) / trade.entry_premium) * 100
                 return {
                     "trade_id": trade.trade_id,

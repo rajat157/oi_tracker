@@ -77,10 +77,6 @@ class RRConfig:
     MIN_PREMIUM: float = 80.0
     MAX_PREMIUM: float = 500.0
     MIN_AGENT_CONFIDENCE: int = 60
-    TRAIL_1_TRIGGER: float = 10.0
-    TRAIL_1_LOCK: float = 4.0
-    TRAIL_2_TRIGGER: float = 15.0
-    TRAIL_2_LOCK: float = 10.0
     TIME_EXIT_DEAD_PCT: float = 3.0
     MAX_DURATION_MIN: int = 45
     REGIME_LOOKBACK_DAYS: int = 5

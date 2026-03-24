@@ -297,32 +297,13 @@ class RRStrategy(BaseTracker):
         entry = trade["entry_premium"]
         max_p = max(trade.get("max_premium_reached") or entry, current)
         min_p = min(trade.get("min_premium_reached") or entry, current)
-        trail_stage = trade.get("trail_stage", 0) or 0
-        sl = trade["sl_premium"]
-
-        # Trailing stop logic
         pnl_pct = ((current - entry) / entry) * 100
-        new_trail_stage = trail_stage
-
-        if pnl_pct >= _cfg.TRAIL_2_TRIGGER and trail_stage < 2:
-            new_sl = RREngine_round_to_tick(entry * (1 + _cfg.TRAIL_2_LOCK / 100))
-            if new_sl > sl:
-                sl = new_sl
-                new_trail_stage = 2
-                log.info("RR trail stage 2",
-                         trade_id=trade["id"], sl=sl, pnl=f"{pnl_pct:.1f}%")
-        elif pnl_pct >= _cfg.TRAIL_1_TRIGGER and trail_stage < 1:
-            new_sl = RREngine_round_to_tick(entry * (1 + _cfg.TRAIL_1_LOCK / 100))
-            if new_sl > sl:
-                sl = new_sl
-                new_trail_stage = 1
-                log.info("RR trail stage 1",
-                         trade_id=trade["id"], sl=sl, pnl=f"{pnl_pct:.1f}%")
 
         updates = dict(
             last_checked_at=now, last_premium=current,
             max_premium_reached=max_p, min_premium_reached=min_p,
         )
+        self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
 
         premium_monitor = kwargs.get("premium_monitor")
 
@@ -348,26 +329,10 @@ class RRStrategy(BaseTracker):
             })
             return {"action": status, "pnl": final_pnl, "reason": reason}
 
-        # Apply trailing stop updates + modify GTT
-        if new_trail_stage != trail_stage:
-            updates["trail_stage"] = new_trail_stage
-            updates["sl_premium"] = sl
-            if self.order_executor and not trade.get("is_paper"):
-                modify_result = self.order_executor.modify_sl(
-                    trade["id"], sl, current, trade["target_premium"])
-                if modify_result.gtt_already_triggered:
-                    log.info("GTT triggered during trail modify — trade already exited",
-                             trade_id=trade["id"])
-                    self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
-                    return _resolve("WON" if pnl_pct > 0 else "LOST", "GTT_TRIGGERED")
+        # Hard SL is handled by PremiumMonitor in real-time (WebSocket)
+        # Soft SL is managed by Claude — no mechanical SL check here
 
-        self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
-
-        # SL hit
-        if current <= sl:
-            return _resolve("LOST", "TRAIL_SL" if trail_stage > 0 else "SL")
-
-        # Target hit
+        # Target hit (3-min poll fallback — GTT handles this on exchange)
         if current >= trade["target_premium"]:
             return _resolve("WON", "TARGET")
 
@@ -376,7 +341,6 @@ class RRStrategy(BaseTracker):
                    if isinstance(trade["created_at"], str) else trade["created_at"])
         elapsed_min = (now - created).total_seconds() / 60
 
-        # Parse max_hold from signal_data_json
         max_hold = _cfg.MAX_DURATION_MIN
         try:
             sd = json.loads(trade.get("signal_data_json") or "{}")
@@ -388,19 +352,16 @@ class RRStrategy(BaseTracker):
             status = "WON" if pnl_pct > 0 else "LOST"
             return _resolve(status, "MAX_TIME")
 
-        # Time exit for flat trades (use regime max_hold)
         if elapsed_min >= max_hold and abs(pnl_pct) < _cfg.TIME_EXIT_DEAD_PCT:
             status = "WON" if pnl_pct > 0 else "LOST"
             return _resolve(status, "TIME_FLAT")
 
-        # EOD force close
         if self.is_past_force_close(now):
             status = "WON" if pnl_pct > 0 else "LOST"
             return _resolve(status, "EOD")
 
-        # Claude active trade monitoring
+        # Claude active trade monitoring — manages soft SL
         analysis = kwargs.get("analysis", {})
-        premium_monitor = kwargs.get("premium_monitor")
 
         if elapsed_min >= 6 and now.time() < time(14, 45) and self._agent is not None:
             monitor_result = self._call_trade_monitor(
@@ -434,15 +395,24 @@ class RRStrategy(BaseTracker):
                 "entry_premium": entry,
                 "current_premium": current,
                 "pnl_pct": ((current - entry) / entry) * 100,
-                "sl_premium": trade["sl_premium"],
+                "sl_premium": trade["sl_premium"],           # hard SL (GTT)
+                "soft_sl_premium": trade.get("soft_sl_premium", 0),  # Claude's soft SL
                 "target_premium": trade["target_premium"],
-                "trail_stage": trade.get("trail_stage", 0),
                 "option_type": trade["option_type"],
                 "strike": trade["strike"],
                 "direction": trade["direction"],
                 "time_in_trade_min": elapsed_min,
                 "max_premium_reached": trade.get("max_premium_reached", current),
+                "soft_sl_breached": False,
+                "soft_sl_breach_premium": 0,
             }
+
+            # Enrich with soft SL breach info from PremiumMonitor
+            if premium_monitor and premium_monitor.is_monitoring(trade["id"]):
+                sl_status = premium_monitor.get_soft_sl_status(trade["id"])
+                if sl_status:
+                    trade_context["soft_sl_breached"] = sl_status.get("soft_sl_breached", False)
+                    trade_context["soft_sl_breach_premium"] = sl_status.get("soft_sl_breach_premium", 0)
 
             result = self.agent.monitor_active_trade(chart_text, trade_context, analysis)
             if not result:
@@ -453,34 +423,15 @@ class RRStrategy(BaseTracker):
 
             if action == "TIGHTEN_SL":
                 new_sl = RREngine_round_to_tick(result["new_sl_premium"])
+                # Update soft SL in DB (NOT the hard SL — GTT stays untouched)
                 self.trade_repo.update_trade(
-                    self.table_name, trade["id"], sl_premium=new_sl)
-                if self.order_executor and not trade.get("is_paper"):
-                    modify_result = self.order_executor.modify_sl(
-                        trade["id"], new_sl, current, trade["target_premium"])
-                    if modify_result.gtt_already_triggered:
-                        log.info("GTT triggered during Claude SL tighten — trade already exited",
-                                 trade_id=trade["id"])
-                        pnl = ((current - entry) / entry) * 100
-                        status = "WON" if pnl > 0 else "LOST"
-                        self.trade_repo.update_trade(
-                            self.table_name, trade["id"],
-                            status=status, resolved_at=now,
-                            exit_premium=current, exit_reason="GTT_TRIGGERED",
-                            profit_loss_pct=pnl)
-                        if premium_monitor:
-                            premium_monitor.unregister_trade(trade["id"])
-                        self._publish(EventType.TRADE_EXITED, {
-                            "trade_id": trade["id"], "action": status, "pnl": pnl,
-                            "reason": "GTT_TRIGGERED",
-                            "alert_message": self._format_exit_alert(
-                                trade, current, "GTT_TRIGGERED", pnl),
-                        })
-                        return {"action": status, "pnl": pnl, "reason": "GTT_TRIGGERED"}
+                    self.table_name, trade["id"], soft_sl_premium=new_sl)
+                # Update soft SL in PremiumMonitor (NO GTT modify)
                 if premium_monitor:
-                    premium_monitor.update_trade_sl(trade["id"], new_sl)
-                log.info("Claude tightened RR SL", trade_id=trade["id"],
-                         old_sl=trade["sl_premium"], new_sl=new_sl,
+                    premium_monitor.update_soft_sl(trade["id"], new_sl)
+                log.info("Claude tightened soft SL", trade_id=trade["id"],
+                         old_soft_sl=trade.get("soft_sl_premium", 0),
+                         new_soft_sl=new_sl,
                          reasoning=result.get("reasoning", ""))
                 return None
 

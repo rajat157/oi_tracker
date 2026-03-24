@@ -187,11 +187,17 @@ class TestCheckAndUpdate:
         t.update(overrides)
         return t
 
-    def test_sl_hit(self, strategy, repo):
-        repo.get_active.return_value = self._trade()
-        result = strategy.check_and_update({24400: {"ce_ltp": 165.0}})
-        assert result["action"] == "LOST"
-        assert result["reason"] == "SL"
+    def test_no_sl_exit_in_check_and_update(self, strategy, repo):
+        """SL is handled by PremiumMonitor, not check_and_update."""
+        repo.get_active.return_value = self._trade(
+            created_at="2025-01-01T10:00:00", target_premium=280.0)
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2025, 1, 1, 10, 5)  # 5 min in
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            # Premium below SL — check_and_update should NOT exit
+            result = strategy.check_and_update({24400: {"ce_ltp": 165.0}})
+            assert result is None
 
     def test_target_hit(self, strategy, repo):
         repo.get_active.return_value = self._trade()
@@ -199,44 +205,23 @@ class TestCheckAndUpdate:
         assert result["action"] == "WON"
         assert result["reason"] == "TARGET"
 
-    def test_trailing_stop_stage_1(self, strategy, repo):
-        # Premium at +12% from entry -> trail stage 1
-        repo.get_active.return_value = self._trade(target_premium=250.0)
-        result = strategy.check_and_update({24400: {"ce_ltp": 224.0}})
-        # Should NOT exit (target is 250), but trail should update
-        updates = repo.update_trade.call_args_list
-        found_trail = False
-        for call in updates:
-            kw = call[1] if len(call) > 1 else call.kwargs
-            if kw.get("trail_stage") == 1:
-                found_trail = True
-                # SL should be entry * 1.04 = 208.0 rounded to tick
-                assert kw["sl_premium"] == 208.0
-                break
-        assert found_trail
-
-    def test_trailing_stop_stage_2(self, strategy, repo):
-        # Premium at +18% from entry -> trail stage 2
-        repo.get_active.return_value = self._trade(trail_stage=1, sl_premium=208.0,
-                                                    target_premium=280.0)
-        result = strategy.check_and_update({24400: {"ce_ltp": 236.0}})
-        updates = repo.update_trade.call_args_list
-        found_trail = False
-        for call in updates:
-            kw = call[1] if len(call) > 1 else call.kwargs
-            if kw.get("trail_stage") == 2:
-                found_trail = True
-                assert kw["sl_premium"] == 220.0  # entry * 1.10
-                break
-        assert found_trail
-
-    def test_trail_sl_exit(self, strategy, repo):
-        # Trail stage 1 active, SL at 208, premium drops to 205
-        repo.get_active.return_value = self._trade(trail_stage=1, sl_premium=208.0,
-                                                    target_premium=280.0)
-        result = strategy.check_and_update({24400: {"ce_ltp": 205.0}})
-        assert result["action"] == "LOST"
-        assert result["reason"] == "TRAIL_SL"
+    def test_no_mechanical_trailing_stops(self, strategy, repo):
+        """Mechanical trailing stops removed — Claude manages soft SL."""
+        repo.get_active.return_value = self._trade(
+            created_at="2025-01-01T10:00:00", target_premium=280.0)
+        with patch("strategies.rr_strategy.datetime") as mock_dt:
+            mock_dt.now.return_value = datetime(2025, 1, 1, 10, 5)  # 5 min in
+            mock_dt.side_effect = lambda *a, **kw: datetime(*a, **kw)
+            mock_dt.fromisoformat = datetime.fromisoformat
+            # Premium at +15% — should NOT trigger any trail stage update
+            result = strategy.check_and_update({24400: {"ce_ltp": 230.0}})
+            assert result is None
+            # Verify no trail_stage or sl_premium updates in DB
+            updates = repo.update_trade.call_args_list
+            for call in updates:
+                kw = call[1] if len(call) > 1 else call.kwargs
+                assert "trail_stage" not in kw
+                assert "sl_premium" not in kw
 
     def test_time_flat_exit(self, strategy, repo):
         # Trade created 40 minutes ago, premium flat (max_hold=35)

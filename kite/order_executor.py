@@ -521,7 +521,8 @@ class OrderExecutor:
                     for col, col_type in [("order_id", "TEXT"),
                                            ("gtt_trigger_id", "INTEGER"),
                                            ("actual_fill_price", "REAL"),
-                                           ("is_paper", "INTEGER DEFAULT 0")]:
+                                           ("is_paper", "INTEGER DEFAULT 0"),
+                                           ("soft_sl_premium", "REAL DEFAULT 0")]:
                         try:
                             conn.execute(
                                 f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")

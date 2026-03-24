@@ -9,7 +9,7 @@ from dataclasses import dataclass
 class MockActiveTrade:
     """Mimics ActiveTrade for testing."""
     trade_id: int
-    tracker_type: str  # "iron_pulse", "selling", "dessert", "momentum"
+    tracker_type: str
     strike: int
     option_type: str
     instrument_token: int
@@ -17,6 +17,9 @@ class MockActiveTrade:
     sl_premium: float
     target_premium: float
     is_selling: bool = False
+    soft_sl: float = 0.0
+    soft_sl_breached: bool = False
+    soft_sl_breach_premium: float = 0.0
 
 
 class TestSLTargetDetection:

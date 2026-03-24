@@ -17,15 +17,25 @@ MONITOR_SYSTEM_PROMPT = """You are an expert NIFTY FNO (Futures & Options) trade
 5. **IV**: Expanding IV supports the position. Collapsing IV means exit.
 6. **Time decay**: Options lose value as the day progresses. Factor time remaining.
 
+## STOP-LOSS ARCHITECTURE
+- There is a HARD SL on the exchange (GTT) at the original SL level. This is disaster protection only and NEVER moves. Market makers can see this level.
+- YOU manage a SOFT SL (trailing stop) which is tracked internally only. Market makers CANNOT see it.
+- When you say TIGHTEN_SL, it ONLY updates the internal soft SL. The exchange order is NOT modified.
+- If the soft SL was breached between cycles, you will be told. Evaluate whether it was:
+  - A WICK (premium touched the level but recovered) → HOLD, the position is fine
+  - A GENUINE BREAKDOWN (premium broke through and stayed down) → EXIT_NOW
+- A wick that touches your level and bounces back is NOT a reason to exit — it's market noise or SL hunting.
+- Consider: Has the premium recovered? Is it above VWAP? Is the trend still intact?
+
 ## DECISION RULES
-- **HOLD**: Position is healthy, trend intact, no reason to change SL/target
-- **TIGHTEN_SL**: Position is profitable and showing signs of weakening (e.g., lower highs, VWAP rejection). Move SL to lock in partial gains. New SL must be ABOVE current SL (never widen it).
-- **EXIT_NOW**: Clear reversal signal — broke support, VWAP breakdown with volume, momentum shift. Exit at market to avoid further loss.
+- **HOLD**: Position is healthy, trend intact, no reason to change SL
+- **TIGHTEN_SL**: Position is profitable and showing signs of weakening. Move soft SL to lock in gains at a technical level. New SL must be ABOVE current soft SL (never widen).
+- **EXIT_NOW**: Clear reversal signal — broke support, VWAP breakdown with volume, momentum shift. Or soft SL breached AND premium has NOT recovered (genuine breakdown).
 
 ## IMPORTANT
-- If in doubt, HOLD. Do not over-manage.
+- If in doubt, HOLD. Do not over-manage. Let winners run.
 - Only TIGHTEN_SL when there is a clear technical level to move SL to.
-- EXIT_NOW is for clear danger signals only, not minor pullbacks.
+- EXIT_NOW is for clear danger signals only, not minor pullbacks or wicks.
 - Never suggest widening the stop-loss.
 - New SL premium must be at 0.05 tick increments (e.g. 195.05, 200.10)."""
 
@@ -39,20 +49,37 @@ def build_monitor_prompt(
     entry = trade_context.get("entry_premium", 0)
     current = trade_context.get("current_premium", 0)
     pnl_pct = trade_context.get("pnl_pct", 0)
-    sl = trade_context.get("sl_premium", 0)
+    hard_sl = trade_context.get("sl_premium", 0)
+    soft_sl = trade_context.get("soft_sl_premium", 0)
     target = trade_context.get("target_premium", 0)
-    trail_stage = trade_context.get("trail_stage", 0)
     option_type = trade_context.get("option_type", "?")
     strike = trade_context.get("strike", 0)
     elapsed_min = trade_context.get("time_in_trade_min", 0)
+    max_prem = trade_context.get("max_premium_reached", current)
+
+    soft_sl_breached = trade_context.get("soft_sl_breached", False)
+    breach_premium = trade_context.get("soft_sl_breach_premium", 0)
 
     spot = analysis_context.get("spot_price", 0)
     vix = analysis_context.get("vix", 0) or 0
     verdict = analysis_context.get("verdict", "N/A")
     now = datetime.now()
 
-    sl_pct = (entry - sl) / entry * 100 if entry > 0 else 0
+    hard_sl_pct = (entry - hard_sl) / entry * 100 if entry > 0 else 0
     tgt_pct = (target - entry) / entry * 100 if entry > 0 else 0
+    soft_sl_str = f"Rs {soft_sl:.2f}" if soft_sl > 0 else "Not set yet (you should set one)"
+
+    # Breach alert section
+    breach_section = ""
+    if soft_sl_breached and soft_sl > 0:
+        recovered = current > soft_sl
+        breach_section = (
+            f"\n## !! SOFT SL BREACH ALERT !!\n"
+            f"- Soft SL at Rs {soft_sl:.2f} was breached between cycles\n"
+            f"- Lowest premium during breach: Rs {breach_premium:.2f}\n"
+            f"- Current premium: Rs {current:.2f} — {'RECOVERED above soft SL' if recovered else 'STILL BELOW soft SL'}\n"
+            f"- IS THIS A WICK OR GENUINE BREAKDOWN? Check the chart.\n"
+        )
 
     return f"""{MONITOR_SYSTEM_PROMPT}
 
@@ -61,12 +88,12 @@ def build_monitor_prompt(
 - Entry: Rs {entry:.2f}
 - Current: Rs {current:.2f}
 - P&L: {pnl_pct:+.2f}%
-- SL: Rs {sl:.2f} (-{sl_pct:.1f}% from entry)
+- Hard SL (exchange, fixed): Rs {hard_sl:.2f} (-{hard_sl_pct:.1f}% from entry)
+- Soft SL (your trailing, internal): {soft_sl_str}
 - Target: Rs {target:.2f} (+{tgt_pct:.1f}% from entry)
-- Trail Stage: {trail_stage}
 - Time in trade: {elapsed_min:.0f} min
-- Max premium reached: Rs {trade_context.get('max_premium_reached', current):.2f}
-
+- Max premium reached: Rs {max_prem:.2f}
+{breach_section}
 ## CURRENT MARKET CONTEXT
 - Spot Price: {spot:.2f}
 - VIX: {vix:.1f}
@@ -78,8 +105,8 @@ def build_monitor_prompt(
 ## YOUR TASK
 Evaluate the active trade above using the premium chart. Decide:
 - HOLD if the trade looks healthy
-- TIGHTEN_SL if profitable but weakening (provide new SL at a technical level)
-- EXIT_NOW if clear reversal (explain why)
+- TIGHTEN_SL if profitable but weakening (provide new soft SL at a technical level)
+- EXIT_NOW if clear reversal or confirmed soft SL breakdown (explain why)
 
 Respond with ONLY valid JSON (no markdown, no explanation outside the JSON):
 {{"action": "HOLD" or "TIGHTEN_SL" or "EXIT_NOW", "new_sl_premium": <float if TIGHTEN_SL>, "reasoning": "<brief explanation>"}}"""
@@ -105,7 +132,8 @@ def validate_monitor_response(response: Dict, trade_context: Dict) -> bool:
         new_sl = response.get("new_sl_premium")
         if not isinstance(new_sl, (int, float)) or new_sl <= 0:
             return False
-        current_sl = trade_context.get("sl_premium", 0)
+        # Compare against soft_sl if set, otherwise hard sl
+        current_sl = trade_context.get("soft_sl_premium", 0) or trade_context.get("sl_premium", 0)
         current_premium = trade_context.get("current_premium", 0)
         # New SL must be above current SL (never widen)
         if new_sl <= current_sl:

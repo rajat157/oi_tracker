@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS rr_trades (
     order_id TEXT,
     gtt_trigger_id INTEGER,
     actual_fill_price REAL,
-    is_paper INTEGER DEFAULT 0
+    is_paper INTEGER DEFAULT 0,
+    soft_sl_premium REAL DEFAULT 0
 )
 """
 

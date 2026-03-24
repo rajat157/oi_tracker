@@ -112,7 +112,7 @@ class OIScheduler:
         return MARKET_OPEN <= current_time <= MARKET_CLOSE
 
     def check_and_purge_old_data(self):
-        """Purge data older than 90 days to enable historical analysis and self-learning."""
+        """Purge old data + update nifty/vix history for regime classification."""
         from datetime import timedelta
         today = datetime.now().date()
 
@@ -133,7 +133,81 @@ class OIScheduler:
         # Purge orderflow depth data (30-day rolling window)
         purge_old_orderflow(days=30)
 
+        # Update nifty_history + vix_history for regime classification
+        self._update_history_tables()
+
         self.last_purge_date = today
+
+    def _update_history_tables(self):
+        """Fetch recent NIFTY + VIX 3-min candles from Kite historical API.
+
+        Fills the gap between the last stored timestamp and yesterday.
+        Called once per day at startup to keep regime classification current.
+        """
+        try:
+            from datetime import timedelta
+            from db.connection import get_connection
+            import sqlite3
+
+            NIFTY_TOKEN = 256265
+            VIX_TOKEN = 264969
+
+            self.kite_fetcher._refresh_token()
+            kite = self.kite_fetcher._kite
+
+            with get_connection() as conn:
+                for table, token, label in [
+                    ("nifty_history", NIFTY_TOKEN, "NIFTY"),
+                    ("vix_history", VIX_TOKEN, "VIX"),
+                ]:
+                    # Find last stored date
+                    row = conn.execute(
+                        f"SELECT MAX(timestamp) FROM {table}"
+                    ).fetchone()
+                    last_ts = row[0] if row and row[0] else None
+
+                    if last_ts:
+                        last_date = datetime.strptime(last_ts[:10], "%Y-%m-%d").date()
+                    else:
+                        last_date = (datetime.now() - timedelta(days=10)).date()
+
+                    # Fetch from day after last stored to yesterday
+                    from_date = datetime.combine(
+                        last_date + timedelta(days=1), datetime.min.time())
+                    to_date = datetime.combine(
+                        datetime.now().date() - timedelta(days=1),
+                        datetime.max.time().replace(microsecond=0))
+
+                    if from_date.date() > to_date.date():
+                        log.debug(f"{label} history up to date", last=str(last_date))
+                        continue
+
+                    log.info(f"Updating {label} history",
+                             from_date=str(from_date.date()),
+                             to_date=str(to_date.date()))
+
+                    data = kite.historical_data(
+                        token, from_date, to_date, "3minute")
+
+                    inserted = 0
+                    for row in data:
+                        ts = row["date"].strftime("%Y-%m-%d %H:%M:%S")
+                        try:
+                            conn.execute(
+                                f"INSERT OR IGNORE INTO {table} "
+                                f"(timestamp, open, high, low, close, volume) "
+                                f"VALUES (?, ?, ?, ?, ?, ?)",
+                                (ts, row["open"], row["high"], row["low"],
+                                 row["close"], row.get("volume", 0)))
+                            inserted += 1
+                        except sqlite3.IntegrityError:
+                            pass
+
+                    log.info(f"{label} history updated",
+                             fetched=len(data), inserted=inserted)
+
+        except Exception as e:
+            log.error("Failed to update history tables", error=str(e))
 
     def fetch_and_analyze(self):
         """

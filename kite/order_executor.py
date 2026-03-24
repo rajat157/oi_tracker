@@ -34,6 +34,7 @@ class OrderResult:
     actual_fill_price: float = 0.0
     corrected_sl: float = 0.0
     corrected_target: float = 0.0
+    gtt_already_triggered: bool = False
 
 
 class OrderExecutor:
@@ -265,9 +266,22 @@ class OrderExecutor:
         if result.get("status") == "success":
             return OrderResult(success=True, gtt_trigger_id=gtt_id, is_paper=False)
 
+        # Check if GTT already triggered (position already exited by Kite)
+        error_msg = result.get("message", "")
+        if "already triggered" in error_msg.lower():
+            log.info("GTT already triggered during modify — position already exited",
+                     trade_id=trade_id, gtt_id=gtt_id)
+            # Clean up internal state
+            with self._lock:
+                self._active_gtts.pop(trade_id, None)
+                self._active_orders.pop(trade_id, None)
+                self._trade_symbols.pop(trade_id, None)
+            return OrderResult(success=False, error=error_msg,
+                               is_paper=False, gtt_already_triggered=True)
+
         log.error("GTT modify failed", trade_id=trade_id,
                   gtt_id=gtt_id, result=result)
-        return OrderResult(success=False, error=result.get("message", ""),
+        return OrderResult(success=False, error=error_msg,
                            is_paper=False)
 
     def cancel_exit_orders(self, trade_id: int) -> OrderResult:

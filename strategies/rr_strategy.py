@@ -323,20 +323,10 @@ class RRStrategy(BaseTracker):
             last_checked_at=now, last_premium=current,
             max_premium_reached=max_p, min_premium_reached=min_p,
         )
-        if new_trail_stage != trail_stage:
-            updates["trail_stage"] = new_trail_stage
-            updates["sl_premium"] = sl
-            # Modify GTT to reflect new trailing SL
-            if self.order_executor and not trade.get("is_paper"):
-                self.order_executor.modify_sl(
-                    trade["id"], sl, current, trade["target_premium"])
-
-        self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
 
         premium_monitor = kwargs.get("premium_monitor")
 
         def _resolve(status, reason):
-            # Place market exit for time-based exits (GTT handles SL/target)
             if reason in ("EOD", "MAX_TIME", "TIME_FLAT") and self.order_executor and not trade.get("is_paper"):
                 self.order_executor.place_exit(
                     trade["id"], strike, option_type, tracker_type=self.tracker_type)
@@ -347,7 +337,6 @@ class RRStrategy(BaseTracker):
                 exit_premium=current, exit_reason=reason,
                 profit_loss_pct=final_pnl,
             )
-            # Unregister from WebSocket monitor to prevent double exit
             if premium_monitor:
                 premium_monitor.unregister_trade(trade["id"])
             log.info(f"RR {status} ({reason})", pnl=f"{final_pnl:.2f}%",
@@ -358,6 +347,21 @@ class RRStrategy(BaseTracker):
                 "alert_message": self._format_exit_alert(trade, current, reason, final_pnl),
             })
             return {"action": status, "pnl": final_pnl, "reason": reason}
+
+        # Apply trailing stop updates + modify GTT
+        if new_trail_stage != trail_stage:
+            updates["trail_stage"] = new_trail_stage
+            updates["sl_premium"] = sl
+            if self.order_executor and not trade.get("is_paper"):
+                modify_result = self.order_executor.modify_sl(
+                    trade["id"], sl, current, trade["target_premium"])
+                if modify_result.gtt_already_triggered:
+                    log.info("GTT triggered during trail modify — trade already exited",
+                             trade_id=trade["id"])
+                    self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
+                    return _resolve("WON" if pnl_pct > 0 else "LOST", "GTT_TRIGGERED")
+
+        self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
 
         # SL hit
         if current <= sl:
@@ -452,8 +456,27 @@ class RRStrategy(BaseTracker):
                 self.trade_repo.update_trade(
                     self.table_name, trade["id"], sl_premium=new_sl)
                 if self.order_executor and not trade.get("is_paper"):
-                    self.order_executor.modify_sl(
+                    modify_result = self.order_executor.modify_sl(
                         trade["id"], new_sl, current, trade["target_premium"])
+                    if modify_result.gtt_already_triggered:
+                        log.info("GTT triggered during Claude SL tighten — trade already exited",
+                                 trade_id=trade["id"])
+                        pnl = ((current - entry) / entry) * 100
+                        status = "WON" if pnl > 0 else "LOST"
+                        self.trade_repo.update_trade(
+                            self.table_name, trade["id"],
+                            status=status, resolved_at=now,
+                            exit_premium=current, exit_reason="GTT_TRIGGERED",
+                            profit_loss_pct=pnl)
+                        if premium_monitor:
+                            premium_monitor.unregister_trade(trade["id"])
+                        self._publish(EventType.TRADE_EXITED, {
+                            "trade_id": trade["id"], "action": status, "pnl": pnl,
+                            "reason": "GTT_TRIGGERED",
+                            "alert_message": self._format_exit_alert(
+                                trade, current, "GTT_TRIGGERED", pnl),
+                        })
+                        return {"action": status, "pnl": pnl, "reason": "GTT_TRIGGERED"}
                 if premium_monitor:
                     premium_monitor.update_trade_sl(trade["id"], new_sl)
                 log.info("Claude tightened RR SL", trade_id=trade["id"],

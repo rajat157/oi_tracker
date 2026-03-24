@@ -146,7 +146,7 @@ class OIScheduler:
         """
         try:
             from datetime import timedelta
-            from db.connection import get_connection
+            from db.connection import DB_PATH
             import sqlite3
 
             NIFTY_TOKEN = 256265
@@ -155,12 +155,14 @@ class OIScheduler:
             self.kite_fetcher._refresh_token()
             kite = self.kite_fetcher._kite
 
-            with get_connection() as conn:
-                for table, token, label in [
-                    ("nifty_history", NIFTY_TOKEN, "NIFTY"),
-                    ("vix_history", VIX_TOKEN, "VIX"),
-                ]:
-                    # Find last stored date
+            # Use direct sqlite3 connection with explicit commit
+            conn = sqlite3.connect(DB_PATH)
+
+            for table, token, label in [
+                ("nifty_history", NIFTY_TOKEN, "NIFTY"),
+                ("vix_history", VIX_TOKEN, "VIX"),
+            ]:
+                try:
                     row = conn.execute(
                         f"SELECT MAX(timestamp) FROM {table}"
                     ).fetchone()
@@ -171,7 +173,6 @@ class OIScheduler:
                     else:
                         last_date = (datetime.now() - timedelta(days=10)).date()
 
-                    # Fetch from day after last stored to yesterday
                     from_date = datetime.combine(
                         last_date + timedelta(days=1), datetime.min.time())
                     to_date = datetime.combine(
@@ -189,22 +190,23 @@ class OIScheduler:
                     data = kite.historical_data(
                         token, from_date, to_date, "3minute")
 
-                    inserted = 0
                     for row in data:
                         ts = row["date"].strftime("%Y-%m-%d %H:%M:%S")
-                        try:
-                            conn.execute(
-                                f"INSERT OR IGNORE INTO {table} "
-                                f"(timestamp, open, high, low, close, volume) "
-                                f"VALUES (?, ?, ?, ?, ?, ?)",
-                                (ts, row["open"], row["high"], row["low"],
-                                 row["close"], row.get("volume", 0)))
-                            inserted += 1
-                        except sqlite3.IntegrityError:
-                            pass
+                        conn.execute(
+                            f"INSERT OR IGNORE INTO {table} "
+                            f"(timestamp, open, high, low, close, volume) "
+                            f"VALUES (?, ?, ?, ?, ?, ?)",
+                            (ts, row["open"], row["high"], row["low"],
+                             row["close"], row.get("volume", 0)))
 
+                    conn.commit()
                     log.info(f"{label} history updated",
-                             fetched=len(data), inserted=inserted)
+                             fetched=len(data), inserted=len(data))
+
+                except Exception as e:
+                    log.error(f"Failed to update {label} history", error=str(e))
+
+            conn.close()
 
         except Exception as e:
             log.error("Failed to update history tables", error=str(e))

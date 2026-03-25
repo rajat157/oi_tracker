@@ -447,11 +447,13 @@ class RRStrategy(BaseTracker):
                     status=status, resolved_at=now,
                     exit_premium=current, exit_reason="CLAUDE_EXIT",
                     profit_loss_pct=pnl)
+                import html
+                safe_reasoning = html.escape(result.get("reasoning", ""))
                 self._publish(EventType.TRADE_EXITED, {
                     "trade_id": trade["id"], "action": status, "pnl": pnl,
                     "reason": "CLAUDE_EXIT",
                     "alert_message": self._format_exit_alert(
-                        trade, current, f"CLAUDE_EXIT: {result.get('reasoning', '')}", pnl),
+                        trade, current, f"CLAUDE_EXIT: {safe_reasoning}", pnl),
                 })
                 return {"action": status, "pnl": pnl, "reason": "CLAUDE_EXIT"}
 

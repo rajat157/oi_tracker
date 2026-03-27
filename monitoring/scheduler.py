@@ -419,10 +419,23 @@ class OIScheduler:
                         active_rr["current_pnl"] = rr_pnl
                 analysis["active_rr_trade"] = active_rr
                 analysis["rr_stats"] = rr.get_stats()
+                # Regime info for dashboard
+                regime = rr.engine.classify_regime(
+                    __import__("config").RRConfig())
+                regime_config = rr.engine.get_regime_params(regime)
+                analysis["rr_regime"] = {
+                    "name": regime,
+                    "direction": regime_config.get("direction", "BOTH"),
+                    "time_start": f"{regime_config['time_start'].hour}:{regime_config['time_start'].minute:02d}",
+                    "time_end": f"{regime_config['time_end'].hour}:{regime_config['time_end'].minute:02d}",
+                    "max_trades": regime_config.get("max_trades", 3),
+                    "signals": list(regime_config.get("signals", set())),
+                }
             except Exception as e:
                 log.error("Error getting RR data for dashboard", error=str(e))
                 analysis["active_rr_trade"] = None
                 analysis["rr_stats"] = {}
+                analysis["rr_regime"] = None
 
             # Run daily learning update at market close
             self._check_daily_learning_update()

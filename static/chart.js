@@ -821,6 +821,9 @@ function updateDashboard(data) {
     // Update Futures Data Card
     updateFuturesData(data);
 
+    // Update RR Regime Capsule
+    updateRegimeCapsule(data);
+
     // Update V-Shape Recovery Alert
     updateVShapeAlert(data);
 
@@ -1360,6 +1363,36 @@ function updateBasisSparkline(data) {
     ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
     ctx.fillStyle = lineColor;
     ctx.fill();
+}
+
+// ===== RR Regime Capsule =====
+
+function updateRegimeCapsule(data) {
+    const capsule = document.getElementById('regime-capsule');
+    if (!capsule) return;
+
+    const regime = data.rr_regime;
+    if (!regime) {
+        capsule.style.display = 'none';
+        return;
+    }
+
+    capsule.style.display = 'flex';
+
+    const nameEl = document.getElementById('regime-name');
+    const dirEl = document.getElementById('regime-direction');
+    const windowEl = document.getElementById('regime-window');
+    const signalsEl = document.getElementById('regime-signals');
+    const maxEl = document.getElementById('regime-max-trades');
+
+    if (nameEl) nameEl.textContent = regime.name.replace(/_/g, ' ');
+    if (dirEl) {
+        const dirMap = {'CE_ONLY': 'CE Only', 'PE_ONLY': 'PE Only', 'BOTH': 'CE + PE'};
+        dirEl.textContent = dirMap[regime.direction] || regime.direction;
+    }
+    if (windowEl) windowEl.textContent = regime.time_start + ' - ' + regime.time_end;
+    if (signalsEl) signalsEl.textContent = (regime.signals || []).join(', ');
+    if (maxEl) maxEl.textContent = 'Max ' + regime.max_trades + ' trades';
 }
 
 // ===== V-Shape Recovery Alert =====

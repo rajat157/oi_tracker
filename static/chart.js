@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setTimeout(fetchLatestData, 1000);
     setTimeout(checkKiteStatus, 1500);
     setTimeout(fetchFullHistory, 2000);
+    setTimeout(fetchRegime, 2500);
 
     setInterval(fetchMarketStatus, 60000);
     setInterval(checkKiteStatus, 300000); // Check Kite auth every 5 min
@@ -821,9 +822,6 @@ function updateDashboard(data) {
     // Update Futures Data Card
     updateFuturesData(data);
 
-    // Update RR Regime Capsule
-    updateRegimeCapsule(data);
-
     // Update V-Shape Recovery Alert
     updateVShapeAlert(data);
 
@@ -1367,32 +1365,24 @@ function updateBasisSparkline(data) {
 
 // ===== RR Regime Capsule =====
 
-function updateRegimeCapsule(data) {
-    const capsule = document.getElementById('regime-capsule');
-    if (!capsule) return;
-
-    const regime = data.rr_regime;
-    if (!regime) {
-        capsule.style.display = 'none';
-        return;
-    }
-
-    capsule.style.display = 'flex';
-
-    const nameEl = document.getElementById('regime-name');
-    const dirEl = document.getElementById('regime-direction');
-    const windowEl = document.getElementById('regime-window');
-    const signalsEl = document.getElementById('regime-signals');
-    const maxEl = document.getElementById('regime-max-trades');
-
-    if (nameEl) nameEl.textContent = regime.name.replace(/_/g, ' ');
-    if (dirEl) {
-        const dirMap = {'CE_ONLY': 'CE Only', 'PE_ONLY': 'PE Only', 'BOTH': 'CE + PE'};
-        dirEl.textContent = dirMap[regime.direction] || regime.direction;
-    }
-    if (windowEl) windowEl.textContent = regime.time_start + ' - ' + regime.time_end;
-    if (signalsEl) signalsEl.textContent = (regime.signals || []).join(', ');
-    if (maxEl) maxEl.textContent = 'Max ' + regime.max_trades + ' trades';
+function fetchRegime() {
+    fetch('/api/rr-regime')
+        .then(r => r.json())
+        .then(regime => {
+            const capsule = document.getElementById('regime-capsule');
+            if (!capsule || !regime || !regime.name) {
+                if (capsule) capsule.style.display = 'none';
+                return;
+            }
+            capsule.style.display = 'flex';
+            const dirMap = {'CE_ONLY': 'CE Only', 'PE_ONLY': 'PE Only', 'BOTH': 'CE + PE'};
+            setText('regime-name', regime.name.replace(/_/g, ' '));
+            setText('regime-direction', dirMap[regime.direction] || regime.direction);
+            setText('regime-window', regime.time_start + ' - ' + regime.time_end);
+            setText('regime-signals', (regime.signals || []).join(', '));
+            setText('regime-max-trades', 'Max ' + regime.max_trades + ' trades');
+        })
+        .catch(() => {});
 }
 
 // ===== V-Shape Recovery Alert =====

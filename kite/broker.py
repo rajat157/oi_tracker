@@ -40,9 +40,13 @@ def _headers():
 
 def place_order(trading_symbol: str, transaction_type: str = "BUY",
                 quantity: int = 65, price: float = 0,
-                order_type: str = "LIMIT", product: str = "NRML") -> dict:
+                order_type: str = "LIMIT", product: str = "NRML",
+                market_protection: int = 5) -> dict:
     """
     Place an order on Kite.
+
+    market_protection: percentage for MARKET orders (required by Kite API).
+        5 = 5% protection (buy limit at LTP + 5%). Ignored for LIMIT orders.
 
     Returns: {"status": "success", "data": {"order_id": "..."}} or error
     """
@@ -62,6 +66,8 @@ def place_order(trading_symbol: str, transaction_type: str = "BUY",
     }
     if order_type == 'LIMIT' and price > 0:
         data['price'] = price
+    if order_type == 'MARKET':
+        data['market_protection'] = market_protection
 
     try:
         resp = requests.post(f"{BASE_URL}/orders/regular", headers=headers, data=data, timeout=10)

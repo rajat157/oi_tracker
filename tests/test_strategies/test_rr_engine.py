@@ -165,6 +165,78 @@ class TestDetectMOMSignal:
         assert result is None
 
 
+class TestDetectPremiumMOMSignal:
+    """Tests for PMOM — premium-based momentum detection."""
+
+    def test_four_higher_ce_premiums(self, engine):
+        """Rising CE premiums → BUY_CE."""
+        ce_premiums = [300.0, 302.0, 305.0, 310.0, 316.0, 323.0, 331.0, 340.0, 350.0]
+        with patch.object(engine, "_load_todays_premiums", side_effect=lambda s, ot: (
+            ce_premiums if ot == "CE" else [200.0, 198.0, 195.0, 190.0, 188.0]
+        )):
+            result = engine._detect_premium_mom_signal(24000.0)
+        assert result is not None
+        assert result["signal_type"] == "PMOM"
+        assert result["direction"] == "BUY_CE"
+        assert result["option_type"] == "CE"
+        assert result["signal_data"]["consecutive_higher"] == 4
+
+    def test_four_higher_pe_premiums(self, engine):
+        """Rising PE premiums → BUY_PE."""
+        pe_premiums = [180.0, 182.0, 185.0, 190.0, 196.0, 203.0, 211.0, 220.0, 230.0]
+        with patch.object(engine, "_load_todays_premiums", side_effect=lambda s, ot: (
+            [300.0, 298.0, 295.0, 290.0, 288.0] if ot == "CE" else pe_premiums
+        )):
+            result = engine._detect_premium_mom_signal(24000.0)
+        assert result is not None
+        assert result["signal_type"] == "PMOM"
+        assert result["direction"] == "BUY_PE"
+        assert result["option_type"] == "PE"
+
+    def test_mixed_premiums_no_signal(self, engine):
+        """Choppy premiums → no signal."""
+        premiums = [300.0, 305.0, 302.0, 308.0, 303.0, 310.0, 306.0]
+        with patch.object(engine, "_load_todays_premiums", return_value=premiums):
+            result = engine._detect_premium_mom_signal(24000.0)
+        assert result is None
+
+    def test_too_few_candles(self, engine):
+        """Fewer than 5 premium candles → no signal."""
+        with patch.object(engine, "_load_todays_premiums", return_value=[300.0, 305.0, 310.0]):
+            result = engine._detect_premium_mom_signal(24000.0)
+        assert result is None
+
+    def test_ce_takes_priority_when_both_rising(self, engine):
+        """When both CE and PE premiums are rising, CE is checked first."""
+        rising = [100.0, 102.0, 105.0, 110.0, 116.0, 123.0, 131.0, 140.0, 150.0]
+        with patch.object(engine, "_load_todays_premiums", return_value=rising):
+            result = engine._detect_premium_mom_signal(24000.0)
+        assert result is not None
+        assert result["direction"] == "BUY_CE"
+
+    def test_premium_momentum_value(self, engine):
+        """signal_data includes premium_momentum (last - 5th from last)."""
+        premiums = [300.0, 302.0, 305.0, 310.0, 316.0, 323.0, 331.0, 340.0, 350.0]
+        with patch.object(engine, "_load_todays_premiums", side_effect=lambda s, ot: (
+            premiums if ot == "CE" else [200.0, 198.0, 195.0, 190.0, 188.0]
+        )):
+            result = engine._detect_premium_mom_signal(24000.0)
+        assert result["signal_data"]["premium_momentum"] == 350.0 - 316.0
+
+    def test_uses_correct_strikes(self, engine):
+        """CE uses ATM-100, PE uses ATM+100."""
+        calls = []
+
+        def track_calls(strike, ot):
+            calls.append((strike, ot))
+            return [300.0, 298.0, 295.0, 290.0, 288.0]
+
+        with patch.object(engine, "_load_todays_premiums", side_effect=track_calls):
+            engine._detect_premium_mom_signal(24000.0)
+        assert calls[0] == (23900, "CE")
+        assert calls[1] == (24100, "PE")
+
+
 class TestDetectVWAPSignal:
     def test_cross_above(self, engine):
         # 20 candles trending down then crossing up
@@ -245,6 +317,22 @@ class TestPickBestSignal:
         ]
         best = RREngine.pick_best_signal(signals)
         assert best["signal_type"] == "MC"
+
+    def test_mom_beats_pmom(self):
+        signals = [
+            {"signal_type": "PMOM", "direction": "BUY_CE"},
+            {"signal_type": "MOM", "direction": "BUY_CE"},
+        ]
+        best = RREngine.pick_best_signal(signals)
+        assert best["signal_type"] == "MOM"
+
+    def test_pmom_beats_vwap(self):
+        signals = [
+            {"signal_type": "VWAP", "direction": "BUY_PE"},
+            {"signal_type": "PMOM", "direction": "BUY_PE"},
+        ]
+        best = RREngine.pick_best_signal(signals)
+        assert best["signal_type"] == "PMOM"
 
     def test_mom_beats_vwap(self):
         signals = [

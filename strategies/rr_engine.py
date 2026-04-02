@@ -151,11 +151,17 @@ class RREngine:
             if mc:
                 signals.append(mc)
 
-        # MOM signal
+        # MOM signal (spot-based)
         if "MOM" in allowed_signals:
             mom = self._detect_mom_signal(closes)
             if mom:
                 signals.append(mom)
+
+        # PMOM signal (premium-based — fires before spot MOM)
+        if "PMOM" in allowed_signals:
+            pmom = self._detect_premium_mom_signal(spot)
+            if pmom:
+                signals.append(pmom)
 
         # VWAP signal
         if "VWAP" in allowed_signals:
@@ -249,6 +255,47 @@ class RREngine:
                     "momentum": closes[-5] - closes[-1],
                 },
             }
+
+        return None
+
+    def _detect_premium_mom_signal(self, spot: float) -> Optional[Dict]:
+        """PMOM: 4 consecutive higher premium closes — fires before spot MOM.
+
+        Checks CE premium (rising → BUY_CE) and PE premium (rising → BUY_PE)
+        using the same ITM strikes the strategy trades.
+        """
+        ce_strike = self.get_rr_strike(spot, "CE")
+        pe_strike = self.get_rr_strike(spot, "PE")
+
+        # CE premium momentum (rising CE premium → BUY_CE)
+        ce_premiums = self._load_todays_premiums(ce_strike, "CE")
+        if len(ce_premiums) >= 5:
+            if all(ce_premiums[-(i)] > ce_premiums[-(i + 1)] for i in range(1, 5)):
+                return {
+                    "signal_type": "PMOM",
+                    "direction": "BUY_CE",
+                    "option_type": "CE",
+                    "signal_data": {
+                        "consecutive_higher": 4,
+                        "premium_momentum": round(ce_premiums[-1] - ce_premiums[-5], 2),
+                        "strike_monitored": ce_strike,
+                    },
+                }
+
+        # PE premium momentum (rising PE premium → BUY_PE)
+        pe_premiums = self._load_todays_premiums(pe_strike, "PE")
+        if len(pe_premiums) >= 5:
+            if all(pe_premiums[-(i)] > pe_premiums[-(i + 1)] for i in range(1, 5)):
+                return {
+                    "signal_type": "PMOM",
+                    "direction": "BUY_PE",
+                    "option_type": "PE",
+                    "signal_data": {
+                        "consecutive_higher": 4,
+                        "premium_momentum": round(pe_premiums[-1] - pe_premiums[-5], 2),
+                        "strike_monitored": pe_strike,
+                    },
+                }
 
         return None
 
@@ -362,10 +409,24 @@ class RREngine:
         return [{"timestamp": r[0], "spot_price": r[1]} for r in rows]
 
     @staticmethod
+    def _load_todays_premiums(strike: int, option_type: str) -> List[float]:
+        """Load today's premium closes from oi_snapshots for a given strike."""
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        col = "ce_ltp" if option_type == "CE" else "pe_ltp"
+        with get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT {col} FROM oi_snapshots "
+                f"WHERE DATE(timestamp) = ? AND strike_price = ? AND {col} > 0 "
+                "ORDER BY timestamp",
+                (today_str, strike),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    @staticmethod
     def pick_best_signal(signals: List[Dict]) -> Optional[Dict]:
-        """Pick best signal by priority: MC > MOM > VWAP."""
+        """Pick best signal by priority: MC > MOM > PMOM > VWAP."""
         if not signals:
             return None
-        priority = {"MC": 0, "MOM": 1, "VWAP": 2}
+        priority = {"MC": 0, "MOM": 1, "PMOM": 2, "VWAP": 3}
         signals.sort(key=lambda s: priority.get(s.get("signal_type", ""), 99))
         return signals[0]

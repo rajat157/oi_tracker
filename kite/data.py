@@ -11,7 +11,7 @@ OI Change strategy:
 """
 
 import os
-from datetime import date
+from datetime import date, datetime, timedelta
 from typing import Optional, Dict, Tuple, List
 
 from kiteconnect import KiteConnect
@@ -24,6 +24,7 @@ from core.logger import get_logger
 log = get_logger("kite_data")
 
 BATCH_SIZE = 50  # Kite quote API batch limit
+NIFTY_TOKEN = 256265  # NIFTY 50 spot instrument token
 
 
 class KiteDataFetcher:
@@ -232,6 +233,75 @@ class KiteDataFetcher:
         except Exception as e:
             log.error("Error fetching futures data", error=str(e))
             return None
+
+    def fetch_option_candles(
+        self,
+        strike: int,
+        option_type: str,
+        lookback_minutes: int = 60,
+        interval: str = "3minute",
+    ) -> List[Dict]:
+        """Fetch real OHLC candles for an option strike from Kite historical API.
+
+        Used by signal engines that need accurate per-candle closes (e.g. PMOM).
+        Distinct from oi_snapshots which only stores LTP poll snapshots.
+
+        Args:
+            strike: Strike price (integer multiple of 50 for NIFTY)
+            option_type: "CE" or "PE"
+            lookback_minutes: How far back from now. 60 min = ~20 three-min candles.
+            interval: Kite interval string ("3minute" by default, "minute" also valid)
+
+        Returns:
+            List of {date, open, high, low, close, volume} dicts (Kite format).
+            Returns [] on any failure (auth, missing instrument, API error).
+        """
+        try:
+            self._refresh_token()
+            if not self._instrument_map.refresh():
+                log.error("fetch_option_candles: instrument refresh failed")
+                return []
+            expiry = self._instrument_map.get_current_expiry()
+            if not expiry:
+                log.error("fetch_option_candles: no current expiry")
+                return []
+            inst = self._instrument_map.get_option_instrument(strike, option_type, expiry)
+            if not inst:
+                log.error("fetch_option_candles: instrument not found",
+                          strike=strike, option_type=option_type, expiry=expiry)
+                return []
+            token = inst["instrument_token"]
+            to_date = datetime.now()
+            from_date = to_date - timedelta(minutes=lookback_minutes)
+            return self._kite.historical_data(token, from_date, to_date, interval)
+        except Exception as e:
+            log.error("fetch_option_candles failed",
+                      strike=strike, option_type=option_type, error=str(e))
+            return []
+
+    def fetch_nifty_candles(
+        self,
+        interval: str = "3minute",
+        lookback_minutes: int = 60,
+    ) -> List[Dict]:
+        """Fetch NIFTY 50 OHLC candles from Kite historical API.
+
+        Args:
+            interval: "minute" (1-min) or "3minute"
+            lookback_minutes: how far back from now
+
+        Returns:
+            List of {date, open, high, low, close, volume} dicts.
+            Returns [] on any failure.
+        """
+        try:
+            self._refresh_token()
+            to_date = datetime.now()
+            from_date = to_date - timedelta(minutes=lookback_minutes)
+            return self._kite.historical_data(NIFTY_TOKEN, from_date, to_date, interval)
+        except Exception as e:
+            log.error("fetch_nifty_candles failed", interval=interval, error=str(e))
+            return []
 
     def _fetch_quotes_batched(self, symbols: List[str]) -> dict:
         """

@@ -100,7 +100,8 @@ Then open http://localhost:5000 in your browser.
 - **WR:** 60.2% backtested (300 days, 727 trades) | **PF:** 1.90 | Passes all 15 months
 - 6 market regimes: HIGH_VOL_DOWN, HIGH_VOL_UP, LOW_VOL, NORMAL, TRENDING_DOWN, TRENDING_UP
 - Per-regime parameters: time window, direction filter, SL/TGT pts, max trades, cooldown
-- 4 signal types: MC (rally+pullback), MOM (4 consecutive spot candles), PMOM (4 consecutive premium candles), VWAP (spot crosses VWAP)
+- 5 signal types: MC (rally+pullback), MOM (4 consecutive spot 3-min candles), PMOM (4 consecutive option 3-min OHLC closes from Kite historical_data), NMOM (4 consecutive NIFTY 1-min OHLC closes from Kite historical_data), VWAP (spot crosses VWAP)
+- Agent prompt includes: NIFTY 3-min OHLC + NIFTY 1-min OHLC + hybrid option premium chart (real OHLC + oi_snapshots IV/OI)
 - Claude agent confirms/rejects mechanical signals with regime context + premium chart
 - Tick rounding: all premiums at 0.05 increments
 - 2-stage trailing stop (+10%→4%, +15%→10%)

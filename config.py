@@ -84,7 +84,7 @@ class RRConfig:
 
 # Regime -> per-regime params (SL/TGT in spot pts, converted to premium via delta)
 RR_REGIME_PARAMS = {
-    "HIGH_VOL_DOWN": {"signals": {"MC", "MOM", "PMOM"}, "sl_pts": 30, "tgt_pts": 40, "max_hold": 15,
+    "HIGH_VOL_DOWN": {"signals": {"MC", "MOM", "PMOM", "NMOM"}, "sl_pts": 30, "tgt_pts": 40, "max_hold": 15,
                       "direction": "CE_ONLY", "time_start": time(10, 30), "time_end": time(14, 0),
                       "cooldown": 8, "max_trades": 2},
     "HIGH_VOL_UP":   {"signals": {"MC", "VWAP"}, "sl_pts": 25, "tgt_pts": 35, "max_hold": 35,
@@ -93,13 +93,13 @@ RR_REGIME_PARAMS = {
     "LOW_VOL":       {"signals": {"MC"}, "sl_pts": 40, "tgt_pts": 25, "max_hold": 40,
                       "direction": "PE_ONLY", "time_start": time(10, 30), "time_end": time(14, 0),
                       "cooldown": 12, "max_trades": 1},
-    "NORMAL":        {"signals": {"MC", "MOM", "PMOM"}, "sl_pts": 40, "tgt_pts": 20, "max_hold": 35,
+    "NORMAL":        {"signals": {"MC", "MOM", "PMOM", "NMOM"}, "sl_pts": 40, "tgt_pts": 20, "max_hold": 35,
                       "direction": "BOTH", "time_start": time(9, 45), "time_end": time(14, 15),
                       "cooldown": 8, "max_trades": 3},
-    "TRENDING_DOWN": {"signals": {"MOM", "PMOM", "VWAP"}, "sl_pts": 40, "tgt_pts": 50, "max_hold": 30,
+    "TRENDING_DOWN": {"signals": {"MOM", "PMOM", "NMOM", "VWAP"}, "sl_pts": 40, "tgt_pts": 50, "max_hold": 30,
                       "direction": "PE_ONLY", "time_start": time(9, 30), "time_end": time(14, 30),
                       "cooldown": 6, "max_trades": 3},
-    "TRENDING_UP":   {"signals": {"MC", "MOM", "PMOM"}, "sl_pts": 40, "tgt_pts": 50, "max_hold": 40,
+    "TRENDING_UP":   {"signals": {"MC", "MOM", "PMOM", "NMOM"}, "sl_pts": 40, "tgt_pts": 50, "max_hold": 40,
                       "direction": "CE_ONLY", "time_start": time(9, 30), "time_end": time(14, 30),
                       "cooldown": 6, "max_trades": 3},
 }

@@ -22,6 +22,12 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 
 SYSTEM_PROMPT = """You are an expert NIFTY FNO (Futures & Options) scalper specializing in regime-adaptive rally trading.
 
+## DATA YOU RECEIVE (three timeframes)
+- **NIFTY 3-min OHLC**: Underlying structure — higher-highs, trend, key levels.
+- **NIFTY 1-min OHLC**: Micro-momentum — entry timing and quick reversals.
+- **Option premium 3-min chart**: VWAP, S/R, swings, IV trend for the strike you'd trade.
+A valid entry should have aligned direction across at least the NIFTY 3-min structure AND one momentum view (1-min NIFTY or the option premium).
+
 ## YOUR ANALYSIS FRAMEWORK
 1. **VWAP**: Is premium above or below VWAP? How far? Crossovers are key signals.
 2. **Support/Resistance**: Premium levels with multiple bounces. Breakouts above resistance = buy signal.
@@ -67,6 +73,8 @@ class RRAgent:
         regime: str,
         regime_config: Dict,
         trade_history_today: list = None,
+        nifty_1min_chart: str = "",
+        nifty_3min_chart: str = "",
     ) -> str:
         """Build the full analysis prompt with regime context + mechanical signal + chart."""
         spot = analysis_context.get("spot_price", 0)
@@ -102,6 +110,14 @@ class RRAgent:
             else:
                 signal_details += f", {k}: {v}"
 
+        nifty_section = ""
+        if nifty_1min_chart or nifty_3min_chart:
+            nifty_section = "\n## NIFTY PRICE ACTION\n\n"
+            if nifty_3min_chart:
+                nifty_section += nifty_3min_chart + "\n"
+            if nifty_1min_chart:
+                nifty_section += nifty_1min_chart + "\n"
+
         prompt = f"""{SYSTEM_PROMPT}
 
 ## REGIME CONTEXT
@@ -119,6 +135,8 @@ class RRAgent:
 - OI Verdict: {verdict} ({confidence:.0f}% confidence)
 - Time: {time_str}
 - Today's RR Trades: {trade_summary}
+{nifty_section}
+## OPTION PREMIUM CHART (3-min OHLC)
 
 {chart_text}
 
@@ -261,11 +279,15 @@ Respond with ONLY valid JSON (no markdown, no explanation outside the JSON):
         regime: str,
         regime_config: Dict,
         trade_history_today: list = None,
+        nifty_1min_chart: str = "",
+        nifty_3min_chart: str = "",
     ) -> Optional[Dict]:
         """Full pipeline: build prompt -> call Claude -> parse & validate."""
         prompt = self.build_prompt(
             chart_text, analysis_context, signal,
             regime, regime_config, trade_history_today,
+            nifty_1min_chart=nifty_1min_chart,
+            nifty_3min_chart=nifty_3min_chart,
         )
 
         log.info("Calling Claude agent for RR analysis",

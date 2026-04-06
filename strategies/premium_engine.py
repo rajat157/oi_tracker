@@ -34,77 +34,151 @@ class PremiumEngine:
             "atm": atm,
         }
 
-    def build_premium_chart(self, spot_price: float,
-                            date_str: str = None,
-                            ce_strike: int = None,
-                            pe_strike: int = None) -> Optional[Dict]:
+    def build_premium_chart_from_ohlc(
+        self,
+        spot_price: float,
+        ce_strike: int,
+        pe_strike: int,
+        kite_fetcher,
+        lookback_minutes: int = 240,
+    ) -> Optional[Dict]:
+        """Build premium chart using real 3-min OHLC + hybrid oi_snapshots IV/OI.
+
+        Unlike build_premium_chart (which reads polled LTP from oi_snapshots),
+        this method uses Kite historical_data for accurate candle closes that
+        match what the user sees on the broker chart. IV and OI are merged from
+        oi_snapshots by HH:MM key with previous-value fill for missing entries.
+
+        Args:
+            spot_price: Current NIFTY spot price.
+            ce_strike: CE option strike (ATM - 100 for RR strategy).
+            pe_strike: PE option strike (ATM + 100 for RR strategy).
+            kite_fetcher: KiteDataFetcher instance exposing fetch_option_candles.
+            lookback_minutes: How far back to fetch OHLC from now. 240 = 4h
+                covers a full trading day with margin.
+
+        Returns:
+            Same dict shape as build_premium_chart (compatible with
+            format_chart_for_prompt and all indicator methods).
+            Returns None if either CE or PE OHLC fetch returns empty.
         """
-        Build full-day premium chart for CE and PE scalping strikes.
+        date_str = date.today().strftime("%Y-%m-%d")
 
-        Queries oi_snapshots for today's data (or specified date).
-        Returns dict with candle arrays and current spot.
-        """
-        if not date_str:
-            date_str = date.today().strftime("%Y-%m-%d")
-
-        if not ce_strike or not pe_strike:
-            strikes = self.get_itm_strikes(spot_price)
-            ce_strike = strikes["ce_strike"]
-            pe_strike = strikes["pe_strike"]
-
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            # Get CE candles
-            cursor.execute("""
-                SELECT timestamp, spot_price, ce_ltp, ce_volume, ce_iv, ce_oi
-                FROM oi_snapshots
-                WHERE DATE(timestamp) = ? AND strike_price = ? AND ce_ltp > 0
-                ORDER BY timestamp
-            """, (date_str, ce_strike))
-            ce_rows = cursor.fetchall()
-
-            # Get PE candles
-            cursor.execute("""
-                SELECT timestamp, spot_price, pe_ltp, pe_volume, pe_iv, pe_oi
-                FROM oi_snapshots
-                WHERE DATE(timestamp) = ? AND strike_price = ? AND pe_ltp > 0
-                ORDER BY timestamp
-            """, (date_str, pe_strike))
-            pe_rows = cursor.fetchall()
-
-        if not ce_rows and not pe_rows:
+        ce_ohlc = kite_fetcher.fetch_option_candles(
+            ce_strike, "CE", lookback_minutes=lookback_minutes)
+        pe_ohlc = kite_fetcher.fetch_option_candles(
+            pe_strike, "PE", lookback_minutes=lookback_minutes)
+        if not ce_ohlc or not pe_ohlc:
             return None
 
-        ce_candles = []
-        for row in ce_rows:
-            ce_candles.append({
-                "ts": row["timestamp"],
-                "ltp": row["ce_ltp"],
-                "volume": row["ce_volume"] or 0,
-                "iv": row["ce_iv"] or 0,
-                "oi": row["ce_oi"] or 0,
-                "spot": row["spot_price"],
-            })
-
-        pe_candles = []
-        for row in pe_rows:
-            pe_candles.append({
-                "ts": row["timestamp"],
-                "ltp": row["pe_ltp"],
-                "volume": row["pe_volume"] or 0,
-                "iv": row["pe_iv"] or 0,
-                "oi": row["pe_oi"] or 0,
-                "spot": row["spot_price"],
-            })
+        ce_iv_oi = self._load_iv_oi_map(date_str, ce_strike, "CE")
+        pe_iv_oi = self._load_iv_oi_map(date_str, pe_strike, "PE")
 
         return {
             "ce_strike": ce_strike,
             "pe_strike": pe_strike,
             "spot_price": spot_price,
             "date": date_str,
-            "ce_candles": ce_candles,
-            "pe_candles": pe_candles,
+            "ce_candles": self._merge_ohlc_with_iv_oi(ce_ohlc, ce_iv_oi, spot_price),
+            "pe_candles": self._merge_ohlc_with_iv_oi(pe_ohlc, pe_iv_oi, spot_price),
         }
+
+    @staticmethod
+    def _load_iv_oi_map(date_str: str, strike: int,
+                        option_type: str) -> Dict[str, Tuple[float, float]]:
+        """Return HH:MM -> (iv, oi) map from oi_snapshots for a given strike."""
+        iv_col = "ce_iv" if option_type == "CE" else "pe_iv"
+        oi_col = "ce_oi" if option_type == "CE" else "pe_oi"
+        ltp_col = "ce_ltp" if option_type == "CE" else "pe_ltp"
+        with get_connection() as conn:
+            rows = conn.execute(
+                f"SELECT timestamp, {iv_col}, {oi_col} FROM oi_snapshots "
+                f"WHERE DATE(timestamp) = ? AND strike_price = ? AND {ltp_col} > 0 "
+                "ORDER BY timestamp",
+                (date_str, strike),
+            ).fetchall()
+
+        result: Dict[str, Tuple[float, float]] = {}
+        for r in rows:
+            ts = r[0]
+            if isinstance(ts, str) and len(ts) >= 16:
+                hhmm = ts[11:16]
+            else:
+                hhmm = str(ts)[11:16]
+            result[hhmm] = (float(r[1] or 0), float(r[2] or 0))
+        return result
+
+    @staticmethod
+    def _merge_ohlc_with_iv_oi(
+        ohlc_list: List[Dict],
+        iv_oi_map: Dict[str, Tuple[float, float]],
+        spot_price: float,
+    ) -> List[Dict]:
+        """Merge Kite OHLC candles with oi_snapshots IV/OI by HH:MM.
+
+        Handles timestamp drift between Kite (HH:MM:00) and oi_snapshots
+        (HH:MM:05) by rounding both to HH:MM. Missing entries carry forward
+        the last known IV/OI value.
+        """
+        candles = []
+        last_iv, last_oi = 0.0, 0.0
+        for row in ohlc_list:
+            ts = row["date"]
+            if hasattr(ts, "strftime"):
+                hhmm = ts.strftime("%H:%M")
+                ts_str = ts.strftime("%Y-%m-%dT%H:%M:%S")
+            else:
+                hhmm = str(ts)[11:16]
+                ts_str = str(ts)
+            iv, oi = iv_oi_map.get(hhmm, (0.0, 0.0))
+            if iv > 0:
+                last_iv = iv
+            if oi > 0:
+                last_oi = oi
+            candles.append({
+                "ts": ts_str,
+                "ltp": row["close"],   # real candle close
+                "open": row.get("open", 0),
+                "high": row.get("high", 0),
+                "low": row.get("low", 0),
+                "volume": row.get("volume", 0),
+                "iv": last_iv,
+                "oi": last_oi,
+                "spot": spot_price,
+            })
+        return candles
+
+    @staticmethod
+    def format_nifty_ohlc_for_prompt(
+        candles: List[Dict],
+        label: str = "NIFTY 3-min",
+        max_rows: int = 20,
+    ) -> str:
+        """Format NIFTY OHLC candles as a markdown table for the agent prompt."""
+        if not candles:
+            return f"### {label} chart: no data available\n"
+        recent = candles[-max_rows:]
+        lines = [f"### {label} chart (last {len(recent)} candles)", ""]
+        lines.append("| # | Time | Open | High | Low | Close |")
+        lines.append("|---|------|------|------|-----|-------|")
+        for i, c in enumerate(recent, 1):
+            ts = c["date"] if "date" in c else c.get("ts", "")
+            if hasattr(ts, "strftime"):
+                hhmm = ts.strftime("%H:%M")
+            else:
+                hhmm = str(ts)[11:16]
+            lines.append(
+                f"| {i} | {hhmm} | {c['open']:.1f} | {c['high']:.1f} | "
+                f"{c['low']:.1f} | {c['close']:.1f} |"
+            )
+        # One-line summary of last 5 closes for quick pattern read
+        last5 = [c["close"] for c in recent[-5:]]
+        if len(last5) == 5:
+            arrows = " ".join("up" if last5[i] > last5[i - 1] else "dn"
+                              for i in range(1, 5))
+            lines.append("")
+            lines.append(f"Last 5 closes: {last5} ({arrows})")
+        return "\n".join(lines) + "\n"
 
     def compute_vwap(self, candles: List[Dict]) -> List[float]:
         """

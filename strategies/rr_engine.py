@@ -25,7 +25,13 @@ NIFTY_STEP = 50
 class RREngine:
     """Detects Rally Rider signals and classifies market regime."""
 
-    def __init__(self):
+    def __init__(self, fetcher=None):
+        """Args:
+            fetcher: Optional data fetcher exposing fetch_option_candles(strike, option_type)
+                and fetch_nifty_candles(interval). When None, PMOM and NMOM are
+                silently disabled (used in unit tests without a live Kite connection).
+        """
+        self._fetcher = fetcher
         self._regime: Optional[str] = None
         self._regime_date: Optional[date] = None
         self._weekly_trend: Optional[str] = None
@@ -151,17 +157,25 @@ class RREngine:
             if mc:
                 signals.append(mc)
 
-        # MOM signal (spot-based)
+        # MOM signal (spot-based, 3-min from analysis_history)
         if "MOM" in allowed_signals:
             mom = self._detect_mom_signal(closes)
             if mom:
                 signals.append(mom)
 
-        # PMOM signal (premium-based — fires before spot MOM)
+        # PMOM signal (option premium 3-min OHLC, fires before spot MOM)
         if "PMOM" in allowed_signals:
             pmom = self._detect_premium_mom_signal(spot)
             if pmom:
                 signals.append(pmom)
+
+        # NMOM signal (NIFTY 1-min OHLC, fastest momentum detector)
+        if "NMOM" in allowed_signals and self._fetcher is not None:
+            nifty_1min = self._fetcher.fetch_nifty_candles(
+                interval="minute", lookback_minutes=30)
+            nmom = self._detect_nifty_mom_signal(nifty_1min)
+            if nmom:
+                signals.append(nmom)
 
         # VWAP signal
         if "VWAP" in allowed_signals:
@@ -258,41 +272,88 @@ class RREngine:
 
         return None
 
-    def _detect_premium_mom_signal(self, spot: float) -> Optional[Dict]:
-        """PMOM: 4 consecutive higher premium closes — fires before spot MOM.
+    def _detect_nifty_mom_signal(self, candles_1min: List[Dict]) -> Optional[Dict]:
+        """NMOM: 4 consecutive higher/lower 1-min NIFTY closes.
 
-        Checks CE premium (rising → BUY_CE) and PE premium (rising → BUY_PE)
-        using the same ITM strikes the strategy trades.
+        Fires earlier than MOM (spot 3-min) and PMOM (option 3-min) when
+        price moves decisively within a few minutes. The caller provides
+        the 1-min NIFTY candles (typically via KiteDataFetcher.fetch_nifty_candles).
         """
+        if not candles_1min or len(candles_1min) < 5:
+            return None
+
+        closes = [c["close"] for c in candles_1min]
+
+        # 4 consecutive higher 1-min closes → BUY_CE
+        if all(closes[-(i)] > closes[-(i + 1)] for i in range(1, 5)):
+            return {
+                "signal_type": "NMOM",
+                "direction": "BUY_CE",
+                "option_type": "CE",
+                "signal_data": {
+                    "consecutive_higher": 4,
+                    "momentum": round(closes[-1] - closes[-5], 2),
+                    "timeframe": "1min",
+                },
+            }
+
+        # 4 consecutive lower 1-min closes → BUY_PE
+        if all(closes[-(i)] < closes[-(i + 1)] for i in range(1, 5)):
+            return {
+                "signal_type": "NMOM",
+                "direction": "BUY_PE",
+                "option_type": "PE",
+                "signal_data": {
+                    "consecutive_lower": 4,
+                    "momentum": round(closes[-5] - closes[-1], 2),
+                    "timeframe": "1min",
+                },
+            }
+
+        return None
+
+    def _detect_premium_mom_signal(self, spot: float) -> Optional[Dict]:
+        """PMOM: 4 consecutive higher 3-min option closes — fires before spot MOM.
+
+        Uses Kite historical_data 3-min OHLC closes (not oi_snapshots LTP polls)
+        so the engine sees exactly what the broker chart shows. Checks CE premium
+        (rising → BUY_CE) and PE premium (rising → BUY_PE) at the current
+        trading strikes (ATM-100 for CE, ATM+100 for PE).
+        """
+        if self._fetcher is None:
+            return None
+
         ce_strike = self.get_rr_strike(spot, "CE")
         pe_strike = self.get_rr_strike(spot, "PE")
 
-        # CE premium momentum (rising CE premium → BUY_CE)
-        ce_premiums = self._load_todays_premiums(ce_strike, "CE")
-        if len(ce_premiums) >= 5:
-            if all(ce_premiums[-(i)] > ce_premiums[-(i + 1)] for i in range(1, 5)):
+        # CE premium momentum (rising CE close → BUY_CE)
+        ce_candles = self._fetcher.fetch_option_candles(ce_strike, "CE")
+        if len(ce_candles) >= 5:
+            ce_closes = [c["close"] for c in ce_candles]
+            if all(ce_closes[-(i)] > ce_closes[-(i + 1)] for i in range(1, 5)):
                 return {
                     "signal_type": "PMOM",
                     "direction": "BUY_CE",
                     "option_type": "CE",
                     "signal_data": {
                         "consecutive_higher": 4,
-                        "premium_momentum": round(ce_premiums[-1] - ce_premiums[-5], 2),
+                        "premium_momentum": round(ce_closes[-1] - ce_closes[-5], 2),
                         "strike_monitored": ce_strike,
                     },
                 }
 
-        # PE premium momentum (rising PE premium → BUY_PE)
-        pe_premiums = self._load_todays_premiums(pe_strike, "PE")
-        if len(pe_premiums) >= 5:
-            if all(pe_premiums[-(i)] > pe_premiums[-(i + 1)] for i in range(1, 5)):
+        # PE premium momentum (rising PE close → BUY_PE)
+        pe_candles = self._fetcher.fetch_option_candles(pe_strike, "PE")
+        if len(pe_candles) >= 5:
+            pe_closes = [c["close"] for c in pe_candles]
+            if all(pe_closes[-(i)] > pe_closes[-(i + 1)] for i in range(1, 5)):
                 return {
                     "signal_type": "PMOM",
                     "direction": "BUY_PE",
                     "option_type": "PE",
                     "signal_data": {
                         "consecutive_higher": 4,
-                        "premium_momentum": round(pe_premiums[-1] - pe_premiums[-5], 2),
+                        "premium_momentum": round(pe_closes[-1] - pe_closes[-5], 2),
                         "strike_monitored": pe_strike,
                     },
                 }
@@ -409,24 +470,14 @@ class RREngine:
         return [{"timestamp": r[0], "spot_price": r[1]} for r in rows]
 
     @staticmethod
-    def _load_todays_premiums(strike: int, option_type: str) -> List[float]:
-        """Load today's premium closes from oi_snapshots for a given strike."""
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        col = "ce_ltp" if option_type == "CE" else "pe_ltp"
-        with get_connection() as conn:
-            rows = conn.execute(
-                f"SELECT {col} FROM oi_snapshots "
-                f"WHERE DATE(timestamp) = ? AND strike_price = ? AND {col} > 0 "
-                "ORDER BY timestamp",
-                (today_str, strike),
-            ).fetchall()
-        return [r[0] for r in rows]
-
-    @staticmethod
     def pick_best_signal(signals: List[Dict]) -> Optional[Dict]:
-        """Pick best signal by priority: MC > MOM > PMOM > VWAP."""
+        """Pick best signal by priority: MC > MOM > PMOM > NMOM > VWAP.
+
+        Fastest/noisiest signals have lowest priority; when a slower signal
+        also fires, it wins because it has more confirmation behind it.
+        """
         if not signals:
             return None
-        priority = {"MC": 0, "MOM": 1, "PMOM": 2, "VWAP": 3}
+        priority = {"MC": 0, "MOM": 1, "PMOM": 2, "NMOM": 3, "VWAP": 4}
         signals.sort(key=lambda s: priority.get(s.get("signal_type", ""), 99))
         return signals[0]

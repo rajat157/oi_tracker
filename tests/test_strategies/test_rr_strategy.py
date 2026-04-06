@@ -288,8 +288,9 @@ class TestIntegration:
     def test_premium_engine_build_chart_callable(self):
         from strategies.premium_engine import PremiumEngine
         pe = PremiumEngine()
-        assert callable(pe.build_premium_chart)
+        assert callable(pe.build_premium_chart_from_ohlc)
         assert callable(pe.format_chart_for_prompt)
+        assert callable(pe.format_nifty_ohlc_for_prompt)
         assert callable(pe.compute_vwap)
 
     def test_rr_strategy_premium_engine_wired(self):
@@ -312,6 +313,17 @@ class TestIntegration:
         assert agent is not None
         assert callable(agent.build_prompt)
         assert callable(agent.monitor_active_trade)
+
+    def test_kite_fetcher_propagates_to_engine(self):
+        """RRStrategy(kite_fetcher=X) → engine._fetcher is X."""
+        fake_fetcher = MagicMock()
+        strategy = RRStrategy(trade_repo=MagicMock(), kite_fetcher=fake_fetcher)
+        assert strategy.engine._fetcher is fake_fetcher
+
+    def test_engine_default_no_fetcher(self):
+        """When no kite_fetcher passed, engine._fetcher is None (PMOM/NMOM disabled)."""
+        strategy = RRStrategy(trade_repo=MagicMock())
+        assert strategy.engine._fetcher is None
 
     def test_order_executor_methods_exist(self):
         from kite.order_executor import OrderExecutor

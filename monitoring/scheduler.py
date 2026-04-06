@@ -55,15 +55,19 @@ class OIScheduler:
         self.last_purge_date = None
         self.last_learning_date = None
         self.order_executor = OrderExecutor()
+        # Kite data fetcher — must be created BEFORE strategies so they can receive it
+        self.kite_fetcher = KiteDataFetcher()
         repo = TradeRepository()
         self.strategies = {
-            "rally_rider": RRStrategy(trade_repo=repo, order_executor=self.order_executor),
+            "rally_rider": RRStrategy(
+                trade_repo=repo,
+                order_executor=self.order_executor,
+                kite_fetcher=self.kite_fetcher,
+            ),
         }
         self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
         self.force_enabled = False
-        # Kite data fetcher (reusable, no browser)
-        self.kite_fetcher = KiteDataFetcher()
         # Premium monitor for real-time SL/target detection
         self.premium_monitor = PremiumMonitor(socketio=socketio, shadow_mode=False)
         self.premium_monitor.set_exit_callback(self._handle_premium_exit)

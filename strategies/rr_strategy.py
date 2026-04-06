@@ -34,6 +34,7 @@ class RRStrategy(BaseTracker):
     is_selling = False
 
     def __init__(self, **kwargs):
+        self._kite_fetcher = kwargs.pop("kite_fetcher", None)
         super().__init__(**kwargs)
         if self.trade_repo:
             self.trade_repo.init_table(RR_TRADES_DDL)
@@ -45,7 +46,7 @@ class RRStrategy(BaseTracker):
     def engine(self):
         if self._engine is None:
             from strategies.rr_engine import RREngine
-            self._engine = RREngine()
+            self._engine = RREngine(fetcher=self._kite_fetcher)
         return self._engine
 
     @property
@@ -119,7 +120,7 @@ class RRStrategy(BaseTracker):
         regime = self.engine.classify_regime(_cfg)
         regime_config = self.engine.get_regime_params(regime)
 
-        # Step 1: Detect mechanical signals
+        # Step 1: Detect mechanical signals (engine uses self._fetcher for PMOM/NMOM)
         signals = self.engine.detect_signals(analysis, regime_config)
         if not signals:
             return None
@@ -132,13 +133,15 @@ class RRStrategy(BaseTracker):
 
         option_type = best_signal["option_type"]
         spot = analysis.get("spot_price", 0)
-        strike = self.engine.get_rr_strike(spot, option_type)
+        ce_strike = self.engine.get_rr_strike(spot, "CE")
+        pe_strike = self.engine.get_rr_strike(spot, "PE")
 
-        # Step 3: Build premium chart
-        chart = self.premium_engine.build_premium_chart(
-            spot,
-            ce_strike=strike if option_type == "CE" else None,
-            pe_strike=strike if option_type == "PE" else None,
+        # Step 3: Build premium chart from REAL 3-min OHLC + hybrid IV/OI
+        chart = self.premium_engine.build_premium_chart_from_ohlc(
+            spot_price=spot,
+            ce_strike=ce_strike,
+            pe_strike=pe_strike,
+            kite_fetcher=self._kite_fetcher,
         )
         if not chart:
             log.info("No chart data for RR signal")
@@ -146,13 +149,28 @@ class RRStrategy(BaseTracker):
 
         chart_text = self.premium_engine.format_chart_for_prompt(chart)
 
-        # Step 4: Call Claude agent
+        # Step 4: Fetch NIFTY 1-min and 3-min candles for agent context
+        nifty_1min_candles = []
+        nifty_3min_candles = []
+        if self._kite_fetcher:
+            nifty_1min_candles = self._kite_fetcher.fetch_nifty_candles(
+                interval="minute", lookback_minutes=30)
+            nifty_3min_candles = self._kite_fetcher.fetch_nifty_candles(
+                interval="3minute", lookback_minutes=90)
+        nifty_1min_text = self.premium_engine.format_nifty_ohlc_for_prompt(
+            nifty_1min_candles, label="NIFTY 1-min", max_rows=20)
+        nifty_3min_text = self.premium_engine.format_nifty_ohlc_for_prompt(
+            nifty_3min_candles, label="NIFTY 3-min", max_rows=15)
+
+        # Step 5: Call Claude agent with full multi-timeframe context
         todays = self.trade_repo.get_todays_trades(self.table_name) if self.trade_repo else []
         resolved = [t for t in todays if t.get("resolved_at")]
 
         agent_signal = self.agent.get_signal(
             chart_text, analysis, best_signal,
             regime, regime_config, resolved,
+            nifty_1min_chart=nifty_1min_text,
+            nifty_3min_chart=nifty_3min_text,
         )
         if not agent_signal:
             return None
@@ -380,10 +398,16 @@ class RRStrategy(BaseTracker):
             spot = analysis.get("spot_price", 0)
             if spot <= 0:
                 return None
-            chart = self.premium_engine.build_premium_chart(
-                spot,
-                ce_strike=trade["strike"] if trade["option_type"] == "CE" else None,
-                pe_strike=trade["strike"] if trade["option_type"] == "PE" else None,
+            # Use the active trade's strike on its side, compute the opposite from current spot
+            ce_strike = (trade["strike"] if trade["option_type"] == "CE"
+                         else self.engine.get_rr_strike(spot, "CE"))
+            pe_strike = (trade["strike"] if trade["option_type"] == "PE"
+                         else self.engine.get_rr_strike(spot, "PE"))
+            chart = self.premium_engine.build_premium_chart_from_ohlc(
+                spot_price=spot,
+                ce_strike=ce_strike,
+                pe_strike=pe_strike,
+                kite_fetcher=self._kite_fetcher,
             )
             if not chart:
                 return None

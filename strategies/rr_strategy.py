@@ -34,6 +34,11 @@ class RRStrategy(BaseTracker):
     is_selling = False
 
     def __init__(self, **kwargs):
+        # New architecture kwargs (extract before delegating to BaseTracker)
+        self._exit_monitor = kwargs.pop("exit_monitor", None)
+        self._candle_builder = kwargs.pop("candle_builder", None)
+        # Backward-compat shim: some older test paths pass kite_fetcher
+        # (only used now as a last-resort fallback inside _call_trade_monitor).
         self._kite_fetcher = kwargs.pop("kite_fetcher", None)
         super().__init__(**kwargs)
         if self.trade_repo:
@@ -46,7 +51,7 @@ class RRStrategy(BaseTracker):
     def engine(self):
         if self._engine is None:
             from strategies.rr_engine import RREngine
-            self._engine = RREngine(fetcher=self._kite_fetcher)
+            self._engine = RREngine()
         return self._engine
 
     @property
@@ -115,12 +120,63 @@ class RRStrategy(BaseTracker):
         todays = self.trade_repo.get_todays_trades(self.table_name)
         return sum(1 for t in todays if not t.get("is_paper"))
 
+    def _get_candles_for_strike(self, strike: int, option_type: str,
+                                analysis: dict) -> list:
+        """Return 3-min candles for a strike.
+
+        Priority order:
+        1. If the strike matches the scheduler's pre-attached candles in the
+           analysis dict (current RR ATM±100), use those.
+        2. Otherwise, ask CandleBuilder for candles by label (works as long as
+           the strike is still subscribed).
+        3. Fall back to the DB via get_live_candles (uses instrument_token —
+           only works if we can look up the token via the instrument_map).
+        """
+        # 1. analysis dict hot path
+        if option_type == "CE" and analysis.get("ce_strike") == strike:
+            candles = analysis.get("ce_candles") or []
+            if candles:
+                return candles
+        if option_type == "PE" and analysis.get("pe_strike") == strike:
+            candles = analysis.get("pe_candles") or []
+            if candles:
+                return candles
+
+        # 2. CandleBuilder by label
+        if self._candle_builder is not None:
+            label = f"NIFTY_{strike}_{option_type}"
+            candles = self._candle_builder.get_candles(label, "3min")
+            if candles:
+                return candles
+
+        # 3. DB fallback (requires instrument_token lookup)
+        try:
+            if self._candle_builder is not None:
+                fetcher = getattr(self._candle_builder, "_kite_fetcher", None)
+                if fetcher is not None and hasattr(fetcher, "_instrument_map"):
+                    inst_map = fetcher._instrument_map
+                    expiry = inst_map.get_current_expiry() if inst_map else None
+                    if expiry:
+                        inst = inst_map.get_option_instrument(strike, option_type, expiry)
+                        if inst:
+                            from db.legacy import get_live_candles
+                            return get_live_candles(inst["instrument_token"], "3min")
+        except Exception as e:
+            log.warning("DB candle fallback failed",
+                        strike=strike, type=option_type, error=str(e))
+        return []
+
     def evaluate_signal(self, analysis: dict, strikes_data: dict) -> Optional[Dict]:
-        """Detect signals, pick best, call Claude agent for confirmation."""
+        """Detect signals, pick best, call Claude agent for confirmation.
+
+        Reads all candle data from the analysis dict, which the scheduler
+        pre-populates from CandleBuilder. No live fetcher calls on the
+        signal detection path.
+        """
         regime = self.engine.classify_regime(_cfg)
         regime_config = self.engine.get_regime_params(regime)
 
-        # Step 1: Detect mechanical signals (engine uses self._fetcher for PMOM/NMOM)
+        # Step 1: Detect mechanical signals (engine reads candles from analysis dict)
         signals = self.engine.detect_signals(analysis, regime_config)
         if not signals:
             return None
@@ -131,17 +187,19 @@ class RRStrategy(BaseTracker):
         if not best_signal:
             return None
 
-        option_type = best_signal["option_type"]
         spot = analysis.get("spot_price", 0)
-        ce_strike = self.engine.get_rr_strike(spot, "CE")
-        pe_strike = self.engine.get_rr_strike(spot, "PE")
+        ce_strike = analysis.get("ce_strike") or self.engine.get_rr_strike(spot, "CE")
+        pe_strike = analysis.get("pe_strike") or self.engine.get_rr_strike(spot, "PE")
 
-        # Step 3: Build premium chart from REAL 3-min OHLC + hybrid IV/OI
+        # Step 3: Build premium chart from REAL 3-min OHLC (from CandleBuilder)
+        ce_candles = analysis.get("ce_candles") or []
+        pe_candles = analysis.get("pe_candles") or []
         chart = self.premium_engine.build_premium_chart_from_ohlc(
             spot_price=spot,
             ce_strike=ce_strike,
             pe_strike=pe_strike,
-            kite_fetcher=self._kite_fetcher,
+            ce_candles=ce_candles,
+            pe_candles=pe_candles,
         )
         if not chart:
             log.info("No chart data for RR signal")
@@ -149,14 +207,9 @@ class RRStrategy(BaseTracker):
 
         chart_text = self.premium_engine.format_chart_for_prompt(chart)
 
-        # Step 4: Fetch NIFTY 1-min and 3-min candles for agent context
-        nifty_1min_candles = []
-        nifty_3min_candles = []
-        if self._kite_fetcher:
-            nifty_1min_candles = self._kite_fetcher.fetch_nifty_candles(
-                interval="minute", lookback_minutes=30)
-            nifty_3min_candles = self._kite_fetcher.fetch_nifty_candles(
-                interval="3minute", lookback_minutes=90)
+        # Step 4: Format NIFTY 1-min + 3-min charts for agent context
+        nifty_1min_candles = analysis.get("nifty_1min_candles") or []
+        nifty_3min_candles = analysis.get("nifty_3min_candles") or []
         nifty_1min_text = self.premium_engine.format_nifty_ohlc_for_prompt(
             nifty_1min_candles, label="NIFTY 1-min", max_rows=20)
         nifty_3min_text = self.premium_engine.format_nifty_ohlc_for_prompt(
@@ -323,7 +376,9 @@ class RRStrategy(BaseTracker):
         )
         self.trade_repo.update_trade(self.table_name, trade["id"], **updates)
 
-        premium_monitor = kwargs.get("premium_monitor")
+        # New kwarg name is `exit_monitor`; fall back to `premium_monitor` for any
+        # lingering caller path that hasn't been updated yet.
+        exit_monitor = kwargs.get("exit_monitor") or kwargs.get("premium_monitor")
 
         def _resolve(status, reason):
             if reason in ("EOD", "MAX_TIME", "TIME_FLAT") and self.order_executor and not trade.get("is_paper"):
@@ -336,8 +391,8 @@ class RRStrategy(BaseTracker):
                 exit_premium=current, exit_reason=reason,
                 profit_loss_pct=final_pnl,
             )
-            if premium_monitor:
-                premium_monitor.unregister_trade(trade["id"])
+            if exit_monitor:
+                exit_monitor.unregister_trade(trade["id"])
             log.info(f"RR {status} ({reason})", pnl=f"{final_pnl:.2f}%",
                      entry=entry, exit=current, trade_id=trade["id"])
             self._publish(EventType.TRADE_EXITED, {
@@ -347,7 +402,7 @@ class RRStrategy(BaseTracker):
             })
             return {"action": status, "pnl": final_pnl, "reason": reason}
 
-        # Hard SL is handled by PremiumMonitor in real-time (WebSocket)
+        # Hard SL is handled by ExitMonitor in real-time (WebSocket)
         # Soft SL is managed by Claude — no mechanical SL check here
 
         # Target hit (3-min poll fallback — GTT handles this on exchange)
@@ -383,7 +438,7 @@ class RRStrategy(BaseTracker):
 
         if elapsed_min >= 6 and now.time() < time(14, 45) and self._agent is not None:
             monitor_result = self._call_trade_monitor(
-                trade, current, analysis, premium_monitor, elapsed_min)
+                trade, current, analysis, exit_monitor, elapsed_min)
             if monitor_result:
                 return monitor_result
 
@@ -391,23 +446,31 @@ class RRStrategy(BaseTracker):
 
     def _call_trade_monitor(
         self, trade: Dict, current: float,
-        analysis: dict, premium_monitor, elapsed_min: float,
+        analysis: dict, exit_monitor, elapsed_min: float,
     ) -> Optional[Dict]:
         """Call Claude to monitor active RR trade. Returns exit dict or None."""
         try:
             spot = analysis.get("spot_price", 0)
             if spot <= 0:
                 return None
-            # Use the active trade's strike on its side, compute the opposite from current spot
+
+            # Prefer CandleBuilder candles for the current ATM±100 strikes;
+            # if the active trade is NOT at those strikes, read the trade's
+            # strike candles directly from CandleBuilder (or DB fallback).
             ce_strike = (trade["strike"] if trade["option_type"] == "CE"
                          else self.engine.get_rr_strike(spot, "CE"))
             pe_strike = (trade["strike"] if trade["option_type"] == "PE"
                          else self.engine.get_rr_strike(spot, "PE"))
+
+            ce_candles = self._get_candles_for_strike(ce_strike, "CE", analysis)
+            pe_candles = self._get_candles_for_strike(pe_strike, "PE", analysis)
+
             chart = self.premium_engine.build_premium_chart_from_ohlc(
                 spot_price=spot,
                 ce_strike=ce_strike,
                 pe_strike=pe_strike,
-                kite_fetcher=self._kite_fetcher,
+                ce_candles=ce_candles,
+                pe_candles=pe_candles,
             )
             if not chart:
                 return None
@@ -431,9 +494,9 @@ class RRStrategy(BaseTracker):
                 "soft_sl_breach_premium": 0,
             }
 
-            # Enrich with soft SL breach info from PremiumMonitor
-            if premium_monitor and premium_monitor.is_monitoring(trade["id"]):
-                sl_status = premium_monitor.get_soft_sl_status(trade["id"])
+            # Enrich with soft SL breach info from ExitMonitor
+            if exit_monitor and exit_monitor.is_monitoring(trade["id"]):
+                sl_status = exit_monitor.get_soft_sl_status(trade["id"])
                 if sl_status:
                     trade_context["soft_sl_breached"] = sl_status.get("soft_sl_breached", False)
                     trade_context["soft_sl_breach_premium"] = sl_status.get("soft_sl_breach_premium", 0)
@@ -450,9 +513,9 @@ class RRStrategy(BaseTracker):
                 # Update soft SL in DB (NOT the hard SL — GTT stays untouched)
                 self.trade_repo.update_trade(
                     self.table_name, trade["id"], soft_sl_premium=new_sl)
-                # Update soft SL in PremiumMonitor (NO GTT modify)
-                if premium_monitor:
-                    premium_monitor.update_soft_sl(trade["id"], new_sl)
+                # Update soft SL in ExitMonitor (NO GTT modify)
+                if exit_monitor:
+                    exit_monitor.update_soft_sl(trade["id"], new_sl)
                 log.info("Claude tightened soft SL", trade_id=trade["id"],
                          old_soft_sl=trade.get("soft_sl_premium", 0),
                          new_soft_sl=new_sl,

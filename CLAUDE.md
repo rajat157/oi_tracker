@@ -42,7 +42,11 @@ oi_tracker/
 │   └── rr_agent.py        # RR Claude subprocess with regime-aware prompt
 ├── monitoring/            # Scheduler + premium monitor
 │   ├── scheduler.py       # APScheduler for 3-minute polling + trade orchestration
-│   └── premium_monitor.py # Real-time premium monitoring via Kite WebSocket
+│   ├── tick_hub.py        # Single Kite WebSocket; dispatches ticks to consumers
+│   ├── candle_builder.py  # Live 1-min + 3-min OHLC from ticks; persists to live_candles
+│   ├── exit_monitor.py    # Tick-level SL/target/soft-SL detection for active trades
+│   ├── orderflow_collector.py  # Depth snapshot collector (10s)
+│   └── live_pnl_broadcaster.py # Live P&L payload for dashboard (5s)
 ├── alerts/                # Telegram notification system
 │   ├── __init__.py        # Re-exports send_telegram + AlertBroker
 │   ├── _legacy.py         # Legacy send_telegram functions

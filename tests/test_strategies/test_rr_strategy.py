@@ -188,7 +188,7 @@ class TestCheckAndUpdate:
         return t
 
     def test_no_sl_exit_in_check_and_update(self, strategy, repo):
-        """SL is handled by PremiumMonitor, not check_and_update."""
+        """SL is handled by ExitMonitor, not check_and_update."""
         repo.get_active.return_value = self._trade(
             created_at="2025-01-01T10:00:00", target_premium=280.0)
         with patch("strategies.rr_strategy.datetime") as mock_dt:
@@ -314,16 +314,23 @@ class TestIntegration:
         assert callable(agent.build_prompt)
         assert callable(agent.monitor_active_trade)
 
-    def test_kite_fetcher_propagates_to_engine(self):
-        """RRStrategy(kite_fetcher=X) → engine._fetcher is X."""
-        fake_fetcher = MagicMock()
-        strategy = RRStrategy(trade_repo=MagicMock(), kite_fetcher=fake_fetcher)
-        assert strategy.engine._fetcher is fake_fetcher
+    def test_exit_monitor_and_candle_builder_stored_on_strategy(self):
+        """RRStrategy(exit_monitor=X, candle_builder=Y) stores both as private attrs."""
+        fake_em = MagicMock()
+        fake_cb = MagicMock()
+        strategy = RRStrategy(
+            trade_repo=MagicMock(),
+            exit_monitor=fake_em,
+            candle_builder=fake_cb,
+        )
+        assert strategy._exit_monitor is fake_em
+        assert strategy._candle_builder is fake_cb
 
-    def test_engine_default_no_fetcher(self):
-        """When no kite_fetcher passed, engine._fetcher is None (PMOM/NMOM disabled)."""
+    def test_strategy_defaults_to_none_for_new_services(self):
+        """When no exit_monitor or candle_builder passed, the attrs are None."""
         strategy = RRStrategy(trade_repo=MagicMock())
-        assert strategy.engine._fetcher is None
+        assert strategy._exit_monitor is None
+        assert strategy._candle_builder is None
 
     def test_order_executor_methods_exist(self):
         from kite.order_executor import OrderExecutor

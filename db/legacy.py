@@ -393,6 +393,34 @@ def init_db():
             )
         """)
 
+        # Unified live candle store (populated by CandleBuilder from WebSocket ticks).
+        # Supports multiple instruments (NIFTY, NIFTY_BANK, SENSEX, option strikes)
+        # and multiple intervals (1min, 3min) in a single table.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS live_candles (
+                timestamp         TEXT NOT NULL,
+                instrument_token  INTEGER NOT NULL,
+                interval          TEXT NOT NULL,
+                label             TEXT NOT NULL,
+                instrument_type   TEXT NOT NULL,
+                open              REAL NOT NULL,
+                high              REAL NOT NULL,
+                low               REAL NOT NULL,
+                close             REAL NOT NULL,
+                volume            INTEGER DEFAULT 0,
+                oi                INTEGER DEFAULT 0,
+                PRIMARY KEY (timestamp, instrument_token, interval)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_live_candles_token_interval_ts
+            ON live_candles (instrument_token, interval, timestamp)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_live_candles_label_interval_ts
+            ON live_candles (label, interval, timestamp)
+        """)
+
         conn.commit()
 
 
@@ -1061,6 +1089,91 @@ def purge_old_orderflow(days: int = 30):
                 from core.logger import get_logger
                 log = get_logger("database")
                 log.info("Purged old orderflow depth", deleted=deleted, days=days)
+            except ImportError:
+                pass
+
+
+# ---------------------------------------------------------------------------
+# Live candles (WebSocket-driven CandleBuilder store)
+# ---------------------------------------------------------------------------
+
+def save_live_candle(*, timestamp: str, instrument_token: int, interval: str,
+                     label: str, instrument_type: str, open: float, high: float,
+                     low: float, close: float, volume: int = 0, oi: int = 0) -> None:
+    """Idempotent upsert of one closed candle into live_candles.
+
+    Primary key is (timestamp, instrument_token, interval) so repeated writes
+    for the same bar are safe (gap backfill, reconnects).
+    """
+    with get_connection() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO live_candles
+            (timestamp, instrument_token, interval, label, instrument_type,
+             open, high, low, close, volume, oi)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (timestamp, instrument_token, interval, label, instrument_type,
+              open, high, low, close, volume, oi))
+        conn.commit()
+
+
+def get_live_candles(instrument_token: int, interval: str,
+                     limit: int = 240) -> list:
+    """Fetch the last N closed candles for a (token, interval) pair.
+
+    Returns a list of dicts ordered by timestamp ASC (oldest first). Keys
+    match the CandleBuilder candle shape: date (datetime), open, high, low,
+    close, volume, oi.
+    """
+    with get_connection() as conn:
+        rows = conn.execute("""
+            SELECT timestamp, open, high, low, close, volume, oi
+            FROM live_candles
+            WHERE instrument_token = ? AND interval = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (instrument_token, interval, limit)).fetchall()
+    result = []
+    for r in reversed(rows):  # ASC
+        ts = r[0]
+        try:
+            dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
+        except (ValueError, TypeError):
+            dt = ts
+        result.append({
+            "date": dt,
+            "open": r[1],
+            "high": r[2],
+            "low": r[3],
+            "close": r[4],
+            "volume": r[5] or 0,
+            "oi": r[6] or 0,
+        })
+    return result
+
+
+def get_last_live_candle_ts(instrument_token: int, interval: str):
+    """Return the latest stored timestamp for (token, interval), or None."""
+    with get_connection() as conn:
+        row = conn.execute("""
+            SELECT MAX(timestamp) FROM live_candles
+            WHERE instrument_token = ? AND interval = ?
+        """, (instrument_token, interval)).fetchone()
+    return row[0] if row and row[0] else None
+
+
+def purge_old_live_candles(days: int = 30):
+    """Delete live_candles older than `days` days."""
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM live_candles WHERE timestamp < ?", (cutoff,))
+        deleted = cursor.rowcount
+        conn.commit()
+        if deleted > 0:
+            try:
+                from core.logger import get_logger
+                log = get_logger("database")
+                log.info("Purged old live candles", deleted=deleted, days=days)
             except ImportError:
                 pass
 

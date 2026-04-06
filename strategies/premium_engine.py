@@ -39,37 +39,24 @@ class PremiumEngine:
         spot_price: float,
         ce_strike: int,
         pe_strike: int,
-        kite_fetcher,
-        lookback_minutes: int = 240,
+        ce_candles: List[Dict],
+        pe_candles: List[Dict],
     ) -> Optional[Dict]:
-        """Build premium chart using real 3-min OHLC + hybrid oi_snapshots IV/OI.
+        """Build premium chart using pre-fetched 3-min OHLC + hybrid IV/OI.
 
-        Unlike build_premium_chart (which reads polled LTP from oi_snapshots),
-        this method uses Kite historical_data for accurate candle closes that
-        match what the user sees on the broker chart. IV and OI are merged from
-        oi_snapshots by HH:MM key with previous-value fill for missing entries.
-
-        Args:
-            spot_price: Current NIFTY spot price.
-            ce_strike: CE option strike (ATM - 100 for RR strategy).
-            pe_strike: PE option strike (ATM + 100 for RR strategy).
-            kite_fetcher: KiteDataFetcher instance exposing fetch_option_candles.
-            lookback_minutes: How far back to fetch OHLC from now. 240 = 4h
-                covers a full trading day with margin.
+        Callers supply `ce_candles` + `pe_candles` (each a list of
+        {date, open, high, low, close, volume} dicts from CandleBuilder).
+        IV and OI are merged from `oi_snapshots` by HH:MM key, with
+        previous-value fill for gaps.
 
         Returns:
-            Same dict shape as build_premium_chart (compatible with
-            format_chart_for_prompt and all indicator methods).
-            Returns None if either CE or PE OHLC fetch returns empty.
+            Same dict shape as before (compatible with format_chart_for_prompt
+            and all indicator methods). Returns None if either side is empty.
         """
-        date_str = date.today().strftime("%Y-%m-%d")
-
-        ce_ohlc = kite_fetcher.fetch_option_candles(
-            ce_strike, "CE", lookback_minutes=lookback_minutes)
-        pe_ohlc = kite_fetcher.fetch_option_candles(
-            pe_strike, "PE", lookback_minutes=lookback_minutes)
-        if not ce_ohlc or not pe_ohlc:
+        if not ce_candles or not pe_candles:
             return None
+
+        date_str = date.today().strftime("%Y-%m-%d")
 
         ce_iv_oi = self._load_iv_oi_map(date_str, ce_strike, "CE")
         pe_iv_oi = self._load_iv_oi_map(date_str, pe_strike, "PE")
@@ -79,8 +66,8 @@ class PremiumEngine:
             "pe_strike": pe_strike,
             "spot_price": spot_price,
             "date": date_str,
-            "ce_candles": self._merge_ohlc_with_iv_oi(ce_ohlc, ce_iv_oi, spot_price),
-            "pe_candles": self._merge_ohlc_with_iv_oi(pe_ohlc, pe_iv_oi, spot_price),
+            "ce_candles": self._merge_ohlc_with_iv_oi(ce_candles, ce_iv_oi, spot_price),
+            "pe_candles": self._merge_ohlc_with_iv_oi(pe_candles, pe_iv_oi, spot_price),
         }
 
     @staticmethod

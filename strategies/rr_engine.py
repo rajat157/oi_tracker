@@ -25,13 +25,10 @@ NIFTY_STEP = 50
 class RREngine:
     """Detects Rally Rider signals and classifies market regime."""
 
-    def __init__(self, fetcher=None):
-        """Args:
-            fetcher: Optional data fetcher exposing fetch_option_candles(strike, option_type)
-                and fetch_nifty_candles(interval). When None, PMOM and NMOM are
-                silently disabled (used in unit tests without a live Kite connection).
+    def __init__(self):
+        """Stateless signal engine. All candle data is passed in via the
+        analysis dict from the scheduler (populated by CandleBuilder).
         """
-        self._fetcher = fetcher
         self._regime: Optional[str] = None
         self._regime_date: Optional[date] = None
         self._weekly_trend: Optional[str] = None
@@ -134,7 +131,8 @@ class RREngine:
     ) -> List[Dict]:
         """Detect all RR signals for current market state.
 
-        Returns list of signal dicts: {signal_type, direction, signal_data}
+        Reads candles from the `analysis` dict (pre-populated by scheduler
+        from CandleBuilder). Returns list of signal dicts.
         """
         spot = analysis.get("spot_price", 0)
         if spot <= 0:
@@ -148,6 +146,13 @@ class RREngine:
         day_open = closes[0]
         allowed_signals = regime_config.get("signals", set())
         direction_filter = regime_config.get("direction", "BOTH")
+
+        # Pull candles from the analysis dict (attached by scheduler).
+        ce_candles = analysis.get("ce_candles") or []
+        pe_candles = analysis.get("pe_candles") or []
+        nifty_1min = analysis.get("nifty_1min_candles") or []
+        ce_strike = analysis.get("ce_strike") or self.get_rr_strike(spot, "CE")
+        pe_strike = analysis.get("pe_strike") or self.get_rr_strike(spot, "PE")
 
         signals = []
 
@@ -165,14 +170,15 @@ class RREngine:
 
         # PMOM signal (option premium 3-min OHLC, fires before spot MOM)
         if "PMOM" in allowed_signals:
-            pmom = self._detect_premium_mom_signal(spot)
+            pmom = self._detect_premium_mom_signal(
+                ce_candles=ce_candles, pe_candles=pe_candles,
+                ce_strike=ce_strike, pe_strike=pe_strike,
+            )
             if pmom:
                 signals.append(pmom)
 
         # NMOM signal (NIFTY 1-min OHLC, fastest momentum detector)
-        if "NMOM" in allowed_signals and self._fetcher is not None:
-            nifty_1min = self._fetcher.fetch_nifty_candles(
-                interval="minute", lookback_minutes=30)
+        if "NMOM" in allowed_signals:
             nmom = self._detect_nifty_mom_signal(nifty_1min)
             if nmom:
                 signals.append(nmom)
@@ -312,23 +318,19 @@ class RREngine:
 
         return None
 
-    def _detect_premium_mom_signal(self, spot: float) -> Optional[Dict]:
+    def _detect_premium_mom_signal(
+        self,
+        ce_candles: List[Dict],
+        pe_candles: List[Dict],
+        ce_strike: int,
+        pe_strike: int,
+    ) -> Optional[Dict]:
         """PMOM: 4 consecutive higher 3-min option closes — fires before spot MOM.
 
-        Uses Kite historical_data 3-min OHLC closes (not oi_snapshots LTP polls)
-        so the engine sees exactly what the broker chart shows. Checks CE premium
-        (rising → BUY_CE) and PE premium (rising → BUY_PE) at the current
-        trading strikes (ATM-100 for CE, ATM+100 for PE).
+        Consumes pre-fetched candles from CandleBuilder (via analysis dict).
+        Return dict shape is preserved exactly so downstream code is unchanged.
         """
-        if self._fetcher is None:
-            return None
-
-        ce_strike = self.get_rr_strike(spot, "CE")
-        pe_strike = self.get_rr_strike(spot, "PE")
-
-        # CE premium momentum (rising CE close → BUY_CE)
-        ce_candles = self._fetcher.fetch_option_candles(ce_strike, "CE")
-        if len(ce_candles) >= 5:
+        if len(ce_candles or []) >= 5:
             ce_closes = [c["close"] for c in ce_candles]
             if all(ce_closes[-(i)] > ce_closes[-(i + 1)] for i in range(1, 5)):
                 return {
@@ -342,9 +344,7 @@ class RREngine:
                     },
                 }
 
-        # PE premium momentum (rising PE close → BUY_PE)
-        pe_candles = self._fetcher.fetch_option_candles(pe_strike, "PE")
-        if len(pe_candles) >= 5:
+        if len(pe_candles or []) >= 5:
             pe_closes = [c["close"] for c in pe_candles]
             if all(pe_closes[-(i)] > pe_closes[-(i + 1)] for i in range(1, 5)):
                 return {

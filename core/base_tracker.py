@@ -122,7 +122,7 @@ class BaseTracker(ABC):
     def force_exit(self, trade_id: int, exit_premium: float,
                    reason: str, pnl_pct: float,
                    alert_message: str | None = None) -> None:
-        """Force-exit a trade (used by PremiumMonitor WebSocket exits).
+        """Force-exit a trade (used by ExitMonitor WebSocket exits).
 
         Updates the DB row and publishes TRADE_EXITED.
         """

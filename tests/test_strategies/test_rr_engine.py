@@ -19,17 +19,10 @@ def config():
 
 
 @pytest.fixture
-def fetcher_mock():
-    """Mock KiteDataFetcher exposing fetch_option_candles + fetch_nifty_candles."""
-    m = MagicMock()
-    m.fetch_option_candles.return_value = []
-    m.fetch_nifty_candles.return_value = []
-    return m
-
-
-@pytest.fixture
-def engine_with_fetcher(fetcher_mock):
-    return RREngine(fetcher=fetcher_mock)
+def engine_with_fetcher():
+    """Back-compat alias: RREngine no longer takes a fetcher, but many tests
+    reference this fixture. Return a plain engine."""
+    return RREngine()
 
 
 def _candles(closes):
@@ -195,108 +188,92 @@ class TestDetectMOMSignal:
 
 
 class TestDetectPremiumMOMSignal:
-    """Tests for PMOM — premium-based momentum using real 3-min OHLC from Kite."""
+    """Tests for PMOM — takes pre-fetched candles from analysis dict.
 
-    def test_four_higher_ce_premiums(self, engine_with_fetcher, fetcher_mock):
-        """Rising CE closes → BUY_CE."""
-        ce_premiums = [300.0, 302.0, 305.0, 310.0, 316.0, 323.0, 331.0, 340.0, 350.0]
-        pe_premiums = [200.0, 198.0, 195.0, 190.0, 188.0]
-        fetcher_mock.fetch_option_candles.side_effect = lambda s, ot, **kw: (
-            _candles(ce_premiums) if ot == "CE" else _candles(pe_premiums)
+    After the CandleBuilder refactor, PMOM no longer fetches data. Candles
+    are passed in by `detect_signals` (scheduler attaches them via analysis).
+    """
+
+    def test_four_higher_ce_premiums(self, engine):
+        ce = _candles([300.0, 302.0, 305.0, 310.0, 316.0, 323.0, 331.0, 340.0, 350.0])
+        pe = _candles([200.0, 198.0, 195.0, 190.0, 188.0])
+        result = engine._detect_premium_mom_signal(
+            ce_candles=ce, pe_candles=pe, ce_strike=23900, pe_strike=24100,
         )
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
         assert result is not None
         assert result["signal_type"] == "PMOM"
         assert result["direction"] == "BUY_CE"
         assert result["option_type"] == "CE"
         assert result["signal_data"]["consecutive_higher"] == 4
+        assert result["signal_data"]["strike_monitored"] == 23900
 
-    def test_four_higher_pe_premiums(self, engine_with_fetcher, fetcher_mock):
-        """Rising PE closes → BUY_PE."""
-        ce_premiums = [300.0, 298.0, 295.0, 290.0, 288.0]
-        pe_premiums = [180.0, 182.0, 185.0, 190.0, 196.0, 203.0, 211.0, 220.0, 230.0]
-        fetcher_mock.fetch_option_candles.side_effect = lambda s, ot, **kw: (
-            _candles(ce_premiums) if ot == "CE" else _candles(pe_premiums)
+    def test_four_higher_pe_premiums(self, engine):
+        ce = _candles([300.0, 298.0, 295.0, 290.0, 288.0])
+        pe = _candles([180.0, 182.0, 185.0, 190.0, 196.0, 203.0, 211.0, 220.0, 230.0])
+        result = engine._detect_premium_mom_signal(
+            ce_candles=ce, pe_candles=pe, ce_strike=23900, pe_strike=24100,
         )
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
         assert result is not None
         assert result["signal_type"] == "PMOM"
         assert result["direction"] == "BUY_PE"
         assert result["option_type"] == "PE"
+        assert result["signal_data"]["strike_monitored"] == 24100
 
-    def test_mixed_premiums_no_signal(self, engine_with_fetcher, fetcher_mock):
-        """Choppy premiums → no signal."""
-        fetcher_mock.fetch_option_candles.return_value = _candles(
-            [300.0, 305.0, 302.0, 308.0, 303.0, 310.0, 306.0])
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
+    def test_mixed_premiums_no_signal(self, engine):
+        choppy = _candles([300.0, 305.0, 302.0, 308.0, 303.0, 310.0, 306.0])
+        result = engine._detect_premium_mom_signal(
+            ce_candles=choppy, pe_candles=choppy, ce_strike=23900, pe_strike=24100,
+        )
         assert result is None
 
-    def test_too_few_candles(self, engine_with_fetcher, fetcher_mock):
-        """Fewer than 5 premium candles → no signal."""
-        fetcher_mock.fetch_option_candles.return_value = _candles([300.0, 305.0, 310.0])
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
+    def test_too_few_candles(self, engine):
+        short = _candles([300.0, 305.0, 310.0])
+        result = engine._detect_premium_mom_signal(
+            ce_candles=short, pe_candles=short, ce_strike=23900, pe_strike=24100,
+        )
         assert result is None
 
-    def test_ce_takes_priority_when_both_rising(self, engine_with_fetcher, fetcher_mock):
-        """When both CE and PE premiums are rising, CE is checked first."""
-        rising = [100.0, 102.0, 105.0, 110.0, 116.0, 123.0, 131.0, 140.0, 150.0]
-        fetcher_mock.fetch_option_candles.return_value = _candles(rising)
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
+    def test_ce_takes_priority_when_both_rising(self, engine):
+        rising = _candles([100.0, 102.0, 105.0, 110.0, 116.0, 123.0, 131.0, 140.0, 150.0])
+        result = engine._detect_premium_mom_signal(
+            ce_candles=rising, pe_candles=rising, ce_strike=23900, pe_strike=24100,
+        )
         assert result is not None
         assert result["direction"] == "BUY_CE"
 
-    def test_premium_momentum_value(self, engine_with_fetcher, fetcher_mock):
-        """signal_data includes premium_momentum (last - 5th from last)."""
-        premiums = [300.0, 302.0, 305.0, 310.0, 316.0, 323.0, 331.0, 340.0, 350.0]
-        fetcher_mock.fetch_option_candles.side_effect = lambda s, ot, **kw: (
-            _candles(premiums) if ot == "CE" else _candles([200.0, 198.0, 195.0, 190.0, 188.0])
+    def test_premium_momentum_value(self, engine):
+        rising = _candles([300.0, 302.0, 305.0, 310.0, 316.0, 323.0, 331.0, 340.0, 350.0])
+        result = engine._detect_premium_mom_signal(
+            ce_candles=rising, pe_candles=_candles([200.0, 198.0, 195.0, 190.0, 188.0]),
+            ce_strike=23900, pe_strike=24100,
         )
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
         assert result["signal_data"]["premium_momentum"] == 350.0 - 316.0
 
-    def test_uses_correct_strikes(self, engine_with_fetcher, fetcher_mock):
-        """CE uses ATM-100, PE uses ATM+100."""
-        calls = []
-
-        def track_calls(strike, ot, **kw):
-            calls.append((strike, ot))
-            return _candles([300.0, 298.0, 295.0, 290.0, 288.0])
-
-        fetcher_mock.fetch_option_candles.side_effect = track_calls
-        engine_with_fetcher._detect_premium_mom_signal(24000.0)
-        assert calls[0] == (23900, "CE")
-        assert calls[1] == (24100, "PE")
-
-    def test_no_fetcher_returns_none(self, engine):
-        """When no fetcher is injected, PMOM gracefully disables."""
-        result = engine._detect_premium_mom_signal(24000.0)
+    def test_empty_candles_returns_none(self, engine):
+        result = engine._detect_premium_mom_signal(
+            ce_candles=[], pe_candles=[], ce_strike=23900, pe_strike=24100,
+        )
         assert result is None
 
-    def test_fetcher_failure_returns_none(self, engine_with_fetcher, fetcher_mock):
-        """Empty candle list (Kite error) → no signal, no exception."""
-        fetcher_mock.fetch_option_candles.return_value = []
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
-        assert result is None
-
-    def test_uses_close_field_not_open(self, engine_with_fetcher, fetcher_mock):
-        """Regression: PMOM must read candle['close'], not another field.
-
-        The root bug was reading single-tick LTP snapshots instead of OHLC closes.
-        This test uses noisy opens but monotonic closes — valid PMOM should fire.
-        """
+    def test_uses_close_field_not_open(self, engine):
+        """Regression: PMOM must read candle['close'], not open/high/low."""
+        # Noisy opens + highs, but closes are monotonically rising
         candles = [
             {
                 "date": f"2026-04-06T10:{i:02d}:00",
-                "open": 100 + (i % 2) * 50,  # noisy opens
+                "open": 100 + (i % 2) * 50,
                 "high": 200,
                 "low": 50,
-                "close": 300 + i * 5,          # smooth rising closes
+                "close": 300 + i * 5,
                 "volume": 100,
             }
             for i in range(9)
         ]
-        fetcher_mock.fetch_option_candles.return_value = candles
-        result = engine_with_fetcher._detect_premium_mom_signal(24000.0)
+        result = engine._detect_premium_mom_signal(
+            ce_candles=candles,
+            pe_candles=_candles([200.0, 198.0, 195.0, 190.0, 188.0]),
+            ce_strike=23900, pe_strike=24100,
+        )
         assert result is not None
         assert result["signal_type"] == "PMOM"
 

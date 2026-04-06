@@ -147,10 +147,10 @@ class TestRRAgentMonitor:
         assert result is None
 
 
-class TestPremiumMonitorSLUpdate:
+class TestExitMonitorSLUpdate:
     def test_update_trade_sl(self):
-        from monitoring.premium_monitor import PremiumMonitor, ActiveTrade
-        monitor = PremiumMonitor()
+        from monitoring.exit_monitor import ExitMonitor, ActiveTrade
+        monitor = ExitMonitor()
         trade = ActiveTrade(
             trade_id=1, tracker_type="scalper", strike=24400,
             option_type="CE", instrument_token=12345,
@@ -163,7 +163,7 @@ class TestPremiumMonitorSLUpdate:
         assert monitor._all_trades[1].sl_premium == 195.0
 
     def test_update_nonexistent_trade(self):
-        from monitoring.premium_monitor import PremiumMonitor
-        monitor = PremiumMonitor()
+        from monitoring.exit_monitor import ExitMonitor
+        monitor = ExitMonitor()
         # Should not raise
         monitor.update_trade_sl(99, 195.0)

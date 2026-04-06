@@ -84,21 +84,33 @@ class TestUsesKiteFetcher:
         mock_fetcher.fetch_option_chain.assert_called()
 
 
-class TestPremiumMonitor:
-    """Test premium monitor integration."""
+class TestTickHubServices:
+    """Test that the scheduler wires TickHub + the 4 consumers correctly."""
 
-    @patch('monitoring.scheduler.PremiumMonitor')
     @patch('monitoring.scheduler.KiteDataFetcher')
-    def test_premium_monitor_started(self, MockKite, MockMonitor):
-        """Premium monitor should start with scheduler."""
+    def test_tickhub_and_consumers_wired(self, MockKite):
+        """TickHub + ExitMonitor + CandleBuilder + OrderflowCollector + LivePnlBroadcaster wired."""
         from monitoring.scheduler import OIScheduler
         scheduler = OIScheduler()
-        scheduler.start()
 
-        # Monitor should exist
-        assert hasattr(scheduler, 'premium_monitor')
+        # All 5 TickHub services exist on the scheduler
+        assert hasattr(scheduler, "tick_hub")
+        assert hasattr(scheduler, "candle_builder")
+        assert hasattr(scheduler, "exit_monitor")
+        assert hasattr(scheduler, "orderflow_collector")
+        assert hasattr(scheduler, "live_pnl_broadcaster")
 
-        scheduler.stop()
+        # Exit monitor is wired to the scheduler's callback (compare __self__
+        # and __func__ because bound-method `is` doesn't hold across lookups)
+        cb = scheduler.exit_monitor._exit_callback
+        assert cb is not None
+        assert cb.__self__ is scheduler
+        assert cb.__func__ is scheduler._handle_premium_exit.__func__
+
+        # Strategy has references to the new services
+        rr = scheduler.strategies["rally_rider"]
+        assert rr._exit_monitor is scheduler.exit_monitor
+        assert rr._candle_builder is scheduler.candle_builder
 
 
 class TestFetchOutputUnchanged:

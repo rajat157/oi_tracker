@@ -29,14 +29,17 @@ def _ohlc(closes, start_hour=10):
 
 
 class TestBuildPremiumChartFromOhlc:
+    """Tests for the hybrid chart builder.
+
+    After the CandleBuilder refactor, candles are passed in directly as
+    `ce_candles` + `pe_candles` (from CandleBuilder via the analysis dict).
+    The hybrid IV/OI merge from oi_snapshots is unchanged.
+    """
+
     def test_basic_merge(self, engine):
         """Real OHLC + IV/OI map → merged candles with both."""
         ce_candles = _ohlc([300, 305, 310, 315, 320])
         pe_candles = _ohlc([200, 198, 195, 192, 190])
-        fetcher = MagicMock()
-        fetcher.fetch_option_candles.side_effect = lambda s, ot, **kw: (
-            ce_candles if ot == "CE" else pe_candles
-        )
         # oi_snapshots rows for IV/OI by HH:MM (matches start_hour=10, i=0..4)
         iv_oi_rows_ce = [
             ("2026-04-06T10:00:05", 15.1, 100000),
@@ -64,7 +67,8 @@ class TestBuildPremiumChartFromOhlc:
                 spot_price=24000.0,
                 ce_strike=23900,
                 pe_strike=24100,
-                kite_fetcher=fetcher,
+                ce_candles=ce_candles,
+                pe_candles=pe_candles,
             )
 
         assert chart is not None
@@ -81,15 +85,14 @@ class TestBuildPremiumChartFromOhlc:
         assert chart["ce_candles"][-1]["oi"] == 104000
         assert chart["pe_candles"][-1]["iv"] == 16.5
 
-    def test_empty_fetch_returns_none(self, engine):
-        """Kite returns [] for either side → chart is None."""
-        fetcher = MagicMock()
-        fetcher.fetch_option_candles.return_value = []
+    def test_empty_candles_returns_none(self, engine):
+        """Caller passes empty candle lists → chart is None."""
         chart = engine.build_premium_chart_from_ohlc(
             spot_price=24000.0,
             ce_strike=23900,
             pe_strike=24100,
-            kite_fetcher=fetcher,
+            ce_candles=[],
+            pe_candles=[],
         )
         assert chart is None
 
@@ -97,10 +100,6 @@ class TestBuildPremiumChartFromOhlc:
         """When OHLC timestamp has no matching IV/OI row, carry forward last value."""
         ce_candles = _ohlc([300, 305, 310, 315, 320])  # 10:00 - 10:04
         pe_candles = _ohlc([200, 198, 195, 192, 190])
-        fetcher = MagicMock()
-        fetcher.fetch_option_candles.side_effect = lambda s, ot, **kw: (
-            ce_candles if ot == "CE" else pe_candles
-        )
         # Only provide IV/OI for 10:00, 10:01, 10:02; 10:03 and 10:04 are missing
         iv_oi_rows_ce = [
             ("2026-04-06T10:00:05", 15.1, 100000),
@@ -119,7 +118,8 @@ class TestBuildPremiumChartFromOhlc:
                 spot_price=24000.0,
                 ce_strike=23900,
                 pe_strike=24100,
-                kite_fetcher=fetcher,
+                ce_candles=ce_candles,
+                pe_candles=pe_candles,
             )
 
         assert chart is not None
@@ -135,9 +135,10 @@ class TestBuildPremiumChartFromOhlc:
             "date": datetime(2026, 4, 6, 10, 0, 0),
             "open": 99, "high": 105, "low": 95, "close": 100, "volume": 50,
         }] * 5  # 5 identical candles
-        # Patch to return real OHLC
-        fetcher = MagicMock()
-        fetcher.fetch_option_candles.return_value = ce_candles
+        pe_candles = [{
+            "date": datetime(2026, 4, 6, 10, 0, 0),
+            "open": 48, "high": 52, "low": 46, "close": 50, "volume": 30,
+        }] * 5
 
         with patch("strategies.premium_engine.get_connection") as mock_conn:
             ctx = MagicMock()
@@ -149,7 +150,8 @@ class TestBuildPremiumChartFromOhlc:
                 spot_price=24000.0,
                 ce_strike=23900,
                 pe_strike=24100,
-                kite_fetcher=fetcher,
+                ce_candles=ce_candles,
+                pe_candles=pe_candles,
             )
 
         # All ltps should be the close (100), not open (99) or anything else

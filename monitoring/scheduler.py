@@ -508,8 +508,19 @@ class OIScheduler:
                 analysis["v_shape_status"] = {"signal_level": "NONE"}
 
             # Broadcast to connected clients
+            # Strip CandleBuilder candle arrays before emit — they contain
+            # datetime objects (not JSON serializable) and the dashboard
+            # doesn't consume them anyway. Strategies have already read them
+            # by this point.
             if self.socketio:
-                self.socketio.emit("oi_update", analysis)
+                emit_payload = {
+                    k: v for k, v in analysis.items()
+                    if k not in (
+                        "ce_candles", "pe_candles",
+                        "nifty_1min_candles", "nifty_3min_candles",
+                    )
+                }
+                self.socketio.emit("oi_update", emit_payload)
                 log.debug("Emitted update to clients")
 
         except Exception as e:

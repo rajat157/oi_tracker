@@ -1137,6 +1137,9 @@ def get_live_candles(instrument_token: int, interval: str,
         ts = r[0]
         try:
             dt = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
+            # Strip tz so live + bootstrap candles share the same shape
+            if hasattr(dt, "tzinfo") and dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
         except (ValueError, TypeError):
             dt = ts
         result.append({

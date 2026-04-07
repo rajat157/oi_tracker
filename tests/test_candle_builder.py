@@ -11,6 +11,7 @@ from monitoring.candle_builder import (
     _align_1min_bucket,
     _align_3min_bucket,
     _bucket_start_for,
+    _strip_tz,
     BUFFER_SIZE,
     STRIKE_GRACE_MINUTES,
 )
@@ -40,6 +41,48 @@ def _tick(price, ts, token=256265, volume_traded=None):
     if volume_traded is not None:
         d["volume_traded"] = volume_traded
     return d
+
+
+class TestStripTz:
+    """Regression tests for the tz-strip helper.
+
+    Bootstrap (kite.historical_data) returns tz-aware datetimes, while live
+    tick aggregation produces tz-naive ones. Both must serialize to the same
+    ISO string so the live_candles primary key catches duplicates instead of
+    storing two rows for the same minute.
+    """
+
+    def test_strips_tzinfo(self):
+        from datetime import timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+        aware = datetime(2026, 4, 7, 9, 21, 0, tzinfo=ist)
+        result = _strip_tz(aware)
+        assert result.tzinfo is None
+        assert result == datetime(2026, 4, 7, 9, 21, 0)
+
+    def test_naive_unchanged(self):
+        naive = datetime(2026, 4, 7, 9, 21, 0)
+        assert _strip_tz(naive) == naive
+        assert _strip_tz(naive).tzinfo is None
+
+    def test_isoformat_string_with_tz(self):
+        result = _strip_tz("2026-04-07T09:21:00+05:30")
+        assert isinstance(result, datetime)
+        assert result.tzinfo is None
+        assert result == datetime(2026, 4, 7, 9, 21, 0)
+
+    def test_isoformat_string_without_tz(self):
+        result = _strip_tz("2026-04-07T09:21:00")
+        assert isinstance(result, datetime)
+        assert result == datetime(2026, 4, 7, 9, 21, 0)
+
+    def test_aware_and_naive_serialize_identically_after_strip(self):
+        """The fix: both paths produce the same DB primary-key string."""
+        from datetime import timezone, timedelta
+        ist = timezone(timedelta(hours=5, minutes=30))
+        from_bootstrap = datetime(2026, 4, 7, 9, 21, 0, tzinfo=ist)
+        from_live = datetime(2026, 4, 7, 9, 21, 0)
+        assert _strip_tz(from_bootstrap).isoformat() == _strip_tz(from_live).isoformat()
 
 
 class TestBucketAlignment:

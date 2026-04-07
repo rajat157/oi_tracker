@@ -86,6 +86,29 @@ def _bucket_start_for(ts: datetime, interval: str) -> datetime:
     raise ValueError(f"Unsupported interval: {interval}")
 
 
+def _strip_tz(ts):
+    """Return a tz-naive datetime so bootstrap and live aggregator paths
+    produce identical timestamp strings (avoids duplicate live_candles rows).
+
+    Kite's historical_data returns tz-aware datetimes (IST, +05:30), while
+    the WebSocket tick path can produce either. We normalize to tz-naive
+    by simply dropping the tzinfo — IST is the only timezone we ever see.
+    """
+    if isinstance(ts, datetime):
+        if ts.tzinfo is not None:
+            return ts.replace(tzinfo=None)
+        return ts
+    if isinstance(ts, str):
+        try:
+            dt = datetime.fromisoformat(ts)
+            if dt.tzinfo is not None:
+                dt = dt.replace(tzinfo=None)
+            return dt
+        except ValueError:
+            return ts
+    return ts
+
+
 class CandleBuilder(TickConsumer):
     """Aggregates ticks into 1-min and 3-min OHLC candles per instrument."""
 
@@ -359,9 +382,9 @@ class CandleBuilder(TickConsumer):
                 buf = self._buffers.get((token, interval))
                 if buf is None:
                     return
-                existing_ts = {c["date"] for c in buf}
+                existing_ts = {_strip_tz(c["date"]) for c in buf}
                 for row in candles:
-                    dt = row["date"]
+                    dt = _strip_tz(row["date"])
                     if dt in existing_ts:
                         continue
                     candle = {
@@ -532,18 +555,18 @@ class CandleBuilder(TickConsumer):
     # ------------------------------------------------------------------
 
     def _extract_ts(self, tick: dict) -> Optional[datetime]:
-        """Extract an aware-enough datetime from a Kite tick.
+        """Extract a tz-naive datetime from a Kite tick.
 
         Kite MODE_FULL ticks contain `exchange_timestamp` (datetime) or
-        `last_trade_time` (datetime). Fall back to `datetime.now()` if
-        neither is present.
+        `last_trade_time` (datetime). We strip any tz info so live and
+        bootstrap candles share the same timestamp format.
         """
         ts = tick.get("exchange_timestamp") or tick.get("last_trade_time")
         if isinstance(ts, datetime):
-            return ts
+            return _strip_tz(ts)
         if isinstance(ts, str):
             try:
-                return datetime.fromisoformat(ts)
+                return _strip_tz(datetime.fromisoformat(ts))
             except ValueError:
                 pass
         return datetime.now()

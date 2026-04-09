@@ -151,12 +151,19 @@ class CandleBuilder(TickConsumer):
         instr_type: str,
         intervals: Tuple[str, ...] = ("1min", "3min"),
         expiry: Optional[str] = None,
+        index_label: str = "NIFTY",
     ) -> None:
         """Start building candles for this instrument.
 
         Idempotent: re-registering a token keeps its existing buffer.
         Requests a TickHub subscription and seeds buffers from DB +
         historical_data (gap-fill).
+
+        index_label: which underlying this option/index belongs to. Used
+            to scope option-strike rotation per-index (so the NIFTY
+            rotation doesn't kick out BANKNIFTY/SENSEX strikes) and to
+            decide whether the historical bootstrap path can find a
+            matching instrument map.
         """
         with self._lock:
             if token in self._instruments:
@@ -164,6 +171,7 @@ class CandleBuilder(TickConsumer):
                 self._pending_removal.pop(token, None)
                 self._instruments[token]["label"] = label
                 self._instruments[token]["expiry"] = expiry
+                self._instruments[token]["index_label"] = index_label
                 self._label_to_token[label] = token
                 return
 
@@ -172,6 +180,7 @@ class CandleBuilder(TickConsumer):
                 "instrument_type": instr_type,
                 "intervals": tuple(intervals),
                 "expiry": expiry,
+                "index_label": index_label,
             }
             self._label_to_token[label] = token
             for interval in intervals:
@@ -189,11 +198,11 @@ class CandleBuilder(TickConsumer):
                           token=token, error=str(e))
 
         # Seed history (DB first, then historical_data for gap fill).
-        self._seed_history(token, intervals, label, instr_type, expiry)
+        self._seed_history(token, intervals, label, instr_type, expiry, index_label)
 
         log.info("Instrument registered",
                  label=label, token=token, type=instr_type,
-                 intervals=list(intervals))
+                 index=index_label, intervals=list(intervals))
 
     def unregister_instrument(self, token: int) -> None:
         """Immediately drop an instrument (no grace period). Releases
@@ -302,6 +311,45 @@ class CandleBuilder(TickConsumer):
                  dropped=len(to_drop),
                  total_option_tokens=len(desired_tokens))
 
+    def register_option_strike(
+        self,
+        index_label: str,
+        strike: int,
+        option_type: str,
+        expiry: str,
+        instrument_map=None,
+    ) -> Optional[str]:
+        """Lazy-subscribe to a single option strike for any index.
+
+        Used by IntradayHunter when a position opens — we don't want to
+        permanently subscribe to BN/SX option ATM strikes (the spot moves
+        all day, ATM rotates), so we subscribe on demand.
+
+        Returns the registered label (e.g. "BANKNIFTY_56000_CE") on success,
+        or None if the instrument cannot be resolved.
+        """
+        if instrument_map is None:
+            log.warning("register_option_strike: no instrument_map",
+                        index=index_label, strike=strike, type=option_type)
+            return None
+        inst = instrument_map.get_option_instrument(strike, option_type, expiry)
+        if not inst:
+            log.warning("register_option_strike: instrument not found",
+                        index=index_label, strike=strike, type=option_type, expiry=expiry)
+            return None
+
+        token = inst["instrument_token"]
+        label = f"{index_label}_{strike}_{option_type}"
+        self.register_instrument(
+            label=label,
+            token=token,
+            instr_type="option",
+            intervals=("1min", "3min"),
+            expiry=expiry,
+            index_label=index_label,
+        )
+        return label
+
     # ------------------------------------------------------------------
     # Bootstrap + gap-fill
     # ------------------------------------------------------------------
@@ -313,6 +361,7 @@ class CandleBuilder(TickConsumer):
         label: str,
         instr_type: str,
         expiry: Optional[str],
+        index_label: str = "NIFTY",
     ) -> None:
         """Load recent candles from DB + backfill the gap via historical_data.
 
@@ -329,7 +378,9 @@ class CandleBuilder(TickConsumer):
                         buf.append(c)
             # 2. Optionally fetch recent history from Kite to cover any gap
             self._fetch_and_append_history(
-                token, interval, label, instr_type, expiry, lookback_minutes=BOOTSTRAP_LOOKBACK_MIN)
+                token, interval, label, instr_type, expiry,
+                lookback_minutes=BOOTSTRAP_LOOKBACK_MIN,
+                index_label=index_label)
 
     def _fetch_and_append_history(
         self,
@@ -339,6 +390,7 @@ class CandleBuilder(TickConsumer):
         instr_type: str,
         expiry: Optional[str],
         lookback_minutes: int,
+        index_label: str = "NIFTY",
     ) -> None:
         """Fetch OHLC from kite.historical_data and append missing candles
         to the buffer + DB."""
@@ -347,29 +399,40 @@ class CandleBuilder(TickConsumer):
 
         try:
             kite_interval = "minute" if interval == "1min" else "3minute"
-            if instr_type == "index":
-                # NIFTY uses the helper; for other indices, caller should
-                # extend this later (NIFTY BANK/SENSEX tokens are hardcoded
-                # elsewhere today).
-                candles = self._kite_fetcher.fetch_nifty_candles(
+            if instr_type in ("index", "stock"):
+                # Generic by-token fetch — works for NIFTY, BANKNIFTY, SENSEX,
+                # HDFCBANK, KOTAKBANK, etc.
+                candles = self._kite_fetcher.fetch_token_candles(
+                    token=token,
                     interval=kite_interval,
                     lookback_minutes=lookback_minutes,
                 )
             elif instr_type == "option":
-                # Parse strike/type out of the label "NIFTY_{strike}_{CE|PE}"
-                try:
-                    parts = label.split("_")
-                    strike = int(parts[-2])
-                    option_type = parts[-1]
-                except (ValueError, IndexError):
-                    log.error("Cannot parse option label", label=label)
-                    return
-                candles = self._kite_fetcher.fetch_option_candles(
-                    strike=strike,
-                    option_type=option_type,
-                    lookback_minutes=lookback_minutes,
-                    interval=kite_interval,
-                )
+                if index_label != "NIFTY":
+                    # BN/SX option historical needs MultiInstrumentMap routing
+                    # which fetch_option_candles doesn't yet do. Use the
+                    # generic by-token path so we still backfill — the
+                    # token is the source of truth either way.
+                    candles = self._kite_fetcher.fetch_token_candles(
+                        token=token,
+                        interval=kite_interval,
+                        lookback_minutes=lookback_minutes,
+                    )
+                else:
+                    # Parse strike/type out of the label "NIFTY_{strike}_{CE|PE}"
+                    try:
+                        parts = label.split("_")
+                        strike = int(parts[-2])
+                        option_type = parts[-1]
+                    except (ValueError, IndexError):
+                        log.error("Cannot parse option label", label=label)
+                        return
+                    candles = self._kite_fetcher.fetch_option_candles(
+                        strike=strike,
+                        option_type=option_type,
+                        lookback_minutes=lookback_minutes,
+                        interval=kite_interval,
+                    )
             else:
                 log.warning("Unknown instrument_type for history fetch",
                             label=label, type=instr_type)

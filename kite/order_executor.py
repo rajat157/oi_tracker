@@ -105,11 +105,19 @@ class OrderExecutor:
         order_type: str = "MARKET",
         tracker_type: str = "",
         table_name: str = "",
+        quantity: Optional[int] = None,
+        exchange: str = "NFO",
+        instrument_map=None,
     ) -> OrderResult:
         """Place entry order + GTT OCO for SL/target.
 
         Called by strategy.create_trade() AFTER DB insert succeeds.
         If not enabled (globally or for this strategy), returns paper result.
+
+        New per-call overrides (used by IntradayHunter for BN/SX):
+            quantity:        explicit lot size (default = self._quantity = NIFTY 65)
+            exchange:        'NFO' or 'BFO' (default 'NFO')
+            instrument_map:  per-index InstrumentMap (default = self._instrument_map)
         """
         if not self.is_strategy_live(tracker_type):
             return OrderResult(success=True, is_paper=True)
@@ -121,29 +129,33 @@ class OrderExecutor:
                       trade_id=trade_id)
             return OrderResult(success=False, error="Not authenticated", is_paper=False)
 
+        qty = quantity if quantity is not None else self._quantity
+        imap = instrument_map or self._instrument_map
+
         # Round all prices to 0.05 ticks
         entry = self.round_to_tick(entry_premium, "nearest")
         sl = self.round_to_tick(sl_premium, "down")
         target = self.round_to_tick(target_premium, "up")
 
-        # Resolve trading symbol
-        symbol = self._resolve_symbol(strike, option_type)
+        # Resolve trading symbol via the chosen instrument_map
+        symbol = self._resolve_symbol_via(imap, strike, option_type)
         if not symbol:
             log.error("Cannot resolve trading symbol",
-                      trade_id=trade_id, strike=strike, type=option_type)
+                      trade_id=trade_id, strike=strike, type=option_type, exchange=exchange)
             return OrderResult(success=False, error="Symbol not found", is_paper=False)
 
         # Step 1: Place entry order
         log.info("Placing entry order", trade_id=trade_id, symbol=symbol,
-                 order_type=order_type, entry=entry, qty=self._quantity)
+                 order_type=order_type, entry=entry, qty=qty, exchange=exchange)
 
         entry_result = place_order(
             trading_symbol=symbol,
             transaction_type="BUY",
-            quantity=self._quantity,
+            quantity=qty,
             price=entry if order_type == "LIMIT" else 0,
             order_type=order_type,
             product=self._product,
+            exchange=exchange,
         )
 
         if entry_result.get("status") != "success":
@@ -175,15 +187,16 @@ class OrderExecutor:
 
         # Step 4: Place GTT OCO for SL + target
         log.info("Placing GTT OCO", trade_id=trade_id, symbol=symbol,
-                 sl=sl, target=target)
+                 sl=sl, target=target, exchange=exchange)
 
         gtt_result = place_gtt_oco(
             trading_symbol=symbol,
             entry_price=entry_for_gtt,
             sl_price=sl,
             target_price=target,
-            quantity=self._quantity,
+            quantity=qty,
             product=self._product,
+            exchange=exchange,
         )
 
         gtt_trigger_id = 0
@@ -439,15 +452,18 @@ class OrderExecutor:
     # ------------------------------------------------------------------
 
     def _resolve_symbol(self, strike: int, option_type: str) -> Optional[str]:
-        """Resolve Kite tradingsymbol from strike + option_type."""
-        if not self._instrument_map:
+        """Resolve Kite tradingsymbol via the default (NIFTY) instrument map."""
+        return self._resolve_symbol_via(self._instrument_map, strike, option_type)
+
+    def _resolve_symbol_via(self, imap, strike: int, option_type: str) -> Optional[str]:
+        """Resolve Kite tradingsymbol from a given instrument_map."""
+        if not imap:
             return None
         try:
-            expiry = self._instrument_map.get_current_expiry()
+            expiry = imap.get_current_expiry()
             if not expiry:
                 return None
-            inst = self._instrument_map.get_option_instrument(
-                strike, option_type, expiry)
+            inst = imap.get_option_instrument(strike, option_type, expiry)
             if inst:
                 return inst.get("tradingsymbol") or inst.get("trading_symbol")
         except Exception as e:

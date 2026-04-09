@@ -41,12 +41,14 @@ def _headers():
 def place_order(trading_symbol: str, transaction_type: str = "BUY",
                 quantity: int = 65, price: float = 0,
                 order_type: str = "LIMIT", product: str = "NRML",
-                market_protection: int = 5) -> dict:
+                market_protection: int = 5,
+                exchange: str = "NFO") -> dict:
     """
     Place an order on Kite.
 
     market_protection: percentage for MARKET orders (required by Kite API).
         5 = 5% protection (buy limit at LTP + 5%). Ignored for LIMIT orders.
+    exchange: 'NFO' (NIFTY/BANKNIFTY options) or 'BFO' (SENSEX options).
 
     Returns: {"status": "success", "data": {"order_id": "..."}} or error
     """
@@ -57,7 +59,7 @@ def place_order(trading_symbol: str, transaction_type: str = "BUY",
 
     data = {
         'tradingsymbol': trading_symbol,
-        'exchange': 'NFO',
+        'exchange': exchange,
         'transaction_type': transaction_type,
         'order_type': order_type,
         'quantity': quantity,
@@ -120,10 +122,13 @@ def get_order_status(order_id: str) -> dict:
 
 def place_gtt_oco(trading_symbol: str, entry_price: float,
                   sl_price: float, target_price: float,
-                  quantity: int = 65, product: str = "NRML") -> dict:
+                  quantity: int = 65, product: str = "NRML",
+                  exchange: str = "NFO") -> dict:
     """
     Place a GTT OCO (One Cancels Other) order.
     Triggers at SL or Target, whichever hits first.
+
+    exchange: 'NFO' for NIFTY/BANKNIFTY, 'BFO' for SENSEX.
 
     Returns: {"status": "success", "data": {"trigger_id": ...}} or error
     """
@@ -135,7 +140,7 @@ def place_gtt_oco(trading_symbol: str, entry_price: float,
     import json
 
     condition = json.dumps({
-        "exchange": "NFO",
+        "exchange": exchange,
         "tradingsymbol": trading_symbol,
         "trigger_values": [sl_price, target_price],
         "last_price": entry_price
@@ -143,7 +148,7 @@ def place_gtt_oco(trading_symbol: str, entry_price: float,
 
     orders = json.dumps([
         {
-            "exchange": "NFO",
+            "exchange": exchange,
             "tradingsymbol": trading_symbol,
             "transaction_type": "SELL",
             "quantity": quantity,
@@ -152,7 +157,7 @@ def place_gtt_oco(trading_symbol: str, entry_price: float,
             "price": sl_price
         },
         {
-            "exchange": "NFO",
+            "exchange": exchange,
             "tradingsymbol": trading_symbol,
             "transaction_type": "SELL",
             "quantity": quantity,
@@ -184,8 +189,12 @@ def place_gtt_oco(trading_symbol: str, entry_price: float,
 
 def modify_gtt(trigger_id: int, trading_symbol: str, current_price: float,
                new_sl_price: float, target_price: float,
-               quantity: int = 65, product: str = "NRML") -> dict:
-    """Modify an existing GTT (e.g., update trailing SL)."""
+               quantity: int = 65, product: str = "NRML",
+               exchange: str = "NFO") -> dict:
+    """Modify an existing GTT (e.g., update trailing SL).
+
+    exchange: 'NFO' for NIFTY/BANKNIFTY, 'BFO' for SENSEX.
+    """
     headers = _headers()
     if not headers:
         return {"status": "error", "message": "No access token"}
@@ -193,7 +202,7 @@ def modify_gtt(trigger_id: int, trading_symbol: str, current_price: float,
     import json
 
     condition = json.dumps({
-        "exchange": "NFO",
+        "exchange": exchange,
         "tradingsymbol": trading_symbol,
         "trigger_values": [new_sl_price, target_price],
         "last_price": current_price
@@ -201,7 +210,7 @@ def modify_gtt(trigger_id: int, trading_symbol: str, current_price: float,
 
     orders = json.dumps([
         {
-            "exchange": "NFO",
+            "exchange": exchange,
             "tradingsymbol": trading_symbol,
             "transaction_type": "SELL",
             "quantity": quantity,
@@ -210,7 +219,7 @@ def modify_gtt(trigger_id: int, trading_symbol: str, current_price: float,
             "price": new_sl_price
         },
         {
-            "exchange": "NFO",
+            "exchange": exchange,
             "tradingsymbol": trading_symbol,
             "transaction_type": "SELL",
             "quantity": quantity,

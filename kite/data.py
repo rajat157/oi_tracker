@@ -294,13 +294,26 @@ class KiteDataFetcher:
             List of {date, open, high, low, close, volume} dicts.
             Returns [] on any failure.
         """
+        return self.fetch_token_candles(NIFTY_TOKEN, interval=interval, lookback_minutes=lookback_minutes)
+
+    def fetch_token_candles(
+        self,
+        token: int,
+        interval: str = "minute",
+        lookback_minutes: int = 60,
+    ) -> List[Dict]:
+        """Generic OHLC fetch for any Kite instrument token.
+
+        Used by CandleBuilder to seed history for non-NIFTY indices and
+        stocks (BANKNIFTY, SENSEX, HDFCBANK, KOTAKBANK, ...).
+        """
         try:
             self._refresh_token()
             to_date = datetime.now()
             from_date = to_date - timedelta(minutes=lookback_minutes)
-            return self._kite.historical_data(NIFTY_TOKEN, from_date, to_date, interval)
+            return self._kite.historical_data(token, from_date, to_date, interval)
         except Exception as e:
-            log.error("fetch_nifty_candles failed", interval=interval, error=str(e))
+            log.error("fetch_token_candles failed", token=token, interval=interval, error=str(e))
             return []
 
     def _fetch_quotes_batched(self, symbols: List[str]) -> dict:

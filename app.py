@@ -101,10 +101,30 @@ def start_app(debug: bool = False, port: int = 5000):
     log.info("=" * 50)
     log.info(f"Server starting on http://localhost:{port}")
 
-    # Start the scheduler in a separate thread after a short delay
+    # Start the scheduler in a separate thread after a short delay.
+    # Order matters: Kite auth → instrument_history backfill → scheduler.start
     def start_scheduler():
         import time
-        time.sleep(2)  # Wait for server to be ready
+        time.sleep(2)  # Wait for Flask + /kite/callback route to be ready
+
+        # Step 1: Block until Kite is authenticated for today.
+        # Without this, no historical_data fetch and no WebSocket subscription
+        # will succeed — every downstream step is blocked on it.
+        from kite.auth import ensure_authenticated
+        if not ensure_authenticated():
+            log.error("Kite authentication failed — scheduler will NOT start. "
+                      "Visit /kite/login manually and restart the app.")
+            return
+
+        # Step 2: Backfill yesterday's instrument_history for IH inputs.
+        # Best-effort: failures don't block scheduler start.
+        try:
+            from monitoring.startup_backfill import backfill_recent_history
+            backfill_recent_history()
+        except Exception as e:
+            log.error("instrument_history backfill failed", error=str(e))
+
+        # Step 3: Start the scheduler.
         log.info("Starting data fetcher (first fetch may take 30-60 seconds)")
         oi_scheduler.start(interval_minutes=3)
 

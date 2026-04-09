@@ -5,6 +5,7 @@ Only runs during market hours (9:15 AM - 3:30 PM IST, weekdays)
 """
 
 import json
+import os
 from datetime import datetime, time
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -26,6 +27,8 @@ from db.legacy import (
 )
 from db.trade_repo import TradeRepository
 from strategies.rr_strategy import RRStrategy
+from strategies.intraday_hunter import IntradayHunterStrategy
+from config import IntradayHunterConfig
 from kite.order_executor import OrderExecutor
 from alerts.broker import AlertBroker
 from analysis.v_shape import VShapeDetector
@@ -38,6 +41,20 @@ log = get_logger("scheduler")
 # Market timing constants (IST)
 MARKET_OPEN = time(9, 15)
 MARKET_CLOSE = time(15, 30)
+
+# Kite instrument tokens for IntradayHunter (BN/SX + the two BN constituents
+# used by the R29 confluence filter).
+BANKNIFTY_TOKEN = 260105
+SENSEX_TOKEN = 265
+HDFCBANK_TOKEN = 341249
+KOTAKBANK_TOKEN = 492033
+
+IH_INSTRUMENTS = (
+    ("BANKNIFTY", BANKNIFTY_TOKEN, "index"),
+    ("SENSEX", SENSEX_TOKEN, "index"),
+    ("HDFCBANK", HDFCBANK_TOKEN, "stock"),
+    ("KOTAKBANK", KOTAKBANK_TOKEN, "stock"),
+)
 
 
 class OIScheduler:
@@ -92,6 +109,29 @@ class OIScheduler:
                 candle_builder=self.candle_builder,
             ),
         }
+        # IntradayHunter — registered only when env flag is on. Even when
+        # registered, all trades default to PAPER unless IH_LIVE_INDICES
+        # explicitly opts an index in.
+        self._ih_cfg = IntradayHunterConfig()
+        self._multi_imap = None  # MultiInstrumentMap, lazily initialized in start()
+        if self._ih_cfg.ENABLED:
+            # Pre-create the multi-imap so it's available before start().
+            # Will be refreshed (CSV download) in start() once auth is ready.
+            from kite.instruments import MultiInstrumentMap
+            self._multi_imap = MultiInstrumentMap(
+                api_key=os.environ.get("KITE_API_KEY", ""),
+            )
+            self.strategies["intraday_hunter"] = IntradayHunterStrategy(
+                trade_repo=repo,
+                order_executor=self.order_executor,
+                exit_monitor=self.exit_monitor,
+                candle_builder=self.candle_builder,
+                kite_fetcher=self.kite_fetcher,
+                multi_instrument_map=self._multi_imap,
+            )
+            log.info("IntradayHunter strategy enabled",
+                     live_indices=sorted(self._ih_cfg.LIVE_INDICES) or "(all paper)",
+                     lots=self._ih_cfg.LOTS)
         self._alert_broker = AlertBroker()
         self.v_shape_detector = VShapeDetector()
         self.force_enabled = False
@@ -126,6 +166,146 @@ class OIScheduler:
                      strike=setup.get('strike'), type=setup.get('option_type'))
         except Exception as e:
             log.error("WS registration failed", tracker=strategy.tracker_type, error=str(e))
+
+    def _run_intraday_hunter_minute(self) -> None:
+        """1-minute IntradayHunter cycle.
+
+        Runs separately from the 3-min OI fetch loop. Pulls only what IH
+        needs (no option chain refetch — that's expensive and unnecessary
+        for IH which works on index 1-min candles). Calls the strategy's
+        check_and_update + should_create/evaluate_signal/create_trade.
+        """
+        if not self.is_market_open():
+            return
+        ih = self.strategies.get("intraday_hunter")
+        if ih is None:
+            return
+
+        try:
+            # Build a minimal analysis dict — IH only reads candles + spot + vix
+            analysis: dict = {}
+            spot = 0.0
+            try:
+                ny_full = self.candle_builder.get_candles("NIFTY", "1min") or []
+                ny = self._today_only(ny_full)
+                analysis["nifty_1min_candles"] = ny
+                if ny_full:
+                    spot = float(ny_full[-1]["close"])
+            except Exception as e:
+                log.error("IH cycle: failed to read NIFTY candles", error=str(e))
+                analysis["nifty_1min_candles"] = []
+
+            analysis["spot_price"] = spot
+
+            # Best-effort VIX from the last full analysis (refreshed every 3 min)
+            if isinstance(self.last_analysis, dict):
+                analysis["vix"] = self.last_analysis.get("vix", 0)
+            else:
+                analysis["vix"] = 0
+
+            # IH-specific inputs (BN/SX/HDFC/KOTAK candles, spots, yesterday)
+            self._attach_ih_inputs(analysis)
+
+            # Position monitoring first — exit before entering anything new
+            ih_update = ih.check_and_update({}, analysis=analysis)
+            if ih_update and ih_update.get("closed"):
+                for closed in ih_update["closed"]:
+                    log.info("IH position closed",
+                             trade_id=closed.get("trade_id"),
+                             label=closed.get("label"),
+                             reason=closed.get("exit_reason"),
+                             pnl=f"{closed.get('pnl_rs', 0):+.0f}")
+
+            # Signal evaluation
+            if ih.should_create(analysis):
+                ih_signal = ih.evaluate_signal(analysis)
+                if ih_signal:
+                    ih.create_trade(ih_signal, analysis, {})
+        except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
+            log.error("Error in IntradayHunter 1-min cycle",
+                      error=str(e), traceback=tb[-1500:])
+            traceback.print_exc()
+
+    @staticmethod
+    def _today_only(candles: list) -> list:
+        """Filter a CandleBuilder buffer to *today's session only*.
+
+        CandleBuilder buffers hold the last 240 minutes (4h), which spans
+        yesterday's tail in the morning. The IH engine treats its candle
+        list positionally — `today[0].open` MUST be today's first 1-min
+        candle (i.e. the 09:15 bar), not yesterday's 11:35.
+        """
+        today = datetime.now().date()
+        out = []
+        for c in candles or []:
+            ts = c.get("date") or c.get("timestamp")
+            if hasattr(ts, "date") and ts.date() == today:
+                out.append(c)
+        return out
+
+    def _attach_ih_inputs(self, analysis: dict) -> None:
+        """Populate analysis with the candle/spot fields IntradayHunter needs.
+
+        - BN/SX/HDFC/KOTAK 1-min candles from CandleBuilder (TODAY ONLY)
+        - Latest BN/SX spot from the most recent candle close
+        - Yesterday's NIFTY 1-min candles from instrument_history
+        """
+        cb = self.candle_builder
+        bn_full = cb.get_candles("BANKNIFTY", "1min") or []
+        sx_full = cb.get_candles("SENSEX", "1min") or []
+        bn = self._today_only(bn_full)
+        sx = self._today_only(sx_full)
+        analysis["banknifty_1min_candles"] = bn
+        analysis["sensex_1min_candles"] = sx
+        analysis["hdfcbank_1min_candles"] = self._today_only(
+            cb.get_candles("HDFCBANK", "1min") or [])
+        analysis["kotakbank_1min_candles"] = self._today_only(
+            cb.get_candles("KOTAKBANK", "1min") or [])
+        # Spot from latest tick is fine even if buffer mixes days — last
+        # closed candle is always the most recent.
+        analysis["banknifty_spot"] = float(bn_full[-1]["close"]) if bn_full else 0.0
+        analysis["sensex_spot"] = float(sx_full[-1]["close"]) if sx_full else 0.0
+        analysis["nifty_yesterday_candles"] = self._load_yesterday_nifty_candles()
+
+    def _load_yesterday_nifty_candles(self) -> list:
+        """Load yesterday's NIFTY 1-min candles from instrument_history.
+
+        Returns the most recent prior trading day's full session as a list
+        of dicts with keys (date, open, high, low, close, volume).
+        Returns [] if the table is empty or no prior data exists.
+        """
+        from db.connection import DB_PATH
+        import sqlite3
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            try:
+                row = conn.execute(
+                    "SELECT MAX(DATE(timestamp)) FROM instrument_history "
+                    "WHERE label = 'NIFTY' AND interval = '1min' "
+                    "  AND DATE(timestamp) < DATE('now', 'localtime')"
+                ).fetchone()
+                if not row or not row[0]:
+                    return []
+                prev_date = row[0]
+                rows = conn.execute(
+                    "SELECT timestamp, open, high, low, close, volume "
+                    "FROM instrument_history "
+                    "WHERE label = 'NIFTY' AND interval = '1min' "
+                    "  AND DATE(timestamp) = ? "
+                    "ORDER BY timestamp ASC",
+                    (prev_date,),
+                ).fetchall()
+                return [
+                    {"date": ts, "open": o, "high": h, "low": lo, "close": c, "volume": v}
+                    for ts, o, h, lo, c, v in rows
+                ]
+            finally:
+                conn.close()
+        except Exception as e:
+            log.error("_load_yesterday_nifty_candles failed", error=str(e))
+            return []
 
     def is_market_open(self) -> bool:
         """Check if the market is currently open."""
@@ -454,6 +634,15 @@ class OIScheduler:
                 analysis.setdefault("ce_candles", [])
                 analysis.setdefault("pe_candles", [])
 
+            # IntradayHunter inputs (only when enabled — keeps unrelated
+            # deployments unaffected). Adds BN/SX/HDFC/KOTAK candles, the
+            # latest BN/SX spot, and yesterday's NIFTY 1-min candles.
+            if self._ih_cfg.ENABLED:
+                try:
+                    self._attach_ih_inputs(analysis)
+                except Exception as e:
+                    log.error("Failed to attach IntradayHunter inputs", error=str(e))
+
             # ===== RALLY RIDER (Regime-adaptive, Claude-agent-powered) =====
             rr = self.strategies["rally_rider"]
             try:
@@ -474,6 +663,11 @@ class OIScheduler:
                             self._register_trade_with_monitor(rr)
             except Exception as e:
                 log.error("Error in Rally Rider strategy", error=str(e))
+
+            # NOTE: IntradayHunter no longer runs in this 3-min cycle.
+            # It has its own dedicated 1-min job (_run_intraday_hunter_minute)
+            # so it can react to every fresh 1-min candle, not just every
+            # third minute.
 
             # Add RR data to analysis for dashboard
             try:
@@ -509,15 +703,20 @@ class OIScheduler:
 
             # Broadcast to connected clients
             # Strip CandleBuilder candle arrays before emit — they contain
-            # datetime objects (not JSON serializable) and the dashboard
-            # doesn't consume them anyway. Strategies have already read them
-            # by this point.
+            # datetime objects (not JSON serializable by Flask-SocketIO's
+            # default encoder) and the dashboard doesn't consume them anyway.
+            # Strategies have already read them by this point.
             if self.socketio:
                 emit_payload = {
                     k: v for k, v in analysis.items()
                     if k not in (
+                        # Existing NIFTY/RR candle fields
                         "ce_candles", "pe_candles",
                         "nifty_1min_candles", "nifty_3min_candles",
+                        # IntradayHunter candle fields (added by _attach_ih_inputs)
+                        "banknifty_1min_candles", "sensex_1min_candles",
+                        "hdfcbank_1min_candles", "kotakbank_1min_candles",
+                        "nifty_yesterday_candles",
                     )
                 }
                 self.socketio.emit("oi_update", emit_payload)
@@ -579,6 +778,27 @@ class OIScheduler:
             replace_existing=True
         )
 
+        # 1-minute IntradayHunter cycle (only when enabled). Runs at the
+        # top of every minute, ~5s after the candle close, so it sees the
+        # freshest 1-min OHLC bar. Independent of the 3-min OI fetch loop.
+        if self._ih_cfg.ENABLED:
+            ih_now = datetime.now()
+            ih_start = ih_now.replace(second=5, microsecond=0)
+            if ih_start <= ih_now:
+                from datetime import timedelta as _td
+                ih_start = ih_start + _td(minutes=1)
+            self.scheduler.add_job(
+                self._run_intraday_hunter_minute,
+                trigger=IntervalTrigger(minutes=1, start_date=ih_start),
+                id="intraday_hunter_minute",
+                name="IntradayHunter 1-min cycle",
+                replace_existing=True,
+                max_instances=1,        # don't overlap if a cycle runs long
+                coalesce=True,          # if we miss a tick, run once not multiple
+            )
+            log.info("IntradayHunter 1-min job scheduled",
+                     first_run=ih_start.strftime("%H:%M:%S"))
+
         # Review reminder for display-only features (March 18, 2026)
         from apscheduler.triggers.date import DateTrigger
         review_date = datetime(2026, 3, 18, 10, 0, 0)
@@ -617,6 +837,35 @@ class OIScheduler:
                 label="NIFTY", token=NIFTY_TOKEN,
                 instr_type="index", intervals=("1min", "3min"),
             )
+
+            # 2b. IntradayHunter needs BN/SX spot + HDFC/KOTAK constituents
+            #     (only when IH is enabled — keeps the WS subscription footprint
+            #     unchanged for users who haven't opted in).
+            if self._ih_cfg.ENABLED:
+                for label, token, instr_type in IH_INSTRUMENTS:
+                    try:
+                        self.candle_builder.register_instrument(
+                            label=label, token=token,
+                            instr_type=instr_type, intervals=("1min",),
+                            index_label=label if instr_type == "index" else "NIFTY",
+                        )
+                    except Exception as e:
+                        log.error("IH instrument register failed",
+                                  label=label, token=token, error=str(e))
+
+                # Refresh the multi-instrument-map (downloads NFO + BFO CSVs).
+                # Required for live order routing on BN/SX positions.
+                if self._multi_imap is not None:
+                    try:
+                        self._multi_imap.set_access_token(
+                            self.kite_fetcher._kite.access_token
+                            if hasattr(self.kite_fetcher._kite, "access_token") else ""
+                        )
+                        ok = self._multi_imap.refresh()
+                        log.info("MultiInstrumentMap refreshed",
+                                 success=ok, indices=self._multi_imap.labels())
+                    except Exception as e:
+                        log.error("MultiInstrumentMap refresh failed", error=str(e))
 
             # 3. Bootstrap candle history (one-time historical_data fetch).
             try:

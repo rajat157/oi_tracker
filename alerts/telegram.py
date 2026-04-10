@@ -33,12 +33,19 @@ class TelegramChannel:
 
     def send(self, message: str, chat_id: Optional[str] = None,
              parse_mode: str = "HTML") -> bool:
-        """Send *message* to a single chat. Returns True on success."""
+        """Send *message* to one or more chats (comma-separated IDs)."""
         cid = chat_id or self.default_chat_id
         if not self.bot_token:
             log.warning("Telegram bot token not configured")
             return False
-        return self._post(self.bot_token, cid, message, parse_mode)
+        ids = [c.strip() for c in cid.split(",") if c.strip()]
+        if not ids:
+            return False
+        success = True
+        for c in ids:
+            if not self._post(self.bot_token, c, message, parse_mode):
+                success = False
+        return success
 
     def send_multi(self, message: str, chat_ids: List[str],
                    parse_mode: str = "HTML",

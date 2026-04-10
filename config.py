@@ -245,3 +245,28 @@ class IntradayHunterConfig:
         default_factory=lambda: os.getenv("IH_AGENT_ENABLED", "true").lower() == "true"
     )
     AGENT_MONITOR_THROTTLE_SEC: int = 180   # min seconds between monitor calls per position
+    # [V5] Agent memory + cooldown
+    AGENT_HISTORY_LENGTH: int = 5           # last N decisions passed to confirm_signal
+    AGENT_REJECTION_COOLDOWN_SEC: int = 300  # don't re-ask agent for same direction within 5 min of rejection
+
+    # ── [V1] E0 — gap-rejection-recovery (early-entry trigger) ──
+    # The trader's favorite gap-day setup. Yesterday directional + today's
+    # first candle moves sharply against yesterday + 2-3 recovery candles
+    # back in yesterday's direction. Enters in yesterday's direction.
+    # Backtest gain over 2.3 years: +Rs 11,918 (PF 1.25 → 1.26).
+    ENABLE_E0: bool = field(
+        default_factory=lambda: os.getenv("IH_ENABLE_E0", "true").lower() == "true"
+    )
+    E0_MIN_YDAY_PCT: float = 0.30            # yesterday |move| >= 0.30%
+    E0_MIN_INITIAL_PCT: float = 0.20         # first candle move against yesterday >= 0.20%
+    E0_MIN_RECOVERY_PCT: float = 0.10        # recovery in yesterday direction >= 0.10%
+    E0_ENTRY_START: time = time(9, 17)       # earlier than normal TIME_START
+    E0_MAX_MINUTE: int = 10                  # must fire by minute 10 (~09:25)
+
+    # ── [V2] Multi-day regime in day_bias_score ──
+    # Adds yesterday's close-position-within-range as a new weighted input.
+    # Close near high (>= 80%) = bullish; close near low (<= 20%) = bearish.
+    # Backtest gain over 2.3 years: +Rs 7,030 (free improvement).
+    ENABLE_MULTI_DAY_REGIME: bool = field(
+        default_factory=lambda: os.getenv("IH_ENABLE_MULTI_DAY_REGIME", "true").lower() == "true"
+    )

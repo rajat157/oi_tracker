@@ -187,10 +187,11 @@ layer the mechanical filters can't:
 """
 
 
-MONITOR_SYSTEM_PROMPT = """You are an expert FNO intraday trader actively monitoring an open IntradayHunter
-position. The strategy entered up to 3 simultaneous option positions on the
-NIFTY/BANKNIFTY/SENSEX trap-theory signal. You see one position at a time
-and decide its fate.
+MONITOR_SYSTEM_PROMPT = """You are an expert FNO intraday trader actively monitoring open IntradayHunter
+positions. The strategy entered up to 3 simultaneous option positions on the
+NIFTY/BANKNIFTY/SENSEX trap-theory signal. You see ALL active positions
+together and decide each one's fate — this gives you cross-index context
+(e.g. is one index lagging while the others move? R40 laggard detection).
 
 ## STRATEGY CONTEXT (same as signal-confirmation prompt — abridged for monitoring)
 - 3-layer trap theory: surface trap → operator accumulation → comfort-rule detection
@@ -201,7 +202,7 @@ and decide its fate.
   if you need to look up a specific rule
 
 ## YOUR ROLE
-For each active position, decide:
+For EACH active position, decide independently:
 - **HOLD**: do nothing, let mechanical SL/TGT/12:30 time-exit run
 - **TIGHTEN_SL**: move SL closer to current price (lock in some profit)
 - **EXIT_NOW**: close the position immediately at market
@@ -256,10 +257,42 @@ For each active position, decide:
 - New SL must be BELOW current premium (otherwise instant exit)
 
 ## OUTPUT SCHEMA (respond with ONLY valid JSON, no markdown, no prose)
+If monitoring a SINGLE position:
 {"action": "HOLD" or "TIGHTEN_SL" or "EXIT_NOW",
  "new_sl_premium": <float, only for TIGHTEN_SL>,
  "reasoning": "<1-2 sentences explaining which rule(s) drove the decision>"}
+
+If monitoring MULTIPLE positions (batched):
+{"decisions": [
+  {"index": "<NIFTY|BANKNIFTY|SENSEX>",
+   "action": "HOLD" or "TIGHTEN_SL" or "EXIT_NOW",
+   "new_sl_premium": <float, only for TIGHTEN_SL>,
+   "reasoning": "<1-2 sentences>"},
+  ... one entry per active position shown above ...
+]}
 """
+
+
+def _derive_time_str(candles: List[dict]) -> str:
+    """Return "HH:MM IST" for the latest candle in the feed.
+
+    Falls back to wall-clock `datetime.now()` only if no candles are
+    provided. This keeps the agent prompt's "Time:" field in sync with
+    the data it's reading — essential for backtest replay (where the
+    simulated time differs from wall clock) and harmless in live mode
+    (where the latest candle is always within a few seconds of now).
+    """
+    if candles:
+        ts = candles[-1].get("date") or candles[-1].get("timestamp")
+        if hasattr(ts, "strftime"):
+            return ts.strftime("%H:%M IST")
+        if isinstance(ts, str):
+            try:
+                parsed = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=None)
+                return parsed.strftime("%H:%M IST")
+            except ValueError:
+                pass
+    return datetime.now().strftime("%H:%M IST")
 
 
 def _format_candles(label: str, candles: List[dict], limit: int = 30) -> str:
@@ -290,11 +323,16 @@ class IntradayHunterAgent:
         self,
         signal_data: Dict,
         analysis: Dict,
+        recent_decisions: Optional[List[Dict]] = None,
     ) -> str:
         """Build the full prompt for evaluating a fresh mechanical signal.
 
         signal_data: {signal: Signal, positions: [...], vix: float, nifty_spot: float}
         analysis: the dict the strategy was given (contains all the candles).
+        recent_decisions: [V5] list of dicts {minute, trigger, direction, verdict,
+            confidence, reasoning}. Most recent first. Injected into the prompt
+            so the agent can check consistency with its own recent reasoning
+            (avoids the 11:23 NO_TRADE → 11:24 TRADE flip-flop).
         """
         sig = signal_data.get("signal")
         positions = signal_data.get("positions") or []
@@ -310,7 +348,11 @@ class IntradayHunterAgent:
         spot = analysis.get("spot_price", 0)
         bn_spot = analysis.get("banknifty_spot", 0)
         sx_spot = analysis.get("sensex_spot", 0)
-        time_str = datetime.now().strftime("%H:%M IST")
+        # Derive "now" from the latest candle timestamp so backtest replay
+        # uses simulated time (not wall clock). In live mode the latest
+        # candle is the minute that just closed, so this equals datetime.now()
+        # within a second.
+        time_str = _derive_time_str(nifty_candles)
 
         # Yesterday context
         y_summary = "(no yesterday data)"
@@ -345,9 +387,30 @@ class IntradayHunterAgent:
             for p in positions
         )
 
+        # [V5] Recent agent decisions section — helps the agent stay
+        # consistent with its own recent reasoning instead of flip-flopping
+        # between minutes (the bug seen on 2026-04-09 11:23 NO_TRADE → 11:24 TRADE).
+        recent_section = ""
+        if recent_decisions:
+            lines = ["## YOUR RECENT DECISIONS (most recent first)"]
+            for d in recent_decisions[:5]:
+                lines.append(
+                    f"  - {d.get('minute', '?')} {d.get('trigger', '?')} "
+                    f"{d.get('direction', '?')} → {d.get('verdict', '?')}"
+                    + (f" (conf {d.get('confidence', 0)})" if d.get('verdict') == "TRADE" else "")
+                )
+                reason = (d.get('reasoning', '') or '')[:200]
+                if reason:
+                    lines.append(f"    \"{reason}\"")
+            lines.append(
+                "Be consistent with these unless the price action has materially "
+                "changed since then. Don't flip-flop on the same setup within minutes."
+            )
+            recent_section = "\n".join(lines) + "\n\n"
+
         prompt = f"""{SIGNAL_SYSTEM_PROMPT}
 
-## MECHANICAL SIGNAL
+{recent_section}## MECHANICAL SIGNAL
 - Trigger:        {sig.trigger}
 - Direction:      {sig.direction}
 - Day-bias score: {sig.day_bias_score:+.2f}  (range -1.0 .. +1.0)
@@ -408,7 +471,8 @@ schema. If only some indices look weak, list them in skip_indices.
         strike_label = f"{label}_{position['strike']}_{position['option_type']}"
         # Note: agent gets these via analysis if scheduler attaches; otherwise (none)
 
-        time_str = datetime.now().strftime("%H:%M IST")
+        # Derive "now" from the latest candle timestamp for backtest compatibility
+        time_str = _derive_time_str(candles)
 
         prompt = f"""{MONITOR_SYSTEM_PROMPT}
 
@@ -517,14 +581,25 @@ Respond per the output schema.
     # Public API
     # ------------------------------------------------------------------
 
-    def confirm_signal(self, signal_data: Dict, analysis: Dict) -> Optional[Dict]:
+    def confirm_signal(
+        self,
+        signal_data: Dict,
+        analysis: Dict,
+        recent_decisions: Optional[List[Dict]] = None,
+    ) -> Optional[Dict]:
         """Confirm or reject a mechanical signal.
+
+        Args:
+            signal_data: {signal: Signal, positions, vix, nifty_spot}
+            analysis: dict with the candle data
+            recent_decisions: [V5] last N agent decisions (most recent first)
+                so the agent can check consistency
 
         Returns:
             None: agent failed or said NO_TRADE → caller should not enter
             dict: {action, skip_indices, confidence, reasoning} → caller may enter
         """
-        prompt = self.build_signal_prompt(signal_data, analysis)
+        prompt = self.build_signal_prompt(signal_data, analysis, recent_decisions)
         log.info("Calling IH agent for signal confirmation",
                  trigger=signal_data["signal"].trigger,
                  direction=signal_data["signal"].direction,
@@ -566,12 +641,25 @@ Respond per the output schema.
             dict: {action: TIGHTEN_SL|EXIT_NOW, new_sl_premium?, reasoning}
         """
         prompt = self.build_monitor_prompt(position, analysis, current_premium)
+
+        entry = position.get("entry_premium", 0)
+        pnl = ((current_premium - entry) / entry * 100) if entry > 0 else 0
+        log.info("Calling IH trade monitor",
+                 trade_id=position.get("id"),
+                 index=position.get("index_label"),
+                 pnl=f"{pnl:+.1f}%",
+                 prompt_length=len(prompt))
+
         result = self.call_claude(prompt)
         if not result:
             return None
 
         action = result.get("action", "HOLD")
         if action == "HOLD":
+            log.info("IH monitor: HOLD",
+                     trade_id=position.get("id"),
+                     index=position.get("index_label"),
+                     reasoning=result.get("reasoning", ""))
             return None
         if action not in ("TIGHTEN_SL", "EXIT_NOW"):
             log.warning("IH monitor: invalid action", action=action)
@@ -594,7 +682,213 @@ Respond per the output schema.
                 return None
 
         log.info("IH monitor decision",
+                 trade_id=position.get("id"),
+                 index=position.get("index_label"),
                  action=action,
                  new_sl=result.get("new_sl_premium"),
                  reasoning=result.get("reasoning", ""))
         return result
+
+    # ------------------------------------------------------------------
+    # Batched position monitoring (all positions in a single Claude call)
+    # ------------------------------------------------------------------
+
+    def build_monitor_prompt_batch(
+        self,
+        positions: List[Dict],
+        current_premiums: Dict[int, float],
+        analysis: Dict,
+    ) -> str:
+        """Build a single prompt covering all active positions."""
+        # Collect candle data for all 3 indices (regardless of which have positions)
+        index_candles = {
+            "NIFTY": analysis.get("nifty_1min_candles") or [],
+            "BANKNIFTY": analysis.get("banknifty_1min_candles") or [],
+            "SENSEX": analysis.get("sensex_1min_candles") or [],
+        }
+
+        # Derive "now" from the latest available candle
+        all_candles = [c for cs in index_candles.values() for c in cs]
+        time_str = _derive_time_str(all_candles)
+
+        # Build per-position sections
+        pos_sections = []
+        for i, pos in enumerate(positions, 1):
+            label = pos["index_label"]
+            entry = pos["entry_premium"]
+            current = current_premiums.get(pos["id"], entry)
+            sl = pos["sl_premium"]
+            target = pos["target_premium"]
+            max_p = pos.get("max_premium_reached") or entry
+            min_p = pos.get("min_premium_reached") or entry
+            pnl_pct = ((current - entry) / entry) * 100 if entry > 0 else 0
+            pnl_rs = (current - entry) * pos["qty"]
+
+            pos_sections.append(
+                f"### Position {i}: {label} {pos['strike']} {pos['option_type']}\n"
+                f"- Direction:    {pos['direction']}\n"
+                f"- Quantity:     {pos['qty']}\n"
+                f"- Entry:        Rs {entry:.2f}\n"
+                f"- Current:      Rs {current:.2f}\n"
+                f"- SL:           Rs {sl:.2f}\n"
+                f"- Target:       Rs {target:.2f}\n"
+                f"- Max reached:  Rs {max_p:.2f}\n"
+                f"- Min reached:  Rs {min_p:.2f}\n"
+                f"- P&L:          {pnl_pct:+.1f}%  (Rs {pnl_rs:+.0f})"
+            )
+
+        # Build index candle sections (all 3 always included for cross-index context)
+        candle_sections = []
+        for label in ("NIFTY", "BANKNIFTY", "SENSEX"):
+            candle_sections.append(_format_candles(label, index_candles[label]))
+
+        prompt = f"""{MONITOR_SYSTEM_PROMPT}
+
+## ACTIVE POSITIONS ({len(positions)} position{'s' if len(positions) != 1 else ''} in this signal group)
+- Now: {time_str}
+
+{chr(10).join(pos_sections)}
+
+## INDEX PRICE ACTION
+{chr(10).join(candle_sections)}
+
+## YOUR DECISION
+Evaluate each position and respond per the batched output schema.
+"""
+        return prompt
+
+    def monitor_positions_batch(
+        self,
+        positions: List[Dict],
+        current_premiums: Dict[int, float],
+        analysis: Dict,
+    ) -> Dict[int, Optional[Dict]]:
+        """Batch-monitor all positions in a single Claude call.
+
+        Returns: {trade_id: {action, new_sl_premium?, reasoning}} for
+        actionable decisions. HOLD positions are omitted (None).
+        """
+        if not positions:
+            return {}
+
+        prompt = self.build_monitor_prompt_batch(positions, current_premiums, analysis)
+
+        log.info("Calling IH trade monitor (batch)",
+                 positions=len(positions),
+                 indices=[p["index_label"] for p in positions],
+                 prompt_length=len(prompt))
+
+        result = self.call_claude(prompt)
+        if not result:
+            return {}
+
+        # Build index→trade_id lookup for matching response to positions
+        index_to_pos = {p["index_label"]: p for p in positions}
+
+        # Handle batched response: {"decisions": [...]}
+        decisions_list = result.get("decisions")
+        if isinstance(decisions_list, list):
+            return self._parse_batch_decisions(
+                decisions_list, index_to_pos, current_premiums)
+
+        # Fallback: single-position response ({"action": ...})
+        # This happens if Claude ignores the batch schema — apply to first position
+        if "action" in result and len(positions) == 1:
+            return self._validate_single_decision(
+                result, positions[0], current_premiums)
+
+        log.warning("IH batch monitor: unexpected response format",
+                     keys=list(result.keys()))
+        return {}
+
+    def _parse_batch_decisions(
+        self,
+        decisions_list: list,
+        index_to_pos: Dict[str, Dict],
+        current_premiums: Dict[int, float],
+    ) -> Dict[int, Optional[Dict]]:
+        """Parse and validate each decision from the batched response."""
+        results: Dict[int, Optional[Dict]] = {}
+
+        for dec in decisions_list:
+            if not isinstance(dec, dict):
+                continue
+            index = dec.get("index", "")
+            pos = index_to_pos.get(index)
+            if not pos:
+                log.warning("IH batch monitor: unknown index in response",
+                            index=index)
+                continue
+
+            trade_id = pos["id"]
+            action = dec.get("action", "HOLD")
+            current = current_premiums.get(trade_id, 0)
+
+            if action == "HOLD":
+                log.info("IH monitor: HOLD",
+                         trade_id=trade_id, index=index,
+                         reasoning=dec.get("reasoning", ""))
+                continue
+
+            if action not in ("TIGHTEN_SL", "EXIT_NOW"):
+                log.warning("IH batch monitor: invalid action",
+                            index=index, action=action)
+                continue
+
+            if action == "TIGHTEN_SL":
+                new_sl = dec.get("new_sl_premium")
+                if not isinstance(new_sl, (int, float)) or new_sl <= 0:
+                    log.warning("IH batch monitor: invalid new_sl_premium",
+                                index=index)
+                    continue
+                old_sl = pos.get("sl_premium", 0)
+                if new_sl <= old_sl:
+                    log.info("IH batch monitor: TIGHTEN_SL not tighter",
+                             index=index, old=old_sl, new=new_sl)
+                    continue
+                if new_sl >= current:
+                    log.warning("IH batch monitor: TIGHTEN_SL above current",
+                                index=index, new_sl=new_sl, current=current)
+                    continue
+
+            log.info("IH monitor decision",
+                     trade_id=trade_id, index=index,
+                     action=action,
+                     new_sl=dec.get("new_sl_premium"),
+                     reasoning=dec.get("reasoning", ""))
+            results[trade_id] = dec
+
+        return results
+
+    def _validate_single_decision(
+        self,
+        result: Dict,
+        pos: Dict,
+        current_premiums: Dict[int, float],
+    ) -> Dict[int, Optional[Dict]]:
+        """Fallback: validate a single-position response format."""
+        trade_id = pos["id"]
+        action = result.get("action", "HOLD")
+        current = current_premiums.get(trade_id, 0)
+
+        if action == "HOLD":
+            log.info("IH monitor: HOLD",
+                     trade_id=trade_id, index=pos["index_label"],
+                     reasoning=result.get("reasoning", ""))
+            return {}
+
+        if action == "TIGHTEN_SL":
+            new_sl = result.get("new_sl_premium")
+            if not isinstance(new_sl, (int, float)) or new_sl <= 0:
+                return {}
+            if new_sl <= pos.get("sl_premium", 0) or new_sl >= current:
+                return {}
+
+        if action in ("TIGHTEN_SL", "EXIT_NOW"):
+            log.info("IH monitor decision",
+                     trade_id=trade_id, index=pos["index_label"],
+                     action=action,
+                     new_sl=result.get("new_sl_premium"),
+                     reasoning=result.get("reasoning", ""))
+            return {trade_id: result}
+        return {}

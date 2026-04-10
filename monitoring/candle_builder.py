@@ -233,6 +233,7 @@ class CandleBuilder(TickConsumer):
         expiry: str,
         spot: float,
         instrument_map=None,
+        index_label: str = "NIFTY",
     ) -> None:
         """Rotate option strike subscriptions based on current spot.
 
@@ -240,9 +241,17 @@ class CandleBuilder(TickConsumer):
         vs stale. New strikes are registered immediately (with bootstrap).
         Stale strikes are marked for removal; if still absent after
         STRIKE_GRACE_MINUTES, they are actually unregistered.
+
+        index_label: per-index scope. The rotation only considers options
+            tagged with this index_label, so calling for NIFTY then BN
+            then SX produces 3 independent rotations and they don't
+            cannibalize each other's tokens. Labels are namespaced
+            (e.g. "BANKNIFTY_56000_CE") so the lookup paths in
+            _get_current_premium and the IH cycle find them correctly.
         """
         if instrument_map is None:
-            log.warning("set_option_strikes: no instrument_map provided")
+            log.warning("set_option_strikes: no instrument_map provided",
+                        index_label=index_label)
             return
 
         desired_tokens: Set[int] = set()
@@ -254,7 +263,7 @@ class CandleBuilder(TickConsumer):
                 tok = inst["instrument_token"]
                 desired_tokens.add(tok)
                 desired_meta[tok] = {
-                    "label": f"NIFTY_{strike}_CE",
+                    "label": f"{index_label}_{strike}_CE",
                     "strike": strike,
                     "option_type": "CE",
                 }
@@ -264,16 +273,19 @@ class CandleBuilder(TickConsumer):
                 tok = inst["instrument_token"]
                 desired_tokens.add(tok)
                 desired_meta[tok] = {
-                    "label": f"NIFTY_{strike}_PE",
+                    "label": f"{index_label}_{strike}_PE",
                     "strike": strike,
                     "option_type": "PE",
                 }
 
         now = datetime.now()
         with self._lock:
+            # Per-index scoping: only look at options for THIS index_label,
+            # so rotating NIFTY doesn't drop BN/SX strikes and vice versa.
             current_option_tokens = {
                 tok for tok, meta in self._instruments.items()
                 if meta.get("instrument_type") == "option"
+                and meta.get("index_label") == index_label
             }
 
         new_tokens = desired_tokens - current_option_tokens
@@ -285,6 +297,7 @@ class CandleBuilder(TickConsumer):
             self.register_instrument(
                 label=meta["label"], token=tok, instr_type="option",
                 intervals=("1min", "3min"), expiry=expiry,
+                index_label=index_label,
             )
 
         # Refresh grace-period tracking
@@ -303,9 +316,16 @@ class CandleBuilder(TickConsumer):
             ]
 
         for tok in to_drop:
+            # Only drop if it's actually for this index — guard against
+            # cross-index drops via the shared pending_removal dict.
+            with self._lock:
+                meta = self._instruments.get(tok, {})
+            if meta.get("index_label") != index_label:
+                continue
             self.unregister_instrument(tok)
 
         log.info("Option strikes rotated",
+                 index=index_label,
                  new=len(new_tokens),
                  stale_pending=len(stale_tokens) - len(to_drop),
                  dropped=len(to_drop),

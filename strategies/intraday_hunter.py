@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections import deque
 from datetime import datetime, time, date
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -82,6 +83,12 @@ class IntradayHunterStrategy(BaseTracker):
         self._agent = None  # lazy — built on first use to avoid import cycles
         # Per-position last-agent-monitor timestamp (for throttling agent calls)
         self._agent_last_check: Dict[int, datetime] = {}
+        # [V5] Rolling agent decision history (most recent first) — passed
+        # to agent.confirm_signal so Claude doesn't flip-flop minute-to-minute.
+        self._recent_agent_decisions: deque = deque(maxlen=_cfg.AGENT_HISTORY_LENGTH)
+        # [V5] Per-direction last-rejection time — short cooldown to avoid
+        # burning agent calls in tight loops while a setup is invalid.
+        self._agent_last_rejection: Dict[str, datetime] = {}
 
     @property
     def engine(self):
@@ -103,6 +110,19 @@ class IntradayHunterStrategy(BaseTracker):
     # ------------------------------------------------------------------
     # Should-create gate
     # ------------------------------------------------------------------
+
+    def is_in_time_window(self, now: Optional[datetime] = None) -> bool:
+        """Override BaseTracker.is_in_time_window to use the earlier
+        E0_ENTRY_START when E0 is enabled. Outside that window, only the
+        regular TIME_START applies.
+
+        The engine's E0 detector self-gates by E0_ENTRY_START + E0_MAX_MINUTE,
+        so non-E0 signals (E1/E2/E3) won't fire before TIME_START even though
+        the cycle is allowed to run.
+        """
+        now = now or datetime.now()
+        effective_start = _cfg.E0_ENTRY_START if _cfg.ENABLE_E0 else self.time_start
+        return effective_start <= now.time() <= self.time_end
 
     def should_create(self, analysis: dict, **kwargs) -> bool:
         """Pre-signal gate: time window, daily limits, cooldown, circuit breaker."""
@@ -206,6 +226,15 @@ class IntradayHunterStrategy(BaseTracker):
         if not signal:
             return None
 
+        # [V1] When E0 is enabled, the time window is widened to start at
+        # 09:17. Inside the early window (09:17-09:34), ONLY E0 signals are
+        # eligible. E1/E2/E3 stay gated by the original 09:35 TIME_START
+        # because R6+R7 backtests showed pre-09:35 entries are random.
+        now_t = datetime.now().time()
+        if _cfg.ENABLE_E0 and now_t < _cfg.TIME_START:
+            if signal.trigger != "E0":
+                return None  # only E0 allowed in the early window
+
         # Build the position set
         nifty_spot = float(analysis.get("spot_price", 0) or ny[-1].close)
         bn_spot = float(analysis.get("banknifty_spot", 0) or bn[-1].close)
@@ -219,6 +248,8 @@ class IntradayHunterStrategy(BaseTracker):
             sx_spot=sx_spot,
             today=datetime.now().date(),
             vix_pct=vix,
+            candle_builder=self._candle_builder,
+            live_mode=True,  # skip BS fallback — require real LTP
         )
         if not positions:
             return None
@@ -235,10 +266,54 @@ class IntradayHunterStrategy(BaseTracker):
         # the mechanical signal stands as-is.
         agent = self.agent
         if agent is not None:
-            decision = agent.confirm_signal(signal_data, analysis)
+            # [V5] Cooldown — don't burn an agent call if we just rejected
+            # this same direction within AGENT_REJECTION_COOLDOWN_SEC.
+            now = datetime.now()
+            last_rej = self._agent_last_rejection.get(signal.direction)
+            if last_rej is not None:
+                elapsed = (now - last_rej).total_seconds()
+                if elapsed < _cfg.AGENT_REJECTION_COOLDOWN_SEC:
+                    log.debug(
+                        "IH agent call skipped (cooldown)",
+                        direction=signal.direction,
+                        elapsed=int(elapsed),
+                        cooldown=_cfg.AGENT_REJECTION_COOLDOWN_SEC,
+                    )
+                    return None
+
+            # [V5] Pass last 5 decisions so Claude can stay consistent with
+            # its own recent reasoning. Convert deque → list (most recent first).
+            recent_decisions = list(self._recent_agent_decisions)
+            decision = agent.confirm_signal(signal_data, analysis, recent_decisions)
+
+            # Always record the decision (whether confirmed or rejected) so
+            # the next call has the history.
+            now_str = now.strftime("%H:%M")
             if decision is None:
-                # Either NO_TRADE, low confidence, or agent failure → skip.
+                self._agent_last_rejection[signal.direction] = now
+                self._recent_agent_decisions.appendleft({
+                    "minute": now_str,
+                    "trigger": signal.trigger,
+                    "direction": signal.direction,
+                    "verdict": "NO_TRADE",
+                    "confidence": 0,
+                    "reasoning": "(NO_TRADE — see ih_agent log for details)",
+                })
                 return None
+
+            # Confirmed
+            self._recent_agent_decisions.appendleft({
+                "minute": now_str,
+                "trigger": signal.trigger,
+                "direction": signal.direction,
+                "verdict": "TRADE",
+                "confidence": int(decision.get("confidence", 0) or 0),
+                "reasoning": decision.get("reasoning", ""),
+            })
+            # Clear the rejection cooldown for this direction since we've
+            # now accepted a trade in it.
+            self._agent_last_rejection.pop(signal.direction, None)
+
             skip = set(decision.get("skip_indices") or [])
             if skip:
                 signal_data["positions"] = [
@@ -331,8 +406,17 @@ class IntradayHunterStrategy(BaseTracker):
             self._register_strike_for_monitoring(label, pos["strike"], pos["option_type"])
 
             # Place real broker order if this index is opted into live trading.
+            # NOTE: ExitMonitor registration is deferred to the scheduler
+            # (after create_trade returns) so it reads corrected fill prices
+            # from the DB — not the BS-estimated entry premium.
             if wants_live and self.order_executor is not None:
                 self._place_live_entry(tid, label, pos)
+            else:
+                log.info("IH PAPER position",
+                         trade_id=tid, index=label,
+                         strike=f"{pos['strike']} {pos['option_type']}",
+                         entry=pos["entry_premium"],
+                         source=pos.get("premium_source", "?"))
 
         # Single combined alert for the group
         alert = self._format_group_alert(signal_group_id, sig, positions, vix)
@@ -378,6 +462,148 @@ class IntradayHunterStrategy(BaseTracker):
                       index=index_label, strike=strike,
                       option_type=option_type, error=str(e))
 
+    def _register_with_exit_monitor(
+        self, trade_id: int, index_label: str, pos: dict
+    ) -> None:
+        """Register an open position with the ExitMonitor for tick-level SL/TGT.
+
+        Mirrors RRStrategy._register_trade_with_monitor but built for IH's
+        multi-position groups (each position registers independently with
+        the same trade_id used in ih_trades).
+
+        Without this, IH positions are only re-priced once per minute by
+        the IH cycle — meaning SL/target hits can blow through significantly
+        past their levels (e.g. the 2026-04-09 SENSEX -73% slippage on a
+        nominal 20% SL).
+        """
+        if self._exit_monitor is None or self._multi_imap is None:
+            return
+        try:
+            from monitoring.exit_monitor import ActiveTrade
+
+            child_imap = self._multi_imap.get(index_label)
+            if child_imap is None:
+                log.warning("IH ExitMonitor reg skipped: no instrument_map",
+                            index=index_label)
+                return
+            expiry = child_imap.get_current_expiry()
+            if not expiry:
+                log.warning("IH ExitMonitor reg skipped: no expiry",
+                            index=index_label)
+                return
+            inst = child_imap.get_option_instrument(
+                int(pos["strike"]), pos["option_type"], expiry
+            )
+            if not inst:
+                log.warning("IH ExitMonitor reg skipped: instrument not found",
+                            index=index_label,
+                            strike=pos["strike"],
+                            type=pos["option_type"],
+                            expiry=expiry)
+                return
+
+            active = ActiveTrade(
+                trade_id=trade_id,
+                tracker_type=self.tracker_type,
+                strike=int(pos["strike"]),
+                option_type=pos["option_type"],
+                instrument_token=int(inst["instrument_token"]),
+                entry_premium=float(pos["entry_premium"]),
+                sl_premium=float(pos["sl_premium"]),
+                target_premium=float(pos["target_premium"]),
+                is_selling=False,  # IH always buys options
+            )
+            self._exit_monitor.register_trade(active)
+            log.info("IH position registered with ExitMonitor (tick-level SL)",
+                     trade_id=trade_id,
+                     index=index_label,
+                     strike=pos["strike"],
+                     type=pos["option_type"],
+                     token=inst["instrument_token"])
+        except Exception as e:
+            log.error("IH ExitMonitor registration failed",
+                      trade_id=trade_id, index=index_label, error=str(e))
+
+    def force_exit(
+        self,
+        trade_id: int,
+        exit_premium: float,
+        reason: str,
+        pnl_pct: float,
+        alert_message: Optional[str] = None,
+    ) -> None:
+        """Override BaseTracker.force_exit to compute & persist pnl_rs.
+
+        BaseTracker only writes pnl_pct, but IH's table has a separate
+        profit_loss_rs column that the dashboard + reports rely on.
+        Called by ExitMonitor → scheduler._handle_premium_exit on tick-level
+        SL/TGT hits.
+        """
+        if self.trade_repo is None:
+            log.warning("IH force_exit called but trade_repo is None")
+            return
+
+        # Fetch the row to compute rupee P&L
+        row = self.trade_repo._fetch_one(
+            f"SELECT entry_premium, qty, signal_group_id, index_label "
+            f"FROM {self.table_name} WHERE id = ?",
+            (trade_id,),
+        )
+        if not row:
+            log.warning("IH force_exit: trade not found", trade_id=trade_id)
+            return
+
+        entry = float(row["entry_premium"])
+        qty = int(row["qty"])
+        pnl_rs = (exit_premium - entry) * qty
+        # Recompute pct from entry to be safe (don't trust caller)
+        pnl_pct_real = ((exit_premium - entry) / entry * 100) if entry > 0 else 0.0
+
+        now = datetime.now()
+        status = "WON" if pnl_rs > 0 else "LOST"
+        self.trade_repo.update_trade(
+            self.table_name, trade_id,
+            status=status,
+            resolved_at=now,
+            exit_premium=exit_premium,
+            exit_reason=reason,
+            profit_loss_pct=round(pnl_pct_real, 2),
+            profit_loss_rs=round(pnl_rs, 2),
+            last_premium=exit_premium,
+        )
+
+        log.info(
+            f"IH position {status} (force_exit)",
+            trade_id=trade_id,
+            label=row["index_label"],
+            reason=reason,
+            pnl_rs=f"{pnl_rs:+.0f}",
+            pnl_pct=f"{pnl_pct_real:+.2f}%",
+        )
+
+        # Publish event so AlertBroker → Telegram fires
+        event_data = {
+            "trade_id": trade_id,
+            "tracker_type": self.tracker_type,
+            "signal_group_id": row["signal_group_id"],
+            "label": row["index_label"],
+            "action": status,
+            "pnl": pnl_rs,
+            "pnl_pct": pnl_pct_real,
+            "reason": reason,
+        }
+        if alert_message:
+            event_data["alert_message"] = alert_message
+        self._publish(EventType.TRADE_EXITED, event_data)
+
+        # Cancel any associated GTT/exit orders for this trade_id
+        if self.order_executor is not None:
+            try:
+                self.order_executor.cancel_exit_orders(trade_id)
+            except Exception as e:
+                log.error("IH force_exit cancel_exit_orders failed",
+                          trade_id=trade_id, error=str(e))
+
     def _place_live_entry(self, trade_id: int, index_label: str, pos: dict) -> None:
         """Route a single position through OrderExecutor (entry + GTT OCO).
 
@@ -407,11 +633,14 @@ class IntradayHunterStrategy(BaseTracker):
                 instrument_map=child_imap,
             )
             if result.success and not result.is_paper:
-                log.info("IH live entry placed",
+                log.info("IH LIVE entry filled",
                          trade_id=trade_id, index=index_label,
+                         exchange=exchange,
                          order_id=result.order_id,
-                         gtt_id=result.gtt_trigger_id,
-                         fill=result.actual_fill_price)
+                         gtt_trigger_id=result.gtt_trigger_id,
+                         fill_price=result.actual_fill_price,
+                         corrected_sl=result.corrected_sl or pos["sl_premium"],
+                         corrected_target=result.corrected_target or pos["target_premium"])
             elif not result.success:
                 log.error("IH live entry FAILED — position remains paper",
                           trade_id=trade_id, index=index_label,
@@ -443,6 +672,10 @@ class IntradayHunterStrategy(BaseTracker):
         now = datetime.now()
         results = []
 
+        # Phase 1: Mechanical checks — update premiums and exit where needed
+        positions_for_agent: list = []
+        current_premiums: Dict[int, float] = {}
+
         for pos in active:
             current = self._get_current_premium(pos, analysis)
             if current is None or current <= 0:
@@ -460,27 +693,6 @@ class IntradayHunterStrategy(BaseTracker):
             )
 
             exit_reason = self._check_exit_conditions(pos, current, now)
-
-            # Active monitoring via the Claude agent (throttled).
-            # Only ask the agent if no mechanical exit fired AND we haven't
-            # asked recently for this position.
-            if not exit_reason:
-                agent_decision = self._maybe_ask_agent_monitor(pos, current, analysis, now)
-                if agent_decision is not None:
-                    action = agent_decision.get("action")
-                    if action == "EXIT_NOW":
-                        exit_reason = "AGENT_EXIT"
-                    elif action == "TIGHTEN_SL":
-                        new_sl = float(agent_decision["new_sl_premium"])
-                        # Persist the new SL on the row so the next cycle's
-                        # mechanical SL check uses it.
-                        self.trade_repo.update_trade(
-                            self.table_name, pos["id"], sl_premium=new_sl)
-                        pos["sl_premium"] = new_sl
-                        log.info("IH agent tightened SL",
-                                 trade_id=pos["id"], new_sl=new_sl,
-                                 reasoning=agent_decision.get("reasoning", ""))
-
             if exit_reason:
                 pnl_rs = (current - entry) * pos["qty"]
                 pnl_pct = ((current - entry) / entry) * 100 if entry > 0 else 0
@@ -492,12 +704,82 @@ class IntradayHunterStrategy(BaseTracker):
                     "exit_reason": exit_reason,
                     "pnl_rs": pnl_rs,
                 })
+            else:
+                positions_for_agent.append(pos)
+                current_premiums[pos["id"]] = current
+
+        # Phase 2: Batched agent monitoring — single Claude call for all
+        # surviving positions (instead of 3 separate subprocess calls).
+        if positions_for_agent:
+            agent_decisions = self._batch_ask_agent_monitor(
+                positions_for_agent, current_premiums, analysis, now)
+            for pos in positions_for_agent:
+                decision = agent_decisions.get(pos["id"])
+                if decision is None:
+                    continue
+                action = decision.get("action")
+                current = current_premiums[pos["id"]]
+                entry = pos["entry_premium"]
+                if action == "EXIT_NOW":
+                    pnl_rs = (current - entry) * pos["qty"]
+                    pnl_pct = ((current - entry) / entry) * 100 if entry > 0 else 0
+                    self._resolve_position(pos, current, "AGENT_EXIT", pnl_pct, pnl_rs, now)
+                    self._agent_last_check.pop(pos["id"], None)
+                    results.append({
+                        "trade_id": pos["id"],
+                        "label": pos["index_label"],
+                        "exit_reason": "AGENT_EXIT",
+                        "pnl_rs": pnl_rs,
+                    })
+                elif action == "TIGHTEN_SL":
+                    old_sl = pos["sl_premium"]
+                    new_sl = float(decision["new_sl_premium"])
+                    self.trade_repo.update_trade(
+                        self.table_name, pos["id"], sl_premium=new_sl)
+                    pos["sl_premium"] = new_sl
+                    log.info("IH agent tightened SL",
+                             trade_id=pos["id"], index=pos["index_label"],
+                             old_sl=old_sl, new_sl=new_sl,
+                             reasoning=decision.get("reasoning", ""))
+
         return {"closed": results} if results else None
+
+    def _is_throttled(self, trade_id: int, now: datetime) -> bool:
+        """Check if this position's agent call is still in cooldown."""
+        last = self._agent_last_check.get(trade_id)
+        return last is not None and (now - last).total_seconds() < _cfg.AGENT_MONITOR_THROTTLE_SEC
+
+    def _batch_ask_agent_monitor(
+        self,
+        positions: list,
+        current_premiums: Dict[int, float],
+        analysis: dict,
+        now: datetime,
+    ) -> Dict[int, Optional[Dict]]:
+        """Single batched agent call for all positions. Respects throttle."""
+        agent = self.agent
+        if agent is None:
+            return {}
+
+        # Only include positions whose throttle has expired
+        due = [p for p in positions if not self._is_throttled(p["id"], now)]
+        if not due:
+            return {}
+
+        # Update throttle timestamps for all due positions
+        for p in due:
+            self._agent_last_check[p["id"]] = now
+
+        try:
+            return agent.monitor_positions_batch(due, current_premiums, analysis)
+        except Exception as e:
+            log.error("IH batch agent monitor exception", error=str(e))
+            return {}
 
     def _maybe_ask_agent_monitor(
         self, pos: dict, current: float, analysis: dict, now: datetime
     ) -> Optional[Dict]:
-        """Throttled call to agent.monitor_position.
+        """Throttled call to agent.monitor_position (single-position, for backtesting).
 
         Returns the agent decision dict (HOLD is dropped → returns None),
         or None if the agent is disabled / unavailable / throttled.
@@ -505,8 +787,7 @@ class IntradayHunterStrategy(BaseTracker):
         agent = self.agent
         if agent is None:
             return None
-        last = self._agent_last_check.get(pos["id"])
-        if last and (now - last).total_seconds() < _cfg.AGENT_MONITOR_THROTTLE_SEC:
+        if self._is_throttled(pos["id"], now):
             return None
         self._agent_last_check[pos["id"]] = now
         try:
@@ -545,6 +826,12 @@ class IntradayHunterStrategy(BaseTracker):
             profit_loss_pct=round(pnl_pct, 2),
             profit_loss_rs=round(pnl_rs, 2),
         )
+        # Unregister from ExitMonitor (prevents double-exit)
+        if self._exit_monitor is not None:
+            try:
+                self._exit_monitor.unregister_trade(pos["id"])
+            except Exception:
+                pass
         log.info(
             f"IH position {status}",
             trade_id=pos["id"],
@@ -609,22 +896,12 @@ class IntradayHunterStrategy(BaseTracker):
                     if ltp > 0:
                         return round(ltp, 2)
 
-        # ---- 3. Black-Scholes fallback ----
-        if label == "NIFTY":
-            spot = float(analysis.get("spot_price", 0) or 0)
-        elif label == "BANKNIFTY":
-            spot = float(analysis.get("banknifty_spot", 0) or 0)
-        elif label == "SENSEX":
-            spot = float(analysis.get("sensex_spot", 0) or 0)
-        else:
-            return None
-        if spot <= 0:
-            return None
-
-        vix = float(analysis.get("vix", 0) or 0)
-        iv = iv_for_index(label, vix, _cfg)
-        dte = days_to_next_expiry(datetime.now().date(), EXPIRY_DOW[label])
-        return round(model_premium(spot, strike, option_type, dte, iv, _cfg), 2)
+        # ---- 3. No real LTP available — skip this cycle ----
+        # BS fallback removed from live: estimates can be 35%+ off actual
+        # market (e.g. 195 vs 144 on 2026-04-10) which triggers false exits.
+        log.debug("No LTP for position, skipping",
+                  label=label, strike=strike, option_type=option_type)
+        return None
 
     # ------------------------------------------------------------------
     # BaseTracker required methods

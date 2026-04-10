@@ -167,6 +167,21 @@ class OIScheduler:
         except Exception as e:
             log.error("WS registration failed", tracker=strategy.tracker_type, error=str(e))
 
+    def _register_ih_trades_with_monitor(self, ih) -> None:
+        """Register all active IH positions with ExitMonitor (post-fill).
+
+        Unlike RR (single trade), IH has up to 3 positions per signal group.
+        Called AFTER create_trade returns so DB has corrected fill prices.
+        """
+        try:
+            active = ih._fetch_active_positions()
+            if not active:
+                return
+            for pos in active:
+                ih._register_with_exit_monitor(pos["id"], pos["index_label"], pos)
+        except Exception as e:
+            log.error("IH ExitMonitor batch registration failed", error=str(e))
+
     def _run_intraday_hunter_minute(self) -> None:
         """1-minute IntradayHunter cycle.
 
@@ -220,7 +235,9 @@ class OIScheduler:
             if ih.should_create(analysis):
                 ih_signal = ih.evaluate_signal(analysis)
                 if ih_signal:
-                    ih.create_trade(ih_signal, analysis, {})
+                    trade_id = ih.create_trade(ih_signal, analysis, {})
+                    if trade_id:
+                        self._register_ih_trades_with_monitor(ih)
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
@@ -244,6 +261,50 @@ class OIScheduler:
             if hasattr(ts, "date") and ts.date() == today:
                 out.append(c)
         return out
+
+    def _rotate_ih_index_strikes(self, index_label: str, spacing: int) -> None:
+        """Pre-emptively subscribe to ATM±spacing option strikes for an IH index.
+
+        Called from the 3-min OI cycle. The result is that BN and SX option
+        premiums are continuously available in CandleBuilder via real
+        WebSocket ticks — so when an IH trade opens, the entry premium AND
+        the monitoring premium use real LTP instead of Black-Scholes.
+
+        Pulls the latest spot from CandleBuilder (no extra REST call) and
+        rotates 3 CE + 3 PE strikes around it.
+        """
+        try:
+            cb = self.candle_builder
+            candles = cb.get_candles(index_label, "1min") or []
+            if not candles:
+                log.debug(f"{index_label} option strike rotation skipped — no candles yet")
+                return
+            spot = float(candles[-1]["close"])
+            if spot <= 0:
+                return
+            atm = int(round(spot / spacing) * spacing)
+
+            child_imap = self._multi_imap.get(index_label) if self._multi_imap else None
+            if child_imap is None:
+                log.warning(f"{index_label} option strike rotation: no instrument_map")
+                return
+            expiry = child_imap.get_current_expiry()
+            if not expiry:
+                log.warning(f"{index_label} option strike rotation: no expiry")
+                return
+
+            ce_strikes = [atm - spacing, atm, atm + spacing]
+            pe_strikes = [atm - spacing, atm, atm + spacing]
+            cb.set_option_strikes(
+                ce_strikes=ce_strikes,
+                pe_strikes=pe_strikes,
+                expiry=expiry,
+                spot=spot,
+                instrument_map=child_imap,
+                index_label=index_label,
+            )
+        except Exception as e:
+            log.error(f"{index_label} option strike rotation failed", error=str(e))
 
     def _attach_ih_inputs(self, analysis: dict) -> None:
         """Populate analysis with the candle/spot fields IntradayHunter needs.
@@ -470,9 +531,19 @@ class OIScheduler:
                     expiry=current_expiry,
                     spot=spot_price,
                     instrument_map=self.kite_fetcher._instrument_map,
+                    index_label="NIFTY",
                 )
             except Exception as e:
                 log.error("CandleBuilder strike rotation failed", error=str(e))
+
+            # [V1] Rotate BANKNIFTY + SENSEX option strikes for IH real LTP.
+            # Subscribes ATM±100 (3 CE + 3 PE per index = 6 strikes per index).
+            # This means IH no longer has to fall back to Black-Scholes for
+            # entry pricing or monitoring on BN/SX positions — the actual
+            # market premium is in the CandleBuilder buffer at trade time.
+            if self._ih_cfg.ENABLED and self._multi_imap is not None:
+                self._rotate_ih_index_strikes("BANKNIFTY", spacing=100)
+                self._rotate_ih_index_strikes("SENSEX", spacing=100)
 
             # Get price history for momentum calculation
             price_history = get_recent_price_trend(lookback_minutes=9)
@@ -875,6 +946,10 @@ class OIScheduler:
 
             # 4. Pick up any active trades from the DB.
             self.exit_monitor.scan_existing_trades(self.strategies)
+            # IH multi-position: register via its own method (uses multi_imap)
+            ih = self.strategies.get("intraday_hunter")
+            if ih:
+                self._register_ih_trades_with_monitor(ih)
 
             # 5. Start the WebSocket (after consumer state is warm).
             access_token = self.kite_fetcher._kite.access_token if hasattr(

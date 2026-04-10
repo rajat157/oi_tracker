@@ -273,6 +273,8 @@ class ExitMonitor(TickConsumer):
 
         count = 0
         for name, strategy in (strategies or {}).items():
+            if strategy.tracker_type == "intraday_hunter":
+                continue  # IH multi-position handled by scheduler
             try:
                 setup = strategy.get_active()
                 if not setup:

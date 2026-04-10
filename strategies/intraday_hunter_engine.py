@@ -143,6 +143,77 @@ def compute_current_move_pct(today: List[Candle], minute_idx: int) -> float:
     return (today[cur_idx].close - today[0].open) / today[0].open * 100
 
 
+# ── E0: gap-rejection-recovery (the trader's favorite gap-day pattern) ─
+
+def detect_e0(
+    minute_idx: int,
+    today: List[Candle],
+    yesterday: Optional[List[Candle]],
+    cfg: IntradayHunterConfig,
+) -> Optional[str]:
+    """E0: gap-rejection-recovery.
+
+    Detects:
+      1. Yesterday was directional (|move| >= E0_MIN_YDAY_PCT)
+      2. Today's first candle moves against yesterday's direction
+      3. Subsequent candles recover at least E0_MIN_RECOVERY_PCT toward
+         yesterday's direction
+
+    Fires in YESTERDAY's direction (= counter to the initial rejection).
+    Only fires between E0_ENTRY_START and E0_MAX_MINUTE (early window),
+    because the setup is transient — by 09:35 the recovery has usually
+    completed and the move is extended.
+
+    Backtest provenance: +Rs 11,918 over 2.3 years (V1 default config).
+    Mirrors scripts/backtest_intraday_hunter.detect_e0.
+    """
+    if not cfg.ENABLE_E0 or not yesterday or not today:
+        return None
+    if minute_idx < 2 or minute_idx > cfg.E0_MAX_MINUTE:
+        return None
+
+    # Must be inside the E0-specific entry window
+    if minute_idx >= len(today):
+        return None
+    now = today[minute_idx].ts.time()
+    if now < cfg.E0_ENTRY_START:
+        return None
+
+    # 1. Yesterday must be directional
+    y_open = yesterday[0].open
+    y_close = yesterday[-1].close
+    if y_open <= 0:
+        return None
+    y_move_pct = (y_close - y_open) / y_open * 100
+    if abs(y_move_pct) < cfg.E0_MIN_YDAY_PCT:
+        return None
+    y_bullish = y_move_pct > 0
+
+    # 2. First-candle move against yesterday's direction
+    first = today[0]
+    if first.open <= 0:
+        return None
+    first_move_pct = (first.close - first.open) / first.open * 100
+    if y_bullish and first_move_pct > -cfg.E0_MIN_INITIAL_PCT:
+        return None  # yesterday bullish but first candle not red enough
+    if not y_bullish and first_move_pct < cfg.E0_MIN_INITIAL_PCT:
+        return None  # yesterday bearish but first candle not green enough
+
+    # 3. Recovery: current candle must have moved back in yday direction
+    cur = today[minute_idx]
+    if first.close <= 0:
+        return None
+    recovery_pct = (cur.close - first.close) / first.close * 100
+    if y_bullish:
+        if recovery_pct < cfg.E0_MIN_RECOVERY_PCT:
+            return None
+        return "BUY"
+    else:
+        if recovery_pct > -cfg.E0_MIN_RECOVERY_PCT:
+            return None
+        return "SELL"
+
+
 # ── E1: rejection after directional run ─────────────────────────────────
 
 def detect_e1(minute_idx: int, candles: List[Candle], cfg: IntradayHunterConfig) -> Optional[str]:
@@ -384,13 +455,36 @@ def compute_day_bias_score(
         if k_idx > 0:
             k_move = (kotak_today[k_idx].close - kotak_today[0].open) / kotak_today[0].open * 100
 
-    score = (
-        0.20 * clip(y_move)
-      + 0.30 * clip(gap)
-      + 0.30 * clip(intraday)
-      + 0.10 * clip(h_move)
-      + 0.10 * clip(k_move)
-    )
+    # [V2] Multi-day regime: blend in yesterday's close-position-within-range.
+    # Close near high (>= 80%) → bullish (+1); close near low (<= 20%) → -1.
+    # Adds an extra signal beyond just yesterday's net move — captures
+    # "strong directional close" vs "doji/chop close".
+    if cfg.ENABLE_MULTI_DAY_REGIME:
+        y_high = max(c.high for c in yesterday)
+        y_low = min(c.low for c in yesterday)
+        y_range = y_high - y_low
+        if y_range > 0:
+            pos = (y_close - y_low) / y_range  # 0.0 to 1.0
+            y_close_pos = (pos - 0.5) * 2       # -1.0 to +1.0
+        else:
+            y_close_pos = 0.0
+        # Rebalanced weights: pull 0.05 from y_move + 0.05 from intraday for close_pos
+        score = (
+            0.15 * clip(y_move)
+          + 0.10 * y_close_pos              # NEW V2 input
+          + 0.25 * clip(gap)
+          + 0.30 * clip(intraday)
+          + 0.10 * clip(h_move)
+          + 0.10 * clip(k_move)
+        )
+    else:
+        score = (
+            0.20 * clip(y_move)
+          + 0.30 * clip(gap)
+          + 0.30 * clip(intraday)
+          + 0.10 * clip(h_move)
+          + 0.10 * clip(k_move)
+        )
     return max(-1.0, min(1.0, score))
 
 
@@ -468,8 +562,13 @@ class IntradayHunterEngine:
         e2_side = detect_e2(minute_idx, nifty_today, nifty_yesterday, cfg)
         e3_side = detect_e3(minute_idx, nifty_today, nifty_yesterday, cfg)
 
-        # Build candidate list (E2 then E3 then E1) — same order as backtester
+        # [V1] Stage 0: E0 (gap-rejection-recovery, early window 09:17-09:25)
+        e0_side = detect_e0(minute_idx, nifty_today, nifty_yesterday, cfg)
+
+        # Build candidate list (E0 then E2 then E3 then E1)
         candidates: List[Tuple[str, str]] = []  # (trigger, direction)
+        if e0_side:
+            candidates.append(("E0", e0_side))
         if e2_side:
             candidates.append(("E2", e2_side))
         if e3_side:
@@ -520,6 +619,8 @@ class IntradayHunterEngine:
         sx_spot: float,
         today: date,
         vix_pct: Optional[float],
+        candle_builder: Optional[Any] = None,
+        live_mode: bool = False,
     ) -> List[dict]:
         """Compute the 3-position set for a confirmed signal.
 
@@ -528,6 +629,12 @@ class IntradayHunterEngine:
             entry_premium, sl_premium, target_premium, iv
 
         If signal.skip_bn is True, the BANKNIFTY entry is omitted (returns 2).
+
+        candle_builder: optional CandleBuilder. When provided, the entry
+            premium is taken from the latest 1-min close of the actual
+            option strike (real LTP) instead of Black-Scholes. Falls back
+            to BS if the strike isn't subscribed yet (e.g. SX on a fresh
+            startup before the 3-min rotation).
         """
         cfg = self.cfg
         otype = "CE" if signal.direction == "BUY" else "PE"
@@ -544,21 +651,48 @@ class IntradayHunterEngine:
                 continue
             if spot <= 0 or qty <= 0:
                 continue
-            strike = atm_strike(spot, STRIKE_SPACING[label])
+            strike = int(atm_strike(spot, STRIKE_SPACING[label]))
             dte = days_to_next_expiry(today, EXPIRY_DOW[label])
             iv = iv_for_index(label, vix_pct, cfg)
-            premium = model_premium(spot, strike, otype, dte, iv, cfg)
+
+            # Real LTP path: try CandleBuilder for the actual option strike.
+            # Pre-emptive rotation in scheduler subscribes ATM±1 strikes for
+            # NIFTY/BN/SX every 3 minutes, so the buffer normally has the
+            # current ATM strike's LTP available.
+            premium = 0.0
+            premium_source = "BS"
+            if candle_builder is not None:
+                try:
+                    strike_label = f"{label}_{strike}_{otype}"
+                    cs = candle_builder.get_candles(strike_label, "1min")
+                    if cs:
+                        last_close = float(cs[-1].get("close", 0) or 0)
+                        if last_close > 0:
+                            premium = last_close
+                            premium_source = "LTP"
+                except Exception:
+                    pass
+
+            # Fallback: Black-Scholes (backtester only).
             if premium <= 0:
-                continue
+                if live_mode:
+                    log.warning("IH: no real LTP, skipping position",
+                                index=label, strike=strike, type=otype)
+                    continue
+                premium = model_premium(spot, strike, otype, dte, iv, cfg)
+                if premium <= 0:
+                    continue
+
             positions.append({
                 "index_label": label,
                 "direction": signal.direction,
-                "strike": int(strike),
+                "strike": strike,
                 "option_type": otype,
                 "qty": qty,
                 "entry_premium": round(premium, 2),
                 "sl_premium": round(premium * (1 - cfg.SL_PCT), 2),
                 "target_premium": round(premium * (1 + cfg.TGT_PCT), 2),
                 "iv": round(iv, 4),
+                "premium_source": premium_source,
             })
         return positions

@@ -309,27 +309,17 @@ class CandleBuilder(TickConsumer):
             for tok in stale_tokens:
                 if tok not in self._pending_removal:
                     self._pending_removal[tok] = now
-            # Actually drop any that have exceeded the grace period
-            to_drop = [
-                tok for tok, since in self._pending_removal.items()
-                if (now - since).total_seconds() >= STRIKE_GRACE_MINUTES * 60
-            ]
-
-        for tok in to_drop:
-            # Only drop if it's actually for this index — guard against
-            # cross-index drops via the shared pending_removal dict.
-            with self._lock:
-                meta = self._instruments.get(tok, {})
-            if meta.get("index_label") != index_label:
-                continue
-            self.unregister_instrument(tok)
+            # Retain all rotated-out strikes until EOD — their candle
+            # data is valuable for replay and future backtesting.
+            # Old strikes stay subscribed via TickHub and keep building
+            # candles; they just aren't in the "desired" set anymore.
+            retained = len(self._pending_removal)
 
         log.info("Option strikes rotated",
                  index=index_label,
                  new=len(new_tokens),
-                 stale_pending=len(stale_tokens) - len(to_drop),
-                 dropped=len(to_drop),
-                 total_option_tokens=len(desired_tokens))
+                 retained=retained,
+                 total_option_tokens=len(desired_tokens) + retained)
 
     def register_option_strike(
         self,

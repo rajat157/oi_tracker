@@ -229,7 +229,8 @@ class TestStrikeRotation:
         # TickHub should have been asked to subscribe each one
         assert fake_hub.request_subscription.call_count >= 6
 
-    def test_grace_period_before_actual_drop(self):
+    def test_rotated_strikes_retained_until_eod(self):
+        """Rotated-out strikes stay subscribed (no drop) for replay data."""
         fake_inst_map = MagicMock()
         fake_inst_map.get_option_instrument.side_effect = lambda strike, ot, exp: {
             "instrument_token": 10000 + strike + (0 if ot == "CE" else 1),
@@ -256,19 +257,13 @@ class TestStrikeRotation:
             spot=22900,
             instrument_map=fake_inst_map,
         )
-        # Old strikes should still be in _instruments (grace period) + new ones added
+        # Old strikes should still be in _instruments (retained) + new ones added
         option_count = sum(
             1 for m in cb._instruments.values() if m["instrument_type"] == "option"
         )
-        assert option_count == 12  # 6 old (grace) + 6 new
+        assert option_count == 12  # 6 old (retained) + 6 new
 
-        # Force grace-period to expire: fake the pending_removal timestamps
-        from datetime import datetime, timedelta
-        long_ago = datetime.now() - timedelta(minutes=STRIKE_GRACE_MINUTES + 1)
-        for tok in list(cb._pending_removal.keys()):
-            cb._pending_removal[tok] = long_ago
-
-        # Round 3: same strikes as round 2 — this should now drop the pending ones
+        # Round 3: same strikes as round 2 — old ones should STILL be retained
         cb.set_option_strikes(
             ce_strikes=[22800, 22850, 22900],
             pe_strikes=[22950, 23000, 23050],
@@ -279,7 +274,7 @@ class TestStrikeRotation:
         option_count = sum(
             1 for m in cb._instruments.values() if m["instrument_type"] == "option"
         )
-        assert option_count == 6  # only the new ones remain
+        assert option_count == 12  # all 12 still subscribed
 
 
 class TestLabelLookup:

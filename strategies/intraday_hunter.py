@@ -363,6 +363,7 @@ class IntradayHunterStrategy(BaseTracker):
             label = pos["index_label"]
             wants_live = _live.ENABLED and _cfg.is_index_live(label)
             is_paper_int = 0 if wants_live else 1
+            pos["is_paper"] = bool(is_paper_int)
 
             tid = self.trade_repo.insert_trade(
                 self.table_name,
@@ -545,7 +546,7 @@ class IntradayHunterStrategy(BaseTracker):
 
         # Fetch the row to compute rupee P&L
         row = self.trade_repo._fetch_one(
-            f"SELECT entry_premium, qty, signal_group_id, index_label "
+            f"SELECT entry_premium, qty, signal_group_id, index_label, is_paper "
             f"FROM {self.table_name} WHERE id = ?",
             (trade_id,),
         )
@@ -581,8 +582,16 @@ class IntradayHunterStrategy(BaseTracker):
             pnl_pct=f"{pnl_pct_real:+.2f}%",
         )
 
-        # Publish event so AlertBroker → Telegram fires
-        event_data = {
+        # Build IH-specific alert (override generic scheduler message)
+        pos_for_alert = {
+            "index_label": row["index_label"],
+            "entry_premium": entry,
+            "is_paper": bool(row.get("is_paper", 1)),
+        }
+        ih_alert = self._format_position_exit_alert(
+            pos_for_alert, exit_premium, reason, pnl_pct_real, pnl_rs)
+
+        self._publish(EventType.TRADE_EXITED, {
             "trade_id": trade_id,
             "tracker_type": self.tracker_type,
             "signal_group_id": row["signal_group_id"],
@@ -591,10 +600,8 @@ class IntradayHunterStrategy(BaseTracker):
             "pnl": pnl_rs,
             "pnl_pct": pnl_pct_real,
             "reason": reason,
-        }
-        if alert_message:
-            event_data["alert_message"] = alert_message
-        self._publish(EventType.TRADE_EXITED, event_data)
+            "alert_message": ih_alert,
+        })
 
         # Cancel any associated GTT/exit orders for this trade_id
         if self.order_executor is not None:
@@ -700,6 +707,7 @@ class IntradayHunterStrategy(BaseTracker):
                 self._agent_last_check.pop(pos["id"], None)
                 results.append({
                     "trade_id": pos["id"],
+                    "signal_group_id": pos.get("signal_group_id"),
                     "label": pos["index_label"],
                     "exit_reason": exit_reason,
                     "pnl_rs": pnl_rs,
@@ -727,6 +735,7 @@ class IntradayHunterStrategy(BaseTracker):
                     self._agent_last_check.pop(pos["id"], None)
                     results.append({
                         "trade_id": pos["id"],
+                        "signal_group_id": pos.get("signal_group_id"),
                         "label": pos["index_label"],
                         "exit_reason": "AGENT_EXIT",
                         "pnl_rs": pnl_rs,
@@ -741,6 +750,19 @@ class IntradayHunterStrategy(BaseTracker):
                              trade_id=pos["id"], index=pos["index_label"],
                              old_sl=old_sl, new_sl=new_sl,
                              reasoning=decision.get("reasoning", ""))
+
+        # If any positions closed, check if the entire group is now resolved
+        # and send a group summary alert.
+        if results:
+            closed_groups = {r["signal_group_id"] for r in results
+                             if r.get("signal_group_id")}
+            for gid in closed_groups:
+                summary = self._format_group_exit_alert(gid)
+                if summary:
+                    self._publish(EventType.TRADE_EXITED, {
+                        "signal_group_id": gid,
+                        "alert_message": summary,
+                    })
 
         return {"closed": results} if results else None
 
@@ -840,6 +862,7 @@ class IntradayHunterStrategy(BaseTracker):
             pnl_rs=f"{pnl_rs:+.0f}",
             pnl_pct=f"{pnl_pct:+.2f}%",
         )
+        alert = self._format_position_exit_alert(pos, current, reason, pnl_pct, pnl_rs)
         self._publish(EventType.TRADE_EXITED, {
             "trade_id": pos["id"],
             "signal_group_id": pos.get("signal_group_id"),
@@ -848,6 +871,7 @@ class IntradayHunterStrategy(BaseTracker):
             "pnl": pnl_rs,
             "pnl_pct": pnl_pct,
             "reason": reason,
+            "alert_message": alert,
         })
 
     def _get_current_premium(self, pos: dict, analysis: dict) -> Optional[float]:
@@ -989,21 +1013,86 @@ class IntradayHunterStrategy(BaseTracker):
 
     @staticmethod
     def _format_group_alert(group_id: str, sig, positions: List[dict], vix: float) -> str:
-        emoji = "🟢" if sig.direction == "BUY" else "🔴"
+        emoji = "\U0001f7e2" if sig.direction == "BUY" else "\U0001f534"
         lines = [
             f"<b>{emoji} INTRADAY HUNTER: {sig.direction}</b>",
-            f"<b>Trigger:</b> <code>{sig.trigger}</code> | "
-            f"<b>Bias score:</b> <code>{sig.day_bias_score:+.2f}</code>",
-            f"<b>VIX:</b> {vix:.1f} | <b>Group:</b> <code>{group_id}</code>",
+            f"<b>Trigger:</b> <code>{sig.trigger}</code>  "
+            f"<b>Bias:</b> <code>{sig.day_bias_score:+.2f}</code>  "
+            f"<b>VIX:</b> {vix:.1f}",
             "",
         ]
-        for p in positions:
-            paper_tag = " <i>(paper)</i>"  # always paper for now
+        for i, p in enumerate(positions):
+            tag = "LIVE" if not p.get("is_paper", True) else "PAPER"
+            prefix = "\u250c\u2500" if i == 0 else ("\u2514\u2500" if i == len(positions) - 1 else "\u251c\u2500")
+            cont = "\u2502 " if i < len(positions) - 1 else "  "
             lines.append(
-                f"<b>{p['index_label']}:</b> {p['strike']} {p['option_type']}"
-                f"  qty={p['qty']}  entry=Rs {p['entry_premium']:.2f}  "
-                f"sl=Rs {p['sl_premium']:.2f}  tgt=Rs {p['target_premium']:.2f}{paper_tag}"
+                f"{prefix} <b>{p['index_label']}</b> {p['strike']} {p['option_type']}"
+                f" \u00d7 {p['qty']} <code>[{tag}]</code>"
+            )
+            lines.append(
+                f"{cont} Entry \u20b9{p['entry_premium']:.2f}  "
+                f"SL \u20b9{p['sl_premium']:.2f}  "
+                f"Tgt \u20b9{p['target_premium']:.2f}"
             )
         lines.append("")
-        lines.append(f"<i>{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>")
+        lines.append(f"<i>{datetime.now().strftime('%H:%M:%S')} | Group {group_id}</i>")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_position_exit_alert(pos: dict, exit_premium: float,
+                                     reason: str, pnl_pct: float, pnl_rs: float) -> str:
+        """Format a single-position exit alert."""
+        status = "WON" if pnl_rs > 0 else "LOST"
+        emoji = "\u2705" if pnl_rs > 0 else "\u274c"
+        tag = "LIVE" if not pos.get("is_paper", True) else "PAPER"
+        return (
+            f"<b>{emoji} IH {pos['index_label']} {status}</b> ({reason})\n"
+            f"Entry \u20b9{pos['entry_premium']:.2f} \u2192 "
+            f"Exit \u20b9{exit_premium:.2f}\n"
+            f"P&L: {pnl_pct:+.1f}%  Rs {pnl_rs:+,.0f} <code>[{tag}]</code>"
+        )
+
+    def _format_group_exit_alert(self, signal_group_id: str) -> Optional[str]:
+        """Format a summary exit alert for the entire signal group.
+
+        Returns None if the group still has active positions.
+        """
+        if self.trade_repo is None:
+            return None
+        rows = self.trade_repo._fetch_all(
+            f"SELECT * FROM {self.table_name} WHERE signal_group_id = ?",
+            (signal_group_id,),
+        )
+        if not rows:
+            return None
+        # Only send summary when all positions in the group are resolved
+        if any(r["status"] == "ACTIVE" for r in rows):
+            return None
+
+        total_rs = sum(float(r.get("profit_loss_rs") or 0) for r in rows)
+        emoji = "\u2705" if total_rs > 0 else "\u274c"
+        lines = [f"<b>{emoji} INTRADAY HUNTER: CLOSED</b>", ""]
+
+        for i, r in enumerate(rows):
+            status = r["status"]
+            tag = "LIVE" if not r.get("is_paper", 1) else "PAPER"
+            pnl_pct = float(r.get("profit_loss_pct") or 0)
+            pnl_rs = float(r.get("profit_loss_rs") or 0)
+            prefix = "\u250c\u2500" if i == 0 else ("\u2514\u2500" if i == len(rows) - 1 else "\u251c\u2500")
+            cont = "\u2502 " if i < len(rows) - 1 else "  "
+            status_emoji = "\u2705" if pnl_rs > 0 else "\u274c"
+            lines.append(
+                f"{prefix} <b>{r['index_label']}</b> {r['strike']} {r['option_type']}"
+                f" <code>[{tag}]</code> \u2014 <b>{status_emoji} {status}</b>"
+            )
+            lines.append(
+                f"{cont} Entry \u20b9{r['entry_premium']:.2f} \u2192 "
+                f"Exit \u20b9{float(r.get('exit_premium') or 0):.2f}"
+                f" ({r.get('exit_reason', '')})"
+            )
+            lines.append(f"{cont} P&L: <b>{pnl_pct:+.1f}%</b>  Rs <b>{pnl_rs:+,.0f}</b>")
+
+        lines.append("")
+        lines.append(f"<b>Total: Rs {total_rs:+,.0f}</b>")
+        lines.append(f"<i>{datetime.now().strftime('%H:%M:%S')}</i>")
         return "\n".join(lines)

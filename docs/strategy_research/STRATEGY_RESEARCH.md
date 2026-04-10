@@ -142,10 +142,11 @@ Nifty:  [same template]
 
 Need 2 of 3 "Quick" to enter immediately. Otherwise wait or skip.
 
-**Phase C — Entry triggers (4 setups seen across 17 live trades)**
+**Phase C — Entry triggers (5 setups seen across 17+ live trades)**
 
 | # | Trigger | Direction | Logic |
 |---|---|---|---|
+| **E0** | [NEW v6] Gap-rejection-recovery: yesterday directional, first 1-2 candles move sharply against prior close, then 2-3 recovery candles back toward yesterday's direction | OPPOSITE to first candle (= yesterday's direction) | "Buyers flushed by gap, now recovering" — trader's highest-conviction gap-day setup. Entry window 09:17-09:25, before TIME_START. Observed in 2026-04-09 live video. |
 | **E1** | Small retracement after directional momentum, market holds prior level | WITH momentum | Big retracement = others enter; small = only us → operator's hand still in control |
 | **E2** | Gap in opposite direction to trend, market doesn't break previous swing low/high | AGAINST gap | "Trap" — fresh sellers/buyers from gap will be squeezed |
 | **E3** | Round-number breakdown without recovery, then retracement up to round number | WITH breakdown | Sellers below RN won't cut until level recrosses, retracement fails |
@@ -412,6 +413,7 @@ The answer determines the next direction. If you can't answer, don't trade.
 | v3 final | + E3 (slow drift) + R28 fix + day-bias score | 19/23 | 1.16 | 45.9% | 82,192 | 234,275 |
 | v4 (walk-forward optimal) | day_bias_block 0.60, constituent_min 0.15, cooldown 60 | 19/23 | 1.19 | 46.7% | 82,192 | 266,875 |
 | **v5 FINAL** | **+ R29 internal-split (BN-only skip on HDFC↔KOTAK divergence)** | **19/23** | **1.25** | **47.1%** | **58,412** | **261,654** |
+| **v6 FINAL** | **V1 (E0) + V2 (multi-day regime) + V5 (NO_TRADE inertia)** | **19/23** | **1.29** | **47.8%** | **58,412** | **300,158** |
 
 **The breakthrough finding:**
 > Just changing `entry_start` from 09:30 to 09:35 jumped alignment from 73.9% to 82.6%.
@@ -451,7 +453,30 @@ The answer determines the next direction. If you can't answer, don't trade.
 | `max_trades_per_day` | 3 | |
 | `daily_loss_limit` | Rs 3,000 | scaled for 1 lot |
 
-### 6.4 Things that were tried and REJECTED
+### 6.4 v6 additions (from 2026-04-09 replay analysis)
+
+Variant backtest over 2.3 years (563 days) comparing 5 proposed improvements
+against the v5 baseline. Full report archived from `2026-04-09_replay/VARIANT_REPORT.md`.
+
+**Accepted:**
+
+| Variant | Description | Δ PnL | Decision |
+|---|---|---|---|
+| V1 — E0 detector | Gap-rejection-recovery trigger, entry 09:17-09:25, 0.10% min recovery | +Rs 11,918 | IMPLEMENT |
+| V2 — Multi-day regime | Yesterday's close-position-within-range as day_bias input | +Rs 7,030 | IMPLEMENT |
+| V5 — NO_TRADE inertia | 5-min cooldown per direction after agent rejection | +Rs 7,485 | IMPLEMENT |
+
+**Rejected:**
+
+| Variant | Description | Δ PnL | Decision |
+|---|---|---|---|
+| V3 — Tick-level SL in backtest | Intra-candle SL check via BS model | -Rs 25,707 | REJECT (BS false-positives; real fix is ExitMonitor in live layer) |
+| V4a — Expiry skip | Skip expiring index on its expiry day | -Rs 76,462 | REJECT |
+| V4b — Expiry tight | 15% SL / 30% target on expiry days | -Rs 43,669 | REJECT |
+
+**Combined V1+V2+V5 vs baseline:** +Rs 38,581 (+14.8%), PF 1.29 (+0.04), 7 more wins, 10 fewer losses, no alignment regression.
+
+### 6.5 Things that were tried and REJECTED
 
 - **Trend-conflict filter (R33)** — too strict, killed alignment
 - **Opening-zone filter (R34)** — no measurable benefit
@@ -512,7 +537,7 @@ tests/
 └── test_intraday_hunter_runtime.py                   # 24 tests
 ```
 
-**Test count: 488 tests passing** across the full suite.
+**Test count: 518 tests passing** across the full suite.
 
 ### 7.2 Runtime architecture
 
@@ -544,9 +569,10 @@ tests/
    - If agent agrees, returns position set (2-3 positions); strategy creates DB rows + places real broker orders for indices in `IH_LIVE_INDICES`
 
 6. **Position monitoring** (`IntradayHunterStrategy.check_and_update`):
-   - Per active position: re-prices via `_get_current_premium()` priority chain — CandleBuilder LTP > option chain LTP > Black-Scholes
+   - Per active position: re-prices via `_get_current_premium()` priority chain — CandleBuilder LTP > option chain LTP (BS fallback removed from live in v6)
    - Mechanical exits: SL/TGT/12:30 TIME_EXIT/15:15 EOD_FORCE
-   - Agent monitor (throttled to once per 180s per position): HOLD / TIGHTEN_SL / EXIT_NOW
+   - **Tick-level SL/TGT via ExitMonitor** — registered AFTER live order fills (corrected fill prices, not BS estimates)
+   - **Batched agent monitoring** — single Claude subprocess call for all active positions (not 3 sequential calls), throttled to once per 180s: HOLD / TIGHTEN_SL / EXIT_NOW
 
 ### 7.3 Configuration
 
@@ -611,7 +637,7 @@ CREATE TABLE ih_trades (
 
 2. **R29 internal-split** — when HDFC and KOTAK strongly disagree (|h - k| ≥ 0.30%), the BN component is skipped but NF + SX still trade.
 
-3. **Black-Scholes pricing fallback** — same model as backtester. CandleBuilder real LTP is used when available (lazy-subscribed when a position opens).
+3. **Real LTP only in live** — BS fallback removed from live path (v6). CandleBuilder real LTP is the sole pricing source. BS was 35% off on 2026-04-10 (195 vs 144), causing a race condition with ExitMonitor. BS remains available for backtesting via `live_mode=False`.
 
 4. **Default to paper** — `is_paper=1` until BOTH live gates pass.
 
@@ -733,6 +759,11 @@ The total disk usage of the original research artifacts was **~1.3 GB** (mostly 
 - `RSwWcMYWkf4` — Make Money in Option Trading
 - `jPuXxt5bUTc` — Opening and Closing Prices (R34 opening zone rule)
 
+### Post-research videos (used for live replay validation, not backtest scoring)
+
+- `ebDbCMsoV0o` — analysis (08 APR 2026) — pre-market plan for 09 APR
+- `JbnJUPwS_bs` — live trade (09 APR 2026) — gap-rejection-recovery BUY, PROFIT on all 3 indices. Led to E0 trigger discovery and v6 variant analysis.
+
 ### 23 documented days for backtest validation
 
 The backtester scores against these 23 days where we have ground truth from the videos:
@@ -793,6 +824,21 @@ docs/strategy_research/
 ### What was kept
 
 - **This file** — the consolidated strategy research reference.
+
+### Second cleanup (2026-04-10)
+
+```
+docs/strategy_research/2026-04-09_replay/   (deleted)
+├── analysis_ebDbCMsoV0o.mp4 + .hi.vtt + .info.json + transcript
+├── live_JbnJUPwS_bs.mp4 + .hi.vtt + .info.json + transcript
+├── frames/ (65 frames) + grids/ (17 grids)
+├── agent_3day_run.txt (3-day agent backtest output)
+├── agent_backtest_output.txt
+├── REPLAY_ANALYSIS.md → findings folded into §2 (E0 trigger) + §6.4 (variant results)
+└── VARIANT_REPORT.md → findings folded into §6.4
+```
+
+**What was preserved:** E0 trigger description (§2 Phase C), variant backtest results (§6.4), April 9 video IDs (§9), architecture updates (§7). Everything else was intermediate analysis artifacts.
 
 ### What lives elsewhere in the repo
 

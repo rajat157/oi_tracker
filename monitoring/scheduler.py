@@ -870,21 +870,6 @@ class OIScheduler:
             log.info("IntradayHunter 1-min job scheduled",
                      first_run=ih_start.strftime("%H:%M:%S"))
 
-        # Review reminder for display-only features (March 18, 2026)
-        from apscheduler.triggers.date import DateTrigger
-        review_date = datetime(2026, 3, 18, 10, 0, 0)
-        self.scheduler.add_job(
-            self._send_review_reminder,
-            trigger=DateTrigger(run_date=review_date),
-            id="review_reminder",
-            name="Review Display Features Reminder",
-            replace_existing=True
-        )
-
-        # Startup check: if past review date and reminder not sent, send now
-        if datetime.now() >= review_date:
-            self._send_review_reminder()
-
         # Start scheduler
         self.scheduler.start()
         self.is_running = True
@@ -1028,26 +1013,6 @@ class OIScheduler:
     def _check_daily_learning_update(self):
         """Daily learning update - self-learner removed, now a no-op."""
         pass
-
-    def _send_review_reminder(self):
-        """Send Telegram reminder to review display-only features."""
-        from alerts import send_telegram
-        message = (
-            "<b>📊 OI Analyzer Review Reminder</b>\n\n"
-            "2 weeks since display-only features were added.\n"
-            "Time to review their usefulness:\n\n"
-            "• <b>Primary S/R</b> — Are absolute OI support/resistance levels accurate?\n"
-            "• <b>PCR Trend</b> — Does rising/falling PCR correlate with moves?\n"
-            "• <b>Max Pain Drift</b> — Is drift direction useful for EOD prediction?\n"
-            "• <b>2-Candle Confirmation</b> — Does confirmed verdict improve win rate?\n"
-            "• <b>OI Flow Classification</b> — Does writing vs buying distinction help?\n\n"
-            "Check <code>/api/latest</code> for all new fields."
-        )
-        try:
-            send_telegram(message)
-            log.info("Review reminder sent")
-        except Exception as e:
-            log.error("Failed to send review reminder", error=str(e))
 
     def _broadcast_live_pnl(self):
         """Emit lightweight P&L update from WebSocket LTP cache every 5s."""

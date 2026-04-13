@@ -247,19 +247,25 @@ class OIScheduler:
 
     @staticmethod
     def _today_only(candles: list) -> list:
-        """Filter a CandleBuilder buffer to *today's session only*.
+        """Filter a CandleBuilder buffer to *today's market session only*.
 
         CandleBuilder buffers hold the last 240 minutes (4h), which spans
         yesterday's tail in the morning. The IH engine treats its candle
         list positionally — `today[0].open` MUST be today's first 1-min
         candle (i.e. the 09:15 bar), not yesterday's 11:35.
+
+        Also strips pre-market candles (before 09:15) which carry stale
+        prices from the previous close or pre-open auction and corrupt
+        gap/signal detection.
         """
         today = datetime.now().date()
+        market_open = time(9, 15)
         out = []
         for c in candles or []:
             ts = c.get("date") or c.get("timestamp")
             if hasattr(ts, "date") and ts.date() == today:
-                out.append(c)
+                if hasattr(ts, "time") and ts.time() >= market_open:
+                    out.append(c)
         return out
 
     def _rotate_ih_index_strikes(self, index_label: str, spacing: int) -> None:

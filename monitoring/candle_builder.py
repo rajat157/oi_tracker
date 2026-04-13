@@ -456,9 +456,13 @@ class CandleBuilder(TickConsumer):
                 if buf is None:
                     return
                 existing_ts = {_strip_tz(c["date"]) for c in buf}
+                _mkt_open = time_cls(9, 15)
                 for row in candles:
                     dt = _strip_tz(row["date"])
                     if dt in existing_ts:
+                        continue
+                    # Skip pre-market candles from historical API
+                    if hasattr(dt, "time") and dt.time() < _mkt_open:
                         continue
                     candle = {
                         "date": dt,
@@ -557,6 +561,12 @@ class CandleBuilder(TickConsumer):
 
             ts = self._extract_ts(tick)
             if ts is None:
+                return
+
+            # Reject pre-market ticks (before 09:15) — they carry stale
+            # prices from the previous close or pre-open auction and
+            # corrupt signal detection for all consumers.
+            if ts.time() < time_cls(9, 15):
                 return
 
             for interval in meta["intervals"]:

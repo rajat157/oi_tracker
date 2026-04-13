@@ -698,10 +698,14 @@ class OIScheduler:
                 atm = round(spot_price / 50) * 50
                 ce_label = f"NIFTY_{atm - 100}_CE"
                 pe_label = f"NIFTY_{atm + 100}_PE"
-                analysis["nifty_1min_candles"] = self.candle_builder.get_candles("NIFTY", "1min")
-                analysis["nifty_3min_candles"] = self.candle_builder.get_candles("NIFTY", "3min")
-                analysis["ce_candles"] = self.candle_builder.get_candles(ce_label, "3min")
-                analysis["pe_candles"] = self.candle_builder.get_candles(pe_label, "3min")
+                analysis["nifty_1min_candles"] = self._today_only(
+                    self.candle_builder.get_candles("NIFTY", "1min"))
+                analysis["nifty_3min_candles"] = self._today_only(
+                    self.candle_builder.get_candles("NIFTY", "3min"))
+                analysis["ce_candles"] = self._today_only(
+                    self.candle_builder.get_candles(ce_label, "3min"))
+                analysis["pe_candles"] = self._today_only(
+                    self.candle_builder.get_candles(pe_label, "3min"))
                 analysis["ce_strike"] = atm - 100
                 analysis["pe_strike"] = atm + 100
             except Exception as e:

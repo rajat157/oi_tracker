@@ -133,11 +133,15 @@ def iv_for_index(index_label: str, vix_pct: Optional[float], cfg: IntradayHunter
 def compute_gap_pct(today: List[Candle], yesterday: Optional[List[Candle]]) -> float:
     if not yesterday or not today:
         return 0.0
+    if yesterday[-1].close <= 0:
+        return 0.0
     return (today[0].open - yesterday[-1].close) / yesterday[-1].close * 100
 
 
 def compute_current_move_pct(today: List[Candle], minute_idx: int) -> float:
     if not today or minute_idx <= 0:
+        return 0.0
+    if today[0].open <= 0:
         return 0.0
     cur_idx = min(minute_idx, len(today) - 1)
     return (today[cur_idx].close - today[0].open) / today[0].open * 100
@@ -335,11 +339,15 @@ def detect_e3(
 
     y_open = yesterday[0].open
     y_close = yesterday[-1].close
+    if y_open <= 0 or y_close <= 0:
+        return None
     y_move_pct = (y_close - y_open) / y_open * 100
     if abs(y_move_pct) < cfg.E3_MIN_YCLOSE_PCT:
         return None
 
     today_open = today[0].open
+    if today_open <= 0:
+        return None
     gap_pct = (today_open - y_close) / y_close * 100
     if abs(gap_pct) < cfg.E3_MIN_GAP_PCT:
         return None

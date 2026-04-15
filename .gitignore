@@ -15,6 +15,9 @@ wheels/
 # Claude Code settings
 .claude/
 
+# Superpowers brainstorm session files
+.superpowers/
+
 # Environment files
 .env
 .env.*

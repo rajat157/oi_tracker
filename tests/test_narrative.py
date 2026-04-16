@@ -265,3 +265,67 @@ def test_build_story_deterministic_for_same_inputs():
     s1 = build_story(inputs)
     s2 = build_story(inputs)
     assert s1.sentences == s2.sentences
+
+
+# ---------------------------------------------------------------------------
+# Issue 1: _fmt_signed_pnl sign placement
+# ---------------------------------------------------------------------------
+
+from analysis.narrative import _fmt_signed_pnl
+
+
+def test_fmt_signed_pnl_positive():
+    assert _fmt_signed_pnl(500) == "+₹500"
+
+
+def test_fmt_signed_pnl_negative():
+    assert _fmt_signed_pnl(-500) == "-₹500"
+
+
+def test_fmt_signed_pnl_zero():
+    assert _fmt_signed_pnl(0) == "₹0"
+
+
+def test_fmt_signed_pnl_thousands_separator():
+    assert _fmt_signed_pnl(1500) == "+₹1,500"
+    assert _fmt_signed_pnl(-1500) == "-₹1,500"
+
+
+# ---------------------------------------------------------------------------
+# Issue 2: pick_variant cross-process determinism
+# ---------------------------------------------------------------------------
+
+import subprocess
+import sys
+
+
+def test_pick_variant_deterministic_across_processes():
+    """pick_variant must produce the same output across separate Python processes.
+
+    Python's built-in hash() is randomized per-process. We use a stable hash
+    (md5) so persisted stories can be regenerated identically during replay.
+    """
+    code = (
+        "from analysis.narrative import pick_variant; "
+        "print(pick_variant(['A', 'B', 'C'], regime='TRENDING_UP', state='strong', minute_of_day=600))"
+    )
+    r1 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    r2 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    assert r1.stdout.strip() == r2.stdout.strip(), \
+        f"Cross-process determinism broken: {r1.stdout!r} vs {r2.stdout!r}"
+
+
+# ---------------------------------------------------------------------------
+# Issue 3: REGIME_UNKNOWN priority over STALE_DATA
+# ---------------------------------------------------------------------------
+
+
+def test_build_story_regime_unknown_takes_priority_over_stale():
+    """When both regime is None AND data is stale, surface REGIME_UNKNOWN.
+
+    A fresh app start can satisfy both conditions; REGIME_UNKNOWN is the
+    more actionable message ('Still gathering data...' vs 'Last update Nm ago').
+    """
+    story = build_story(_base_inputs(regime=None, data_age_seconds=600))
+    assert story.warning is not None
+    assert story.warning.code == "REGIME_UNKNOWN"

@@ -5,6 +5,7 @@ See docs/superpowers/specs/2026-04-15-dashboard-legibility-design.md (Section 4)
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
@@ -270,12 +271,15 @@ def spot_location_bucket(spot: float, support: float, resistance: float) -> str:
 def pick_variant(variants: list[str], regime: str, state: str, minute_of_day: int) -> str:
     """Deterministic variant picker using a 15-min bucket hash.
 
-    Same (regime, state, minute_bucket) always returns the same variant.
+    Uses MD5 (not Python's built-in hash) so the choice is stable across
+    process restarts. This matters because Task 6 persists generated story
+    text and replay/backtest tooling must regenerate the same variant.
     """
     if not variants:
         return ""
     bucket = minute_of_day // 15
-    index = hash((regime, state, bucket)) % len(variants)
+    digest = hashlib.md5(f"{regime}|{state}|{bucket}".encode()).hexdigest()
+    index = int(digest, 16) % len(variants)
     return variants[index]
 
 
@@ -337,8 +341,11 @@ def _plain_verdict(verdict: str) -> str:
 
 
 def _fmt_signed_pnl(pnl: float) -> str:
-    sign = "+" if pnl >= 0 else ""
-    return f"{sign}₹{pnl:,.0f}"
+    if pnl > 0:
+        return f"+₹{pnl:,.0f}"
+    if pnl < 0:
+        return f"-₹{abs(pnl):,.0f}"
+    return "₹0"
 
 
 def _compute_pct(current: float, anchor: float) -> float:
@@ -426,19 +433,22 @@ def build_story(inputs: StoryInputs) -> Story:
 
     Returns a Story with either populated sentences or a Warning — never both.
     """
-    # Failure modes first — Section 4.6
+    # Failure modes — Section 4.6
+    # Priority order: REGIME_UNKNOWN first (most likely on cold start),
+    # then STALE_DATA (we have data but it's old), then ANALYSIS_INCOMPLETE
+    # (data exists but key fields are missing).
+    if inputs.regime is None:
+        return Story(warning=Warning(
+            code="REGIME_UNKNOWN",
+            message="Still gathering data…",
+            severity=Severity.INFO,
+        ))
     if inputs.data_age_seconds > MAX_DATA_AGE_SECONDS:
         mins = inputs.data_age_seconds // 60
         return Story(warning=Warning(
             code="STALE_DATA",
             message=f"Last update {mins}m ago.",
             severity=Severity.WARN,
-        ))
-    if inputs.regime is None:
-        return Story(warning=Warning(
-            code="REGIME_UNKNOWN",
-            message="Still gathering data…",
-            severity=Severity.INFO,
         ))
     if inputs.spot is None or inputs.support is None or inputs.resistance is None:
         return Story(warning=Warning(

@@ -14,6 +14,7 @@ from api.trades import bp as trades_bp
 from api.stats import bp as stats_bp
 from api.system import bp as system_bp
 from api.kite_auth import bp as kite_bp
+from api.story import bp as story_bp
 from db.legacy import get_latest_analysis
 from monitoring.scheduler import OIScheduler
 from core.logger import get_logger
@@ -40,6 +41,7 @@ app.register_blueprint(trades_bp)
 app.register_blueprint(stats_bp)
 app.register_blueprint(system_bp)
 app.register_blueprint(kite_bp)
+app.register_blueprint(story_bp)
 
 # Initialize SocketIO with threading (more reliable on Windows)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")

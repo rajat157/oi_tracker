@@ -347,6 +347,12 @@ def init_db():
         if cursor.fetchone()['count'] == 0:
             cursor.execute("ALTER TABLE analysis_history ADD COLUMN prev_verdict TEXT")
 
+        # Add migration for story_text column
+        try:
+            cursor.execute("ALTER TABLE analysis_history ADD COLUMN story_text TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
         # Add migration for buy/sell quantity columns (orderflow data)
         cursor.execute("""
             SELECT COUNT(*) as count FROM pragma_table_info('oi_snapshots')
@@ -487,18 +493,17 @@ def save_snapshot(timestamp: datetime, spot_price: float, strikes_data: dict,
         conn.commit()
 
 
-def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
-                  total_call_oi: int, total_put_oi: int,
-                  call_oi_change: int, put_oi_change: int,
-                  verdict: str, expiry_date: str,
+def save_analysis(timestamp, spot_price, atm_strike, total_call_oi, total_put_oi,
+                  call_oi_change, put_oi_change, verdict, expiry_date,
                   atm_call_oi_change: int = 0, atm_put_oi_change: int = 0,
                   itm_call_oi_change: int = 0, itm_put_oi_change: int = 0,
                   vix: float = 0.0, iv_skew: float = 0.0, max_pain: int = 0,
                   signal_confidence: float = 0.0,
                   futures_oi: int = 0, futures_oi_change: int = 0, futures_basis: float = 0.0,
                   analysis_json: str = None,
-                  prev_verdict: str = None):
-    """Save analysis result to history including full JSON blob."""
+                  prev_verdict: str = None,
+                  story_text: str = None):
+    """Save analysis result to history including full JSON blob and story text."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -507,8 +512,8 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
              call_oi_change, put_oi_change, verdict, prev_verdict, expiry_date,
              atm_call_oi_change, atm_put_oi_change, itm_call_oi_change, itm_put_oi_change,
              vix, iv_skew, max_pain, signal_confidence,
-             futures_oi, futures_oi_change, futures_basis, analysis_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             futures_oi, futures_oi_change, futures_basis, analysis_json, story_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             timestamp.isoformat(),
             spot_price,
@@ -531,7 +536,8 @@ def save_analysis(timestamp: datetime, spot_price: float, atm_strike: int,
             futures_oi,
             futures_oi_change,
             futures_basis,
-            analysis_json
+            analysis_json,
+            story_text,
         ))
         conn.commit()
 

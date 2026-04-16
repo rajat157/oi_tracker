@@ -95,3 +95,38 @@ def api_tiles():
         rr_state=_rr_state(),
     )
     return jsonify({"tiles": [asdict(t) for t in tiles]}), 200
+
+
+_MULTI_INDEX_LABELS = ["NIFTY", "BANKNIFTY", "SENSEX", "HDFC", "KOTAK"]
+
+
+def _pct_since_open(candle_builder, label: str) -> float | None:
+    """Compute % change from today's first candle's open to the latest close."""
+    try:
+        candles = candle_builder.get_candles(label, interval="1min", count=500)
+    except Exception:
+        return None
+    if not candles:
+        return None
+    # Filter to today only
+    from datetime import date as date_cls
+    today = date_cls.today().isoformat()
+    todays = [c for c in candles if str(c.get("date", ""))[:10] == today]
+    if not todays:
+        return None
+    open_price = todays[0].get("open")
+    last_close = todays[-1].get("close")
+    if not open_price or not last_close:
+        return None
+    return round((last_close - open_price) / open_price * 100, 2)
+
+
+@bp.route("/api/multi-index")
+def api_multi_index():
+    """Return % change since today's open for each tracked instrument."""
+    sched = _get_scheduler()
+    cb = getattr(sched, "candle_builder", None) if sched else None
+    result = {}
+    for label in _MULTI_INDEX_LABELS:
+        result[label] = _pct_since_open(cb, label) if cb else None
+    return jsonify(result), 200

@@ -65,3 +65,13 @@ def test_api_ih_group_returns_none_when_waiting(client):
     data = response.json
     assert data.get("state") == "waiting"
     assert data.get("positions") == []
+
+
+def test_api_multi_index_returns_known_indices(client):
+    response = client.get("/api/multi-index")
+    assert response.status_code == 200
+    data = response.json
+    # Must include keys for each tracked instrument; values may be null
+    # when no candles available (e.g. outside market hours / test environment)
+    for key in ["NIFTY", "BANKNIFTY", "SENSEX", "HDFC", "KOTAK"]:
+        assert key in data

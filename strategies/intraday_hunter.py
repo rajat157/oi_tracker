@@ -1025,7 +1025,7 @@ class IntradayHunterStrategy(BaseTracker):
             state=IHGroupState.WAITING,
             day_bias=self._day_bias,
             groups_today=self._count_signal_groups_today(),
-            max_groups_today=self._cfg.MAX_GROUPS_PER_DAY,
+            max_groups_today=cfg.MAX_GROUPS_PER_DAY,
         )
 
     # ------------------------------------------------------------------

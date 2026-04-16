@@ -57,3 +57,11 @@ def test_api_tiles_returns_four_slots(client):
         assert tile["slot"] == i
         assert "primary" in tile
         assert "accent" in tile
+
+
+def test_api_ih_group_returns_none_when_waiting(client):
+    response = client.get("/api/ih/group")
+    assert response.status_code == 200
+    data = response.json
+    assert data.get("state") == "waiting"
+    assert data.get("positions") == []

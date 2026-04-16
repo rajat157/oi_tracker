@@ -62,6 +62,24 @@ def _rr_state() -> RRStoryState:
     return RRStoryState(state="waiting")
 
 
+@bp.route("/api/ih/group")
+def api_ih_group():
+    """Return current IntradayHunter signal group state + positions."""
+    state = _ih_state()
+    return jsonify({
+        "state": state.state.value,
+        "group_id": state.group_id,
+        "detector_armed": state.detector_armed,
+        "alignment": state.alignment,
+        "positions": state.positions,
+        "agent_verdict": state.agent_verdict,
+        "day_bias": state.day_bias,
+        "groups_today": state.groups_today,
+        "max_groups_today": state.max_groups_today,
+        "ago_minutes": state.ago_minutes,
+    }), 200
+
+
 @bp.route("/api/tiles")
 def api_tiles():
     """Return the four tile state payloads for the novice view."""

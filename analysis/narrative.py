@@ -277,3 +277,192 @@ def pick_variant(variants: list[str], regime: str, state: str, minute_of_day: in
     bucket = minute_of_day // 15
     index = hash((regime, state, bucket)) % len(variants)
     return variants[index]
+
+
+# ---------------------------------------------------------------------------
+# Story assembly
+# ---------------------------------------------------------------------------
+
+MAX_DATA_AGE_SECONDS = 360  # 6 minutes — above this, render STALE_DATA warning
+
+
+@dataclass
+class StoryInputs:
+    """All inputs build_story consumes. See spec Section 4.3."""
+
+    spot: Optional[float]
+    open_price: Optional[float]              # today's 09:15 open
+    previous_close: Optional[float]
+    support: Optional[int]
+    resistance: Optional[int]
+    verdict_score: Optional[float]
+    regime: Optional[str]                    # RR regime label; None if not yet classified
+    momentum_9m: Optional[float]             # pct
+    minute_of_day: int                       # 0..1439; IST minute since midnight
+    ih_state: IHStoryState
+    rr_state: RRStoryState
+    data_age_seconds: int                    # seconds since last successful analysis cycle
+
+
+def _force_direction(verdict_score: float) -> str:
+    if verdict_score is None:
+        return "force_neutral"
+    if verdict_score >= 20:
+        return "force_bullish"
+    if verdict_score <= -20:
+        return "force_bearish"
+    return "force_neutral"
+
+
+def _outlook_key(verdict_score: float) -> Optional[str]:
+    if verdict_score is None:
+        return None
+    if verdict_score >= 60:
+        return "bullish_strong"
+    if verdict_score >= 30:
+        return "bullish_mild"
+    if verdict_score <= -60:
+        return "bearish_strong"
+    if verdict_score <= -30:
+        return "bearish_mild"
+    return None
+
+
+def _plain_verdict(verdict: str) -> str:
+    return {
+        "HOLD": "hold",
+        "TIGHTEN_SL": "tighten stop",
+        "EXIT_NOW": "exit now",
+    }.get(verdict, "hold")
+
+
+def _fmt_signed_pnl(pnl: float) -> str:
+    sign = "+" if pnl >= 0 else ""
+    return f"{sign}₹{pnl:,.0f}"
+
+
+def _compute_pct(current: float, anchor: float) -> float:
+    if not anchor:
+        return 0.0
+    return round((current - anchor) / anchor * 100, 2)
+
+
+def _pick_state_sentence(inputs: StoryInputs) -> str:
+    pct = _compute_pct(inputs.spot or 0, inputs.open_price or inputs.previous_close or 0)
+    mag = magnitude_bucket(pct)
+    direction_word = "up" if pct > 0 else ("down" if pct < 0 else "flat")
+
+    # Look up template by (regime, magnitude) then fall back to (regime, "any")
+    variants = STATE_TEMPLATES.get((inputs.regime, mag)) \
+        or STATE_TEMPLATES.get((inputs.regime, "any")) \
+        or STATE_TEMPLATES.get(("NORMAL", "small"))
+
+    template = pick_variant(variants, inputs.regime or "NORMAL", mag, inputs.minute_of_day)
+    return template.format(
+        pct=abs(pct),
+        spot=int(inputs.spot or 0),
+        open_price=int(inputs.open_price or 0),
+        direction_word=direction_word,
+    )
+
+
+def _pick_pressure_sentence(inputs: StoryInputs) -> str:
+    loc = spot_location_bucket(inputs.spot, inputs.support, inputs.resistance)
+    force = _force_direction(inputs.verdict_score or 0)
+    key = (loc, force)
+    variants = PRESSURE_TEMPLATES.get(key) \
+        or PRESSURE_TEMPLATES.get(("centred", "force_neutral"))
+    template = pick_variant(variants, inputs.regime or "NORMAL", f"{loc}_{force}", inputs.minute_of_day)
+    return template.format(
+        support=inputs.support or 0,
+        resistance=inputs.resistance or 0,
+    )
+
+
+def _pick_outlook_sentence(inputs: StoryInputs) -> Optional[str]:
+    if inputs.regime == "LOW_VOL":
+        return None
+    key = _outlook_key(inputs.verdict_score or 0)
+    if key is None:
+        return None
+    variants = OUTLOOK_TEMPLATES.get(key, [])
+    return pick_variant(variants, inputs.regime or "NORMAL", key, inputs.minute_of_day)
+
+
+def _pick_ih_sentence(inputs: StoryInputs) -> Optional[str]:
+    st = inputs.ih_state
+    if st.state in (IHGroupState.WAITING,):
+        return None
+    key = st.state.value
+    variants = IH_STATE_TEMPLATES.get(key, [])
+    if not variants:
+        return None
+    template = pick_variant(variants, inputs.regime or "NORMAL", key, inputs.minute_of_day)
+
+    aligned = ", ".join(k for k, v in st.alignment.items() if v) or "NIFTY"
+    lagging = ", ".join(k for k, v in st.alignment.items() if not v) or "none"
+    n = len(st.positions)
+    total_pnl = sum(
+        (p.get("current_premium", 0) - p.get("entry_premium", 0))
+        * p.get("quantity", 1)
+        for p in st.positions
+    )
+    return template.format(
+        aligned=aligned,
+        lagging=lagging,
+        detector=st.detector_armed or "signal",
+        n=n,
+        s_plural="s" if n != 1 else "",
+        pnl_signed=_fmt_signed_pnl(total_pnl),
+        group_id=st.group_id or "",
+        verdict_plain=_plain_verdict(st.agent_verdict or "HOLD"),
+        ago=st.ago_minutes or 0,
+        net_result=_fmt_signed_pnl(total_pnl) if total_pnl else "flat",
+    )
+
+
+def build_story(inputs: StoryInputs) -> Story:
+    """Compose the market narrative per spec Section 4.
+
+    Returns a Story with either populated sentences or a Warning — never both.
+    """
+    # Failure modes first — Section 4.6
+    if inputs.data_age_seconds > MAX_DATA_AGE_SECONDS:
+        mins = inputs.data_age_seconds // 60
+        return Story(warning=Warning(
+            code="STALE_DATA",
+            message=f"Last update {mins}m ago.",
+            severity=Severity.WARN,
+        ))
+    if inputs.regime is None:
+        return Story(warning=Warning(
+            code="REGIME_UNKNOWN",
+            message="Still gathering data…",
+            severity=Severity.INFO,
+        ))
+    if inputs.spot is None or inputs.support is None or inputs.resistance is None:
+        return Story(warning=Warning(
+            code="ANALYSIS_INCOMPLETE",
+            message="Analysis inputs incomplete.",
+            severity=Severity.WARN,
+        ))
+
+    sentences: list[str] = []
+
+    # IH-specific sentence takes priority over generic pressure when active
+    ih_sentence = _pick_ih_sentence(inputs)
+    if ih_sentence and inputs.ih_state.state in (IHGroupState.LIVE, IHGroupState.LOCKED_OUT):
+        sentences.append(_pick_state_sentence(inputs))
+        sentences.append(ih_sentence)
+    else:
+        sentences.append(_pick_state_sentence(inputs))
+        sentences.append(_pick_pressure_sentence(inputs))
+        if ih_sentence:  # forming / recently_closed — append as third sentence
+            sentences.append(ih_sentence)
+            return Story(sentences=sentences)
+
+    outlook = _pick_outlook_sentence(inputs)
+    if outlook:
+        sentences.append(outlook)
+
+    return Story(sentences=sentences)

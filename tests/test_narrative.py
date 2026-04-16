@@ -185,3 +185,83 @@ def test_every_template_slot_has_at_least_three_variants():
 def test_ih_state_templates_cover_all_group_states():
     required = {"forming", "live", "recently_closed", "locked_out"}
     assert required.issubset(set(IH_STATE_TEMPLATES.keys()))
+
+
+from analysis.narrative import build_story, StoryInputs
+
+
+def _base_inputs(**overrides):
+    """Build a valid StoryInputs for tests; override specific fields."""
+    defaults = dict(
+        spot=23190.0,
+        open_price=23145.0,
+        previous_close=23145.0,
+        support=23100,
+        resistance=23300,
+        verdict_score=58.0,
+        regime="NORMAL",
+        momentum_9m=0.3,
+        minute_of_day=630,
+        ih_state=IHStoryState(state=IHGroupState.WAITING, day_bias=0.62),
+        rr_state=RRStoryState(state="waiting"),
+        data_age_seconds=30,
+    )
+    defaults.update(overrides)
+    return StoryInputs(**defaults)
+
+
+def test_build_story_returns_two_or_three_sentences():
+    story = build_story(_base_inputs())
+    assert story.warning is None
+    assert 2 <= len(story.sentences) <= 3
+
+
+def test_build_story_has_outlook_when_verdict_strong():
+    story = build_story(_base_inputs(verdict_score=70, regime="TRENDING_UP"))
+    assert len(story.sentences) == 3
+
+
+def test_build_story_no_outlook_when_verdict_weak():
+    story = build_story(_base_inputs(verdict_score=10, regime="NORMAL"))
+    assert len(story.sentences) == 2
+
+
+def test_build_story_no_outlook_when_low_vol():
+    story = build_story(_base_inputs(verdict_score=80, regime="LOW_VOL"))
+    assert len(story.sentences) == 2
+
+
+def test_build_story_stale_data_returns_warning():
+    story = build_story(_base_inputs(data_age_seconds=600))  # 10 min old
+    assert story.warning is not None
+    assert story.warning.code == "STALE_DATA"
+    assert story.sentences == []
+
+
+def test_build_story_missing_regime_returns_warning():
+    story = build_story(_base_inputs(regime=None))
+    assert story.warning is not None
+    assert story.warning.code == "REGIME_UNKNOWN"
+
+
+def test_build_story_ih_live_sentence_mentions_pnl():
+    positions = [
+        {"index": "NIFTY", "strike": 23200, "option_type": "CE",
+         "entry_premium": 142.0, "current_premium": 154.0, "is_paper": False},
+    ]
+    story = build_story(_base_inputs(
+        ih_state=IHStoryState(
+            state=IHGroupState.LIVE, group_id="a3f2b1",
+            positions=positions, agent_verdict="HOLD", day_bias=0.62,
+        ),
+    ))
+    combined = " ".join(story.sentences)
+    # Live IH story must include the IH sentence mentioning positions/PnL
+    assert "IH" in combined or "position" in combined.lower()
+
+
+def test_build_story_deterministic_for_same_inputs():
+    inputs = _base_inputs()
+    s1 = build_story(inputs)
+    s2 = build_story(inputs)
+    assert s1.sentences == s2.sentences

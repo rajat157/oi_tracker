@@ -89,6 +89,12 @@ class IntradayHunterStrategy(BaseTracker):
         # [V5] Per-direction last-rejection time — short cooldown to avoid
         # burning agent calls in tight loops while a setup is invalid.
         self._agent_last_rejection: Dict[str, datetime] = {}
+        # State tracking for story_state() — populated by engine during each cycle
+        self._day_bias: float | None = None
+        self._armed_detector: str | None = None
+        self._alignment: dict[str, bool] = {}
+        self._last_closed_group: dict | None = None    # {"group_id": str, "closed_at": datetime}
+        self._locked_out: bool = False
 
     @property
     def engine(self):
@@ -942,6 +948,85 @@ class IntradayHunterStrategy(BaseTracker):
             return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0,
                     "avg_win": 0, "avg_loss": 0, "total_pnl": 0}
         return self.trade_repo.get_stats(self.table_name, lookback_days)
+
+    def story_state(self):
+        """Return an IHStoryState snapshot for the narrative engine.
+
+        State precedence:
+          1. LOCKED_OUT — 2-day circuit breaker is active
+          2. LIVE       — any position is currently open
+          3. FORMING    — an E-detector is armed but no position yet
+          4. RECENTLY_CLOSED — a group closed within the last 10 minutes
+          5. WAITING    — default
+        """
+        from analysis.narrative import IHGroupState, IHStoryState
+        from datetime import datetime
+
+        cfg = getattr(self, "_cfg", _cfg)
+
+        if self._locked_out:
+            return IHStoryState(
+                state=IHGroupState.LOCKED_OUT,
+                day_bias=self._day_bias,
+                groups_today=self._count_signal_groups_today(),
+                max_groups_today=cfg.MAX_GROUPS_PER_DAY,
+            )
+
+        if self._has_open_positions():
+            positions = self._fetch_active_positions()
+            formatted = [
+                {
+                    "index": p.get("index_label"),
+                    "strike": p.get("strike"),
+                    "option_type": p.get("option_type"),
+                    "entry_premium": p.get("entry_premium", 0),
+                    "current_premium": p.get("current_premium", p.get("entry_premium", 0)),
+                    "quantity": p.get("qty", 1),
+                    "is_paper": bool(p.get("is_paper", 1)),
+                    "time_left_minutes": p.get("time_left_minutes", 0),
+                }
+                for p in positions
+            ]
+            group_id = positions[0].get("signal_group_id", "") if positions else ""
+            return IHStoryState(
+                state=IHGroupState.LIVE,
+                group_id=group_id[:5] if group_id else None,
+                positions=formatted,
+                agent_verdict=getattr(self, "_last_agent_verdict", "HOLD"),
+                day_bias=self._day_bias,
+                groups_today=self._count_signal_groups_today(),
+                max_groups_today=cfg.MAX_GROUPS_PER_DAY,
+            )
+
+        if self._armed_detector is not None:
+            return IHStoryState(
+                state=IHGroupState.FORMING,
+                detector_armed=self._armed_detector,
+                alignment=dict(self._alignment),
+                day_bias=self._day_bias,
+                groups_today=self._count_signal_groups_today(),
+                max_groups_today=cfg.MAX_GROUPS_PER_DAY,
+            )
+
+        if self._last_closed_group:
+            delta = datetime.now() - self._last_closed_group["closed_at"]
+            ago = int(delta.total_seconds() // 60)
+            if ago <= 10:
+                return IHStoryState(
+                    state=IHGroupState.RECENTLY_CLOSED,
+                    group_id=self._last_closed_group["group_id"],
+                    ago_minutes=ago,
+                    day_bias=self._day_bias,
+                    groups_today=self._count_signal_groups_today(),
+                    max_groups_today=cfg.MAX_GROUPS_PER_DAY,
+                )
+
+        return IHStoryState(
+            state=IHGroupState.WAITING,
+            day_bias=self._day_bias,
+            groups_today=self._count_signal_groups_today(),
+            max_groups_today=self._cfg.MAX_GROUPS_PER_DAY,
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers

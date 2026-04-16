@@ -753,6 +753,7 @@ def get_latest_analysis() -> Optional[dict]:
             if result.get('analysis_json'):
                 try:
                     full_analysis = json_module.loads(result['analysis_json'])
+                    full_analysis["story_text"] = row["story_text"] if "story_text" in row.keys() else None
                     return full_analysis  # Return complete analysis
                 except (json_module.JSONDecodeError, TypeError):
                     pass  # Fallback to basic fields

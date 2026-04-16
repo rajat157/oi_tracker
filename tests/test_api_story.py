@@ -75,3 +75,37 @@ def test_api_multi_index_returns_known_indices(client):
     # when no candles available (e.g. outside market hours / test environment)
     for key in ["NIFTY", "BANKNIFTY", "SENSEX", "HDFC", "KOTAK"]:
         assert key in data
+
+
+def test_api_latest_includes_story_text(client):
+    save_analysis(
+        timestamp=datetime.now(),
+        spot_price=23190.0, atm_strike=23200,
+        total_call_oi=1000, total_put_oi=1100,
+        call_oi_change=100, put_oi_change=200,
+        verdict="BULLISH", expiry_date="2026-04-21",
+        story_text="Market is drifting up. Put sellers defend 23100.",
+    )
+    response = client.get("/api/latest")
+    assert response.status_code == 200
+    data = response.json
+    assert "story_text" in data
+    assert data["story_text"].startswith("Market is drifting")
+
+
+def test_api_latest_includes_story_text_when_analysis_json_present(client):
+    """The Path A code (parsed analysis_json blob) must also surface story_text."""
+    import json
+    save_analysis(
+        timestamp=datetime.now(),
+        spot_price=23190.0, atm_strike=23200,
+        total_call_oi=1000, total_put_oi=1100,
+        call_oi_change=100, put_oi_change=200,
+        verdict="BULLISH", expiry_date="2026-04-21",
+        story_text="Test story sentence.",
+        analysis_json=json.dumps({"verdict_score": 58.0, "regime": "NORMAL"}),
+    )
+    response = client.get("/api/latest")
+    assert response.status_code == 200
+    data = response.json
+    assert data.get("story_text") == "Test story sentence."

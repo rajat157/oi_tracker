@@ -553,6 +553,26 @@ class RRStrategy(BaseTracker):
             return None
         return self.trade_repo.get_active(self.table_name)
 
+    def story_state(self):
+        """Return an RRStoryState snapshot for the narrative engine."""
+        from analysis.narrative import RRStoryState
+
+        active = self.get_active()
+        if active is None:
+            return RRStoryState(state="waiting")
+
+        entry = active.get("entry_premium", 0.0)
+        current = active.get("current_premium", entry)
+        pnl_pct = ((current - entry) / entry * 100) if entry else 0.0
+        symbol = f"NIFTY {active.get('strike', '?')} {active.get('option_type', '?')}"
+        return RRStoryState(
+            state="live",
+            symbol=symbol,
+            entry=entry,
+            current_premium=current,
+            pnl_pct=round(pnl_pct, 2),
+        )
+
     def get_stats(self, lookback_days: int = 30) -> Dict:
         if self.trade_repo is None:
             return {"total": 0, "wins": 0, "losses": 0, "win_rate": 0,

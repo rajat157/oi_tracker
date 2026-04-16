@@ -38,3 +38,22 @@ def test_api_story_returns_latest_text(client):
     assert "sentences" in data
     assert any("drifting up" in s for s in data["sentences"])
     assert data.get("warning") is None
+
+
+def test_api_tiles_returns_four_slots(client):
+    save_analysis(
+        timestamp=datetime.now(),
+        spot_price=23190.0, atm_strike=23200,
+        total_call_oi=1000, total_put_oi=1100,
+        call_oi_change=100, put_oi_change=200,
+        verdict="BULLISH", expiry_date="2026-04-21",
+    )
+    response = client.get("/api/tiles")
+    assert response.status_code == 200
+    data = response.json
+    assert "tiles" in data
+    assert len(data["tiles"]) == 4
+    for i, tile in enumerate(data["tiles"], start=1):
+        assert tile["slot"] == i
+        assert "primary" in tile
+        assert "accent" in tile

@@ -183,6 +183,11 @@ class IntradayHunterConfig:
     def SENSEX_QTY(self) -> int:
         return self.SENSEX_LOT_QTY * self.LOTS
 
+    @property
+    def MAX_GROUPS_PER_DAY(self) -> int:
+        """Alias for MAX_TRADES_PER_DAY used by story_state()."""
+        return self.MAX_TRADES_PER_DAY
+
     def is_index_live(self, index_label: str) -> bool:
         """Returns True if this index should place real broker orders.
 

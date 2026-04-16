@@ -128,6 +128,7 @@ class OIScheduler:
                 candle_builder=self.candle_builder,
                 kite_fetcher=self.kite_fetcher,
                 multi_instrument_map=self._multi_imap,
+                socketio=self.socketio,
             )
             log.info("IntradayHunter strategy enabled",
                      live_indices=sorted(self._ih_cfg.LIVE_INDICES) or "(all paper)",

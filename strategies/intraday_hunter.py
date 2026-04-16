@@ -76,6 +76,8 @@ class IntradayHunterStrategy(BaseTracker):
         # Multi-index instrument map (NIFTY+BN+SX, NFO+BFO segments).
         # Used for symbol resolution + lazy option-strike registration.
         self._multi_imap = kwargs.pop("multi_instrument_map", None)
+        # SocketIO instance for push updates; None in paper/standalone runs
+        self.socketio = kwargs.pop("socketio", None)
         super().__init__(**kwargs)
         if self.trade_repo:
             self.trade_repo.init_table(IH_TRADES_DDL, IH_TRADES_INDEXES)
@@ -433,6 +435,7 @@ class IntradayHunterStrategy(BaseTracker):
             "direction": sig.direction,
             "alert_message": alert,
         })
+        self._emit_group_update()
         return first_trade_id
 
     # ------------------------------------------------------------------
@@ -616,6 +619,8 @@ class IntradayHunterStrategy(BaseTracker):
             except Exception as e:
                 log.error("IH force_exit cancel_exit_orders failed",
                           trade_id=trade_id, error=str(e))
+
+        self._emit_group_update()
 
     def _place_live_entry(self, trade_id: int, index_label: str, pos: dict) -> None:
         """Route a single position through OrderExecutor (entry + GTT OCO).
@@ -879,6 +884,7 @@ class IntradayHunterStrategy(BaseTracker):
             "reason": reason,
             "alert_message": alert,
         })
+        self._emit_group_update()
 
     def _get_current_premium(self, pos: dict, analysis: dict) -> Optional[float]:
         """Re-price the position from the latest source available.
@@ -1027,6 +1033,25 @@ class IntradayHunterStrategy(BaseTracker):
             groups_today=self._count_signal_groups_today(),
             max_groups_today=cfg.MAX_GROUPS_PER_DAY,
         )
+
+    def _emit_group_update(self) -> None:
+        """Push the current IH group state to dashboard clients.
+
+        No-op when socketio is None (paper / standalone / test runs).
+        Called after every lifecycle transition: group open, position close,
+        detector arming.
+        """
+        sio = getattr(self, "socketio", None)
+        if sio is None:
+            return
+        state = self.story_state()
+        sio.emit("ih_group_update", {
+            "state": state.state.value,
+            "group_id": state.group_id,
+            "positions": state.positions,
+            "agent_verdict": state.agent_verdict,
+            "day_bias": state.day_bias,
+        })
 
     # ------------------------------------------------------------------
     # Internal helpers

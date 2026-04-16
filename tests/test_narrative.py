@@ -120,3 +120,68 @@ def test_classify_mood_boundaries():
     assert classify_mood(-20).label == "Mildly Bearish"
     assert classify_mood(-60).label == "Bearish"
     assert classify_mood(0).label == "Neutral"
+
+
+from analysis.narrative import (
+    magnitude_bucket, spot_location_bucket, pick_variant,
+    STATE_TEMPLATES, PRESSURE_TEMPLATES, OUTLOOK_TEMPLATES, IH_STATE_TEMPLATES,
+)
+
+
+def test_magnitude_bucket_ranges():
+    assert magnitude_bucket(-0.8) == "strong_dn"
+    assert magnitude_bucket(-0.3) == "mild_dn"
+    assert magnitude_bucket(0.0) == "small"
+    assert magnitude_bucket(0.05) == "small"
+    assert magnitude_bucket(0.3) == "mild"
+    assert magnitude_bucket(0.8) == "strong"
+
+
+def test_spot_location_near_support():
+    assert spot_location_bucket(spot=23105, support=23100, resistance=23400) == "near_support"
+
+
+def test_spot_location_near_resistance():
+    assert spot_location_bucket(spot=23390, support=23100, resistance=23400) == "near_resistance"
+
+
+def test_spot_location_centred():
+    assert spot_location_bucket(spot=23250, support=23100, resistance=23400) == "centred"
+
+
+def test_pick_variant_deterministic():
+    variants = ["A", "B", "C"]
+    # Same inputs → same output
+    v1 = pick_variant(variants, regime="TRENDING_UP", state="strong", minute_of_day=600)
+    v2 = pick_variant(variants, regime="TRENDING_UP", state="strong", minute_of_day=600)
+    assert v1 == v2
+    # Different minute bucket (15-min buckets) may pick different variant
+    v3 = pick_variant(variants, regime="TRENDING_UP", state="strong", minute_of_day=615)
+    # Within same bucket (600..614), same variant
+    v4 = pick_variant(variants, regime="TRENDING_UP", state="strong", minute_of_day=614)
+    assert v1 == v4
+
+
+def test_pick_variant_empty_list_returns_fallback():
+    assert pick_variant([], regime="X", state="y", minute_of_day=0) == ""
+
+
+def test_state_templates_cover_all_regimes():
+    required_regimes = {
+        "TRENDING_UP", "TRENDING_DOWN", "HIGH_VOL_UP", "HIGH_VOL_DOWN",
+        "NORMAL", "LOW_VOL",
+    }
+    covered = {key[0] for key in STATE_TEMPLATES.keys()}
+    assert required_regimes.issubset(covered), f"missing regimes: {required_regimes - covered}"
+
+
+def test_every_template_slot_has_at_least_three_variants():
+    for key, variants in STATE_TEMPLATES.items():
+        assert len(variants) >= 3, f"STATE_TEMPLATES[{key}] has <3 variants"
+    for key, variants in PRESSURE_TEMPLATES.items():
+        assert len(variants) >= 3, f"PRESSURE_TEMPLATES[{key}] has <3 variants"
+
+
+def test_ih_state_templates_cover_all_group_states():
+    required = {"forming", "live", "recently_closed", "locked_out"}
+    assert required.issubset(set(IH_STATE_TEMPLATES.keys()))

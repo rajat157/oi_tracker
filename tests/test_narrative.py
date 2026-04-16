@@ -305,12 +305,14 @@ def test_pick_variant_deterministic_across_processes():
     Python's built-in hash() is randomized per-process. We use a stable hash
     (md5) so persisted stories can be regenerated identically during replay.
     """
+    import pathlib
+    project_root = pathlib.Path(__file__).resolve().parent.parent
     code = (
         "from analysis.narrative import pick_variant; "
         "print(pick_variant(['A', 'B', 'C'], regime='TRENDING_UP', state='strong', minute_of_day=600))"
     )
-    r1 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
-    r2 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True)
+    r1 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, cwd=str(project_root))
+    r2 = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True, cwd=str(project_root))
     assert r1.stdout.strip() == r2.stdout.strip(), \
         f"Cross-process determinism broken: {r1.stdout!r} vs {r2.stdout!r}"
 

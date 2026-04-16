@@ -131,9 +131,10 @@ class TestFetchOutputUnchanged:
 
         # SocketIO should have been called with analysis data
         if socketio_mock.emit.called:
-            args = socketio_mock.emit.call_args
-            event = args[0][0]
-            data = args[0][1]
-            assert event == "oi_update"
+            # fetch_and_analyze now emits oi_update + story_update + tiles_update;
+            # find the oi_update call specifically.
+            call_map = {c[0][0]: c[0][1] for c in socketio_mock.emit.call_args_list}
+            assert "oi_update" in call_map, f"Expected oi_update in {list(call_map)}"
+            data = call_map["oi_update"]
             assert "verdict" in data
             assert "spot_price" in data or "atm_strike" in data

@@ -374,6 +374,58 @@ class OIScheduler:
             log.error("_load_yesterday_nifty_candles failed", error=str(e))
             return []
 
+    def _build_story_and_tiles(self, analysis: dict, data_age_seconds: int = 0):
+        """Compose the narrative story and tile states from the latest analysis.
+
+        Returns (story_text_or_None, list_of_tile_dicts).
+        """
+        from analysis.narrative import (
+            StoryInputs, build_story, IHStoryState, IHGroupState, RRStoryState,
+        )
+        from analysis.tile_state import build_tile_state
+        from datetime import datetime
+        from dataclasses import asdict
+
+        ih_strategy = self.strategies.get("intraday_hunter") if self.strategies else None
+        rr_strategy = self.strategies.get("rally_rider") if self.strategies else None
+
+        ih_state = ih_strategy.story_state() if (ih_strategy and hasattr(ih_strategy, "story_state")) \
+            else IHStoryState(state=IHGroupState.WAITING)
+        rr_state = rr_strategy.story_state() if (rr_strategy and hasattr(rr_strategy, "story_state")) \
+            else RRStoryState(state="waiting")
+
+        now = datetime.now()
+        minute_of_day = now.hour * 60 + now.minute
+
+        inputs = StoryInputs(
+            spot=analysis.get("spot_price"),
+            open_price=analysis.get("open_price"),
+            previous_close=analysis.get("previous_close"),
+            support=analysis.get("support"),
+            resistance=analysis.get("resistance"),
+            verdict_score=analysis.get("verdict_score") or analysis.get("score"),
+            regime=analysis.get("regime"),
+            momentum_9m=analysis.get("momentum_9m"),
+            minute_of_day=minute_of_day,
+            ih_state=ih_state,
+            rr_state=rr_state,
+            data_age_seconds=data_age_seconds,
+        )
+        story = build_story(inputs)
+        story_text = " ".join(story.sentences) if story.has_content() else None
+
+        tiles = build_tile_state(
+            verdict_score=float(analysis.get("verdict_score") or 0),
+            verdict_ema=float(analysis.get("verdict_ema") or 0),
+            spot=float(analysis.get("spot_price") or 0),
+            support=int(analysis.get("support") or 0),
+            resistance=int(analysis.get("resistance") or 0),
+            momentum_9m=float(analysis.get("momentum_9m") or 0),
+            ih_state=ih_state,
+            rr_state=rr_state,
+        )
+        return story_text, [asdict(t) for t in tiles]
+
     def is_market_open(self) -> bool:
         """Check if the market is currently open."""
         now = datetime.now()
@@ -637,6 +689,9 @@ class OIScheduler:
             # Serialize complete analysis to JSON for storage (now includes self_learning)
             analysis_json = json.dumps(analysis, default=str)
 
+            # Generate narrative + tile payloads for the dashboard
+            story_text, tile_payloads = self._build_story_and_tiles(analysis, data_age_seconds=0)
+
             # Save analysis to database with full JSON blob
             save_analysis(
                 timestamp=timestamp,
@@ -660,7 +715,8 @@ class OIScheduler:
                 futures_oi_change=futures_oi_change,
                 futures_basis=futures_basis,
                 analysis_json=analysis_json,  # Store complete analysis
-                prev_verdict=prev_verdict  # Store previous verdict for hysteresis analysis
+                prev_verdict=prev_verdict,  # Store previous verdict for hysteresis analysis
+                story_text=story_text,
             )
 
             self.last_analysis = analysis
@@ -800,7 +856,11 @@ class OIScheduler:
                         "nifty_yesterday_candles",
                     )
                 }
+                emit_payload["story_text"] = story_text
+                emit_payload["tiles"] = tile_payloads
                 self.socketio.emit("oi_update", emit_payload)
+                self.socketio.emit("story_update", {"story_text": story_text})
+                self.socketio.emit("tiles_update", {"tiles": tile_payloads})
                 log.debug("Emitted update to clients")
 
         except Exception as e:

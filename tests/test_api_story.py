@@ -73,7 +73,7 @@ def test_api_multi_index_returns_known_indices(client):
     data = response.json
     # Must include keys for each tracked instrument; values may be null
     # when no candles available (e.g. outside market hours / test environment)
-    for key in ["NIFTY", "BANKNIFTY", "SENSEX", "HDFC", "KOTAK"]:
+    for key in ["NIFTY", "BANKNIFTY", "SENSEX", "HDFCBANK", "KOTAKBANK"]:
         assert key in data
 
 
@@ -109,3 +109,48 @@ def test_api_latest_includes_story_text_when_analysis_json_present(client):
     assert response.status_code == 200
     data = response.json
     assert data.get("story_text") == "Test story sentence."
+
+
+def test_api_story_returns_stale_warning_when_old(client):
+    """When the last analysis is older than MAX_DATA_AGE_SECONDS, return STALE_DATA."""
+    from datetime import timedelta
+    from db.legacy import get_connection
+    # Clear any fresh rows left by previous tests so our stale row is the newest
+    with get_connection() as conn:
+        conn.execute("DELETE FROM analysis_history")
+        conn.commit()
+    save_analysis(
+        timestamp=datetime.now() - timedelta(minutes=15),
+        spot_price=23190.0, atm_strike=23200,
+        total_call_oi=1000, total_put_oi=1100,
+        call_oi_change=100, put_oi_change=200,
+        verdict="BULLISH", expiry_date="2026-04-21",
+        story_text="An old story.",
+    )
+    response = client.get("/api/story")
+    assert response.status_code == 200
+    data = response.json
+    assert data.get("warning") is not None
+    assert data["warning"]["code"] == "STALE_DATA"
+    assert data.get("sentences") == []
+
+
+def test_api_story_no_stale_warning_for_fresh_data(client):
+    """When data is fresh (just saved), no stale warning should be returned."""
+    from db.legacy import get_connection
+    # Clear any stale rows left by previous tests so our fresh row is the newest
+    with get_connection() as conn:
+        conn.execute("DELETE FROM analysis_history")
+        conn.commit()
+    save_analysis(
+        timestamp=datetime.now(),
+        spot_price=23190.0, atm_strike=23200,
+        total_call_oi=1000, total_put_oi=1100,
+        call_oi_change=100, put_oi_change=200,
+        verdict="BULLISH", expiry_date="2026-04-21",
+        story_text="Fresh story.",
+    )
+    response = client.get("/api/story")
+    assert response.status_code == 200
+    data = response.json
+    assert data.get("warning") is None

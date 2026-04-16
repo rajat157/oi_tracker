@@ -754,6 +754,8 @@ def get_latest_analysis() -> Optional[dict]:
                 try:
                     full_analysis = json_module.loads(result['analysis_json'])
                     full_analysis["story_text"] = row["story_text"] if "story_text" in row.keys() else None
+                    # Always inject the DB timestamp so consumers can compute staleness
+                    full_analysis.setdefault("timestamp", result.get("timestamp"))
                     return full_analysis  # Return complete analysis
                 except (json_module.JSONDecodeError, TypeError):
                     pass  # Fallback to basic fields

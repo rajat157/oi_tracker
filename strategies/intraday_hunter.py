@@ -92,11 +92,11 @@ class IntradayHunterStrategy(BaseTracker):
         # burning agent calls in tight loops while a setup is invalid.
         self._agent_last_rejection: Dict[str, datetime] = {}
         # State tracking for story_state() — populated by engine during each cycle
-        self._day_bias: float | None = None
-        self._armed_detector: str | None = None
-        self._alignment: dict[str, bool] = {}
-        self._last_closed_group: dict | None = None    # {"group_id": str, "closed_at": datetime}
-        self._locked_out: bool = False
+        self._day_bias: float | None = None          # set in evaluate_signal from signal.day_bias_score
+        self._armed_detector: str | None = None      # TODO: wire when engine exposes pre-trigger state
+        self._alignment: dict[str, bool] = {}        # TODO: wire when engine exposes pre-trigger state
+        self._last_closed_group: dict | None = None  # {"group_id": str, "closed_at": datetime}
+        self._locked_out: bool = False               # set in should_create from _consecutive_losing_days
 
     @property
     def engine(self):
@@ -162,7 +162,12 @@ class IntradayHunterStrategy(BaseTracker):
 
         # Consecutive-loss circuit breaker (R28)
         if self._consecutive_losing_days() >= _cfg.CONSECUTIVE_LOSS_SKIP:
+            self._locked_out = True
             return False
+
+        # Still in the gate — clear the locked-out flag if it was set on a
+        # prior cycle that happened to hit the limit (e.g. after day rolls over)
+        self._locked_out = False
 
         spot = analysis.get("spot_price", 0)
         if spot <= 0:
@@ -233,6 +238,11 @@ class IntradayHunterStrategy(BaseTracker):
         )
         if not signal:
             return None
+
+        # Capture day_bias for story_state() — always update even if signal is
+        # later rejected (the score is computed before the filters, so it's the
+        # most recent estimate regardless of whether a trade fires).
+        self._day_bias = float(signal.day_bias_score)
 
         # [V1] When E0 is enabled, the time window is widened to start at
         # 09:17. Inside the early window (09:17-09:34), ONLY E0 signals are
@@ -611,6 +621,11 @@ class IntradayHunterStrategy(BaseTracker):
             "reason": reason,
             "alert_message": ih_alert,
         })
+        # Update _last_closed_group so story_state() can emit RECENTLY_CLOSED
+        self._last_closed_group = {
+            "group_id": row["signal_group_id"] or "",
+            "closed_at": now,
+        }
 
         # Cancel any associated GTT/exit orders for this trade_id
         if self.order_executor is not None:
@@ -884,6 +899,11 @@ class IntradayHunterStrategy(BaseTracker):
             "reason": reason,
             "alert_message": alert,
         })
+        # Update _last_closed_group so story_state() can emit RECENTLY_CLOSED
+        self._last_closed_group = {
+            "group_id": pos.get("signal_group_id", ""),
+            "closed_at": now,
+        }
         self._emit_group_update()
 
     def _get_current_premium(self, pos: dict, analysis: dict) -> Optional[float]:

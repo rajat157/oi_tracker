@@ -375,6 +375,92 @@ class OIScheduler:
             log.error("_load_yesterday_nifty_candles failed", error=str(e))
             return []
 
+    def _extract_story_fields(self, analysis: dict) -> dict:
+        """Extract StoryInputs fields from the real tug_of_war analysis dict shape.
+
+        The analysis dict produced by analyze_tug_of_war() stores values at
+        nested paths that differ from the flat keys the story builder expects.
+        This helper normalises them, falling back to None/0 on missing data.
+
+        Returns a flat dict with keys:
+            spot, open_price, previous_close,
+            support, resistance,
+            verdict_score, verdict_ema, momentum_9m, regime
+        """
+        # Support / resistance are nested under primary_sr in real tug_of_war output.
+        # Fall back to flat keys for synthetic/test dicts that pre-populate them.
+        sr = analysis.get("primary_sr") or {}
+        support_dict = sr.get("support") or {}
+        resistance_dict = sr.get("resistance") or {}
+        support = (
+            (support_dict.get("strike") if isinstance(support_dict, dict) else None)
+            or analysis.get("support")
+        )
+        resistance = (
+            (resistance_dict.get("strike") if isinstance(resistance_dict, dict) else None)
+            or analysis.get("resistance")
+        )
+
+        # Verdict score — combined_score is the primary scalar
+        verdict_score = (
+            analysis.get("combined_score")
+            or analysis.get("verdict_score")
+            or analysis.get("score")
+        )
+
+        # EMA / smoothed score
+        verdict_ema = (
+            analysis.get("smoothed_score")
+            or analysis.get("verdict_ema")
+            or analysis.get("ema_score")
+        )
+
+        # Momentum (normalise to float, clamp to avoid extreme values)
+        momentum_9m = (
+            analysis.get("momentum_score")
+            or analysis.get("momentum_9m")
+            or analysis.get("price_change_pct")
+            or 0.0
+        )
+
+        # Regime — tug_of_war uses lowercase ("trending_up"); narrative engine
+        # expects uppercase ("TRENDING_UP"). Try both paths.
+        regime_raw = None
+        mr = analysis.get("market_regime")
+        if isinstance(mr, dict):
+            regime_raw = mr.get("regime")
+        if not regime_raw:
+            regime_raw = analysis.get("regime")
+        regime: str | None = None
+        if regime_raw:
+            # Normalise: "trending_up" → "TRENDING_UP", already-uppercase pass-through
+            regime = regime_raw.upper()
+
+        # open_price / previous_close — not present in the tug_of_war blob.
+        # Fetch from candle buffers already loaded by the scheduler.
+        open_price: float | None = None
+        previous_close: float | None = None
+        try:
+            if hasattr(self, "_yesterday_nifty_candles") and self._yesterday_nifty_candles:
+                last_y = self._yesterday_nifty_candles[-1]
+                previous_close = float(last_y.get("close") or 0) or None
+            if hasattr(self, "_today_open_price"):
+                open_price = self._today_open_price
+        except Exception:
+            pass
+
+        return {
+            "spot": analysis.get("spot_price"),
+            "open_price": open_price,
+            "previous_close": previous_close,
+            "support": support,
+            "resistance": resistance,
+            "verdict_score": verdict_score,
+            "verdict_ema": verdict_ema,
+            "momentum_9m": float(momentum_9m or 0),
+            "regime": regime,
+        }
+
     def _build_story_and_tiles(self, analysis: dict, data_age_seconds: int = 0):
         """Compose the narrative story and tile states from the latest analysis.
 
@@ -398,15 +484,17 @@ class OIScheduler:
         now = datetime.now()
         minute_of_day = now.hour * 60 + now.minute
 
+        fields = self._extract_story_fields(analysis)
+
         inputs = StoryInputs(
-            spot=analysis.get("spot_price"),
-            open_price=analysis.get("open_price"),
-            previous_close=analysis.get("previous_close"),
-            support=analysis.get("support"),
-            resistance=analysis.get("resistance"),
-            verdict_score=analysis.get("verdict_score") or analysis.get("score"),
-            regime=analysis.get("regime"),
-            momentum_9m=analysis.get("momentum_9m"),
+            spot=fields["spot"],
+            open_price=fields["open_price"],
+            previous_close=fields["previous_close"],
+            support=fields["support"],
+            resistance=fields["resistance"],
+            verdict_score=fields["verdict_score"],
+            regime=fields["regime"],
+            momentum_9m=fields["momentum_9m"],
             minute_of_day=minute_of_day,
             ih_state=ih_state,
             rr_state=rr_state,
@@ -416,12 +504,12 @@ class OIScheduler:
         story_text = " ".join(story.sentences) if story.has_content() else None
 
         tiles = build_tile_state(
-            verdict_score=float(analysis.get("verdict_score") or 0),
-            verdict_ema=float(analysis.get("verdict_ema") or 0),
-            spot=float(analysis.get("spot_price") or 0),
-            support=int(analysis.get("support") or 0),
-            resistance=int(analysis.get("resistance") or 0),
-            momentum_9m=float(analysis.get("momentum_9m") or 0),
+            verdict_score=float(fields["verdict_score"] or 0),
+            verdict_ema=float(fields["verdict_ema"] or 0),
+            spot=float(fields["spot"] or 0),
+            support=int(fields["support"] or 0),
+            resistance=int(fields["resistance"] or 0),
+            momentum_9m=float(fields["momentum_9m"] or 0),
             ih_state=ih_state,
             rr_state=rr_state,
         )

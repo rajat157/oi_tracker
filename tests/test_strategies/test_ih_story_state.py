@@ -118,3 +118,69 @@ def test_ih_emit_group_update_includes_full_state():
     assert payload["group_id"] == "abc12"  # short id
     assert len(payload["positions"]) == 1
     assert payload["agent_verdict"] == "HOLD"
+
+
+def test_locked_out_set_from_consecutive_losses(monkeypatch):
+    """If _consecutive_losing_days() >= CONSECUTIVE_LOSS_SKIP, _locked_out is True."""
+    from unittest.mock import MagicMock
+    from strategies.intraday_hunter import IntradayHunterStrategy
+    import strategies.intraday_hunter as ih_module
+    from datetime import time as _time
+
+    # Monkeypatch the module-level _cfg so should_create passes the ENABLED gate
+    mock_cfg = MagicMock(
+        ENABLED=True,
+        MAX_TRADES_PER_DAY=3,
+        CONSECUTIVE_LOSS_SKIP=2,
+        DAILY_LOSS_LIMIT_RS=10000,
+        COOLDOWN_AFTER_WIN_MIN=5,
+        COOLDOWN_AFTER_LOSS_MIN=8,
+        E0_ENTRY_START=_time(9, 17),
+        ENABLE_E0=False,
+    )
+    monkeypatch.setattr(ih_module, "_cfg", mock_cfg)
+
+    s = IntradayHunterStrategy.__new__(IntradayHunterStrategy)
+    s._consecutive_losing_days = MagicMock(return_value=5)  # >= CONSECUTIVE_LOSS_SKIP
+    s._daily_pnl_rs = MagicMock(return_value=0.0)
+    s._cooldown_ok = MagicMock(return_value=True)
+    s._has_open_positions = MagicMock(return_value=False)
+    s._count_signal_groups_today = MagicMock(return_value=0)
+    s.is_in_time_window = MagicMock(return_value=True)
+    s.trade_repo = MagicMock()
+    s._locked_out = False
+
+    result = s.should_create({"spot_price": 23000})
+    assert result is False
+    assert s._locked_out is True
+
+
+def test_locked_out_cleared_when_under_limit(monkeypatch):
+    """_locked_out is cleared when consecutive losses are below the threshold."""
+    from unittest.mock import MagicMock
+    from strategies.intraday_hunter import IntradayHunterStrategy
+    import strategies.intraday_hunter as ih_module
+    from datetime import time as _time
+
+    mock_cfg = MagicMock(
+        ENABLED=True,
+        MAX_TRADES_PER_DAY=3,
+        CONSECUTIVE_LOSS_SKIP=2,
+        DAILY_LOSS_LIMIT_RS=10000,
+        E0_ENTRY_START=_time(9, 17),
+        ENABLE_E0=False,
+    )
+    monkeypatch.setattr(ih_module, "_cfg", mock_cfg)
+
+    s = IntradayHunterStrategy.__new__(IntradayHunterStrategy)
+    s._consecutive_losing_days = MagicMock(return_value=1)  # below threshold
+    s._daily_pnl_rs = MagicMock(return_value=0.0)
+    s._cooldown_ok = MagicMock(return_value=True)
+    s._has_open_positions = MagicMock(return_value=False)
+    s._count_signal_groups_today = MagicMock(return_value=0)
+    s.is_in_time_window = MagicMock(return_value=True)
+    s.trade_repo = MagicMock()
+    s._locked_out = True  # pre-set to True — should be cleared
+
+    s.should_create({"spot_price": 23000})
+    assert s._locked_out is False

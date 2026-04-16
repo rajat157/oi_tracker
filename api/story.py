@@ -30,11 +30,36 @@ def api_story():
     analysis = get_latest_analysis()
     if analysis is None:
         return jsonify({"sentences": [], "warning": None}), 200
+
+    ts_str = analysis.get("timestamp")
+
+    # Staleness check — if the data is older than MAX_DATA_AGE_SECONDS, warn
+    # the client so the dashboard can surface a visible stale-data indicator.
+    from datetime import datetime as _dt
+    from analysis.narrative import MAX_DATA_AGE_SECONDS
+    if ts_str:
+        try:
+            ts = _dt.fromisoformat(str(ts_str))
+            age_seconds = (_dt.now() - ts).total_seconds()
+            if age_seconds > MAX_DATA_AGE_SECONDS:
+                mins = int(age_seconds // 60)
+                return jsonify({
+                    "sentences": [],
+                    "warning": {
+                        "code": "STALE_DATA",
+                        "message": f"Last update {mins}m ago.",
+                        "severity": "warn",
+                    },
+                    "timestamp": ts_str,
+                }), 200
+        except (ValueError, TypeError):
+            pass
+
     story_text = analysis.get("story_text")
     return jsonify({
         "sentences": _split_story_text(story_text),
-        "warning": None,  # Warnings are produced live by the scheduler; persisted stories never carry warnings
-        "timestamp": analysis.get("timestamp"),
+        "warning": None,
+        "timestamp": ts_str,
     }), 200
 
 
@@ -80,24 +105,65 @@ def api_ih_group():
     }), 200
 
 
+def _extract_analysis_fields(analysis: dict) -> dict:
+    """Normalise field names from the tug_of_war analysis blob.
+
+    analyze_tug_of_war() stores values at nested paths; this helper
+    flattens them for tile/story consumption.
+    """
+    sr = analysis.get("primary_sr") or {}
+    support_dict = sr.get("support") or {}
+    resistance_dict = sr.get("resistance") or {}
+    support = support_dict.get("strike") if isinstance(support_dict, dict) else None
+    resistance = resistance_dict.get("strike") if isinstance(resistance_dict, dict) else None
+
+    verdict_score = (
+        analysis.get("combined_score")
+        or analysis.get("verdict_score")
+        or analysis.get("score")
+        or 0
+    )
+    verdict_ema = (
+        analysis.get("smoothed_score")
+        or analysis.get("verdict_ema")
+        or analysis.get("ema_score")
+        or 0
+    )
+    momentum_9m = float(
+        analysis.get("momentum_score")
+        or analysis.get("momentum_9m")
+        or analysis.get("price_change_pct")
+        or 0
+    )
+    return {
+        "spot": float(analysis.get("spot_price") or 0),
+        "support": int(support or 0),
+        "resistance": int(resistance or 0),
+        "verdict_score": float(verdict_score or 0),
+        "verdict_ema": float(verdict_ema or 0),
+        "momentum_9m": momentum_9m,
+    }
+
+
 @bp.route("/api/tiles")
 def api_tiles():
     """Return the four tile state payloads for the novice view."""
     analysis = get_latest_analysis() or {}
+    f = _extract_analysis_fields(analysis)
     tiles = build_tile_state(
-        verdict_score=float(analysis.get("verdict_score") or analysis.get("score") or 0),
-        verdict_ema=float(analysis.get("verdict_ema") or analysis.get("ema_score") or 0),
-        spot=float(analysis.get("spot_price") or 0),
-        support=int(analysis.get("support") or 0),
-        resistance=int(analysis.get("resistance") or 0),
-        momentum_9m=float(analysis.get("momentum_9m") or 0),
+        verdict_score=f["verdict_score"],
+        verdict_ema=f["verdict_ema"],
+        spot=f["spot"],
+        support=f["support"],
+        resistance=f["resistance"],
+        momentum_9m=f["momentum_9m"],
         ih_state=_ih_state(),
         rr_state=_rr_state(),
     )
     return jsonify({"tiles": [asdict(t) for t in tiles]}), 200
 
 
-_MULTI_INDEX_LABELS = ["NIFTY", "BANKNIFTY", "SENSEX", "HDFC", "KOTAK"]
+_MULTI_INDEX_LABELS = ["NIFTY", "BANKNIFTY", "SENSEX", "HDFCBANK", "KOTAKBANK"]
 
 
 def _pct_since_open(candle_builder, label: str) -> float | None:

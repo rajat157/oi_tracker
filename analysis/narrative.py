@@ -340,7 +340,7 @@ def _plain_verdict(verdict: str) -> str:
     }.get(verdict, "hold")
 
 
-def _fmt_signed_pnl(pnl: float) -> str:
+def fmt_signed_pnl(pnl: float) -> str:
     if pnl > 0:
         return f"+₹{pnl:,.0f}"
     if pnl < 0:
@@ -420,11 +420,11 @@ def _pick_ih_sentence(inputs: StoryInputs) -> Optional[str]:
         detector=st.detector_armed or "signal",
         n=n,
         s_plural="s" if n != 1 else "",
-        pnl_signed=_fmt_signed_pnl(total_pnl),
+        pnl_signed=fmt_signed_pnl(total_pnl),
         group_id=st.group_id or "",
         verdict_plain=_plain_verdict(st.agent_verdict or "HOLD"),
         ago=st.ago_minutes or 0,
-        net_result=_fmt_signed_pnl(total_pnl) if total_pnl else "flat",
+        net_result=fmt_signed_pnl(total_pnl) if total_pnl else "flat",
     )
 
 

@@ -271,24 +271,24 @@ def test_build_story_deterministic_for_same_inputs():
 # Issue 1: _fmt_signed_pnl sign placement
 # ---------------------------------------------------------------------------
 
-from analysis.narrative import _fmt_signed_pnl
+from analysis.narrative import fmt_signed_pnl
 
 
 def test_fmt_signed_pnl_positive():
-    assert _fmt_signed_pnl(500) == "+₹500"
+    assert fmt_signed_pnl(500) == "+₹500"
 
 
 def test_fmt_signed_pnl_negative():
-    assert _fmt_signed_pnl(-500) == "-₹500"
+    assert fmt_signed_pnl(-500) == "-₹500"
 
 
 def test_fmt_signed_pnl_zero():
-    assert _fmt_signed_pnl(0) == "₹0"
+    assert fmt_signed_pnl(0) == "₹0"
 
 
 def test_fmt_signed_pnl_thousands_separator():
-    assert _fmt_signed_pnl(1500) == "+₹1,500"
-    assert _fmt_signed_pnl(-1500) == "-₹1,500"
+    assert fmt_signed_pnl(1500) == "+₹1,500"
+    assert fmt_signed_pnl(-1500) == "-₹1,500"
 
 
 # ---------------------------------------------------------------------------

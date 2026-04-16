@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from analysis.narrative import (
-    IHGroupState, IHStoryState, RRStoryState, classify_mood,
+    IHGroupState, IHStoryState, RRStoryState, classify_mood, fmt_signed_pnl,
 )
 
 
@@ -27,7 +27,7 @@ class TileState:
 
 def _build_mood_tile(verdict_score: float, verdict_ema: float) -> TileState:
     mood = classify_mood(verdict_score)
-    ema_arrow = "↗" if verdict_ema > verdict_score else ("↘" if verdict_ema < verdict_score else "→")
+    ema_arrow = "↗" if verdict_score > verdict_ema else ("↘" if verdict_score < verdict_ema else "→")
     return TileState(
         slot=1,
         primary=f"{mood.emoji} {mood.label}",
@@ -81,16 +81,17 @@ def _build_trade_tile(ih: IHStoryState) -> TileState:
         rows = [
             {
                 "left": f"{p['index']} {p['strike']}{p['option_type']}",
-                "right": f"{'+' if p['current_premium'] >= p['entry_premium'] else ''}"
-                         f"₹{(p['current_premium'] - p['entry_premium']) * p.get('quantity', 1):,.0f}"
-                         f" [{'LIVE' if not p.get('is_paper') else 'PAPER'}]",
+                "right": fmt_signed_pnl(
+                    (p.get("current_premium", 0) - p.get("entry_premium", 0)) * p.get("quantity", 1)
+                ),
+                "is_paper": bool(p.get("is_paper", False)),
             }
             for p in ih.positions
         ]
-        sign = "+" if total_pnl >= 0 else ""
+        pnl_sign = "+" if pnl_pct >= 0 else ""
         return TileState(
             slot=2,
-            primary=f"{sign}₹{total_pnl:,.0f} · {sign}{pnl_pct:.1f}%",
+            primary=f"{fmt_signed_pnl(total_pnl)} · {pnl_sign}{pnl_pct:.1f}%",
             caption=f"Agent: {ih.agent_verdict or 'HOLD'}",
             hint="TSL arming at +10%",
             accent="up" if total_pnl >= 0 else "dn",
@@ -120,14 +121,19 @@ def _build_battle_lines_tile(spot: float, support: int, resistance: int) -> Tile
     # Which wall is spot closer to?
     if spot is None or support is None or resistance is None:
         return TileState(slot=3, primary="— ← ? → —", caption="Levels unavailable", accent="muted")
-    ds = spot - support
-    dr = resistance - spot
-    if ds < dr * 0.5:
-        hint = f"{int(ds)} pts above support"
-    elif dr < ds * 0.5:
-        hint = f"{int(dr)} pts below resistance"
+    if spot < support:
+        hint = f"Below support ({int(support - spot)} pts under)"
+    elif spot > resistance:
+        hint = f"Above resistance ({int(spot - resistance)} pts over)"
     else:
-        hint = "Spot centred between defences"
+        ds = spot - support
+        dr = resistance - spot
+        if ds < dr * 0.5:
+            hint = f"{int(ds)} pts above support"
+        elif dr < ds * 0.5:
+            hint = f"{int(dr)} pts below resistance"
+        else:
+            hint = "Spot centred between defences"
     return TileState(
         slot=3,
         primary=f"{support} ← {int(spot)} → {resistance}",
@@ -148,6 +154,19 @@ def _build_slot_four_tile(ih: IHStoryState, momentum_9m: float) -> TileState:
             caption="Per-position time left",
             hint="EOD exit 15:15",
             accent="info",
+        )
+
+    if ih.state == IHGroupState.RECENTLY_CLOSED:
+        total_pnl = sum(
+            (p.get("current_premium", 0) - p.get("entry_premium", 0)) * p.get("quantity", 1)
+            for p in ih.positions
+        ) if ih.positions else 0
+        return TileState(
+            slot=4,
+            primary=fmt_signed_pnl(total_pnl),
+            caption=f"Group #{ih.group_id or '?'} · {ih.ago_minutes or 0}m ago",
+            hint="",
+            accent="muted",
         )
 
     bias = ih.day_bias

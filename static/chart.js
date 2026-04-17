@@ -1441,10 +1441,11 @@ function updateVShapeAlert(data) {
     checks.forEach(([id, met]) => {
         const el = document.getElementById(id);
         if (el) {
-            el.textContent = met ? '\u2611' : '\u2610';
+            el.innerHTML = met ? '<i data-lucide="check-square"></i>' : '<i data-lucide="square"></i>';
             el.className = 'vsc-check' + (met ? ' vsc-met' : '');
         }
     });
+    if (window.lucide) { lucide.createIcons(); }
 
     // Hide conditions grid for resolution states
     const condGrid = alert.querySelector('.v-shape-conditions');
@@ -1527,7 +1528,11 @@ function updateFlowCard(flow) {
     if (dominantEl) {
         const raw = flow.dominant_flow || 'mixed';
         const dom = raw.charAt(0).toUpperCase() + raw.slice(1);
-        const icons = { 'Writing': '\u270E', 'Buying': '\u25B2', 'Mixed': '\u25C6' };
+        const icons = {
+            'Writing': '<i data-lucide="pen-line"></i>',
+            'Buying': '<i data-lucide="trending-up"></i>',
+            'Mixed': '<i data-lucide="shuffle"></i>'
+        };
         const subtitles = {
             'Writing': 'Sellers in control \u2014 range-bound',
             'Buying': 'Buyers in control \u2014 trending',
@@ -1537,6 +1542,7 @@ function updateFlowCard(flow) {
         dominantEl.className = 'flow-dominant';
         if (dom === 'Writing') dominantEl.classList.add('flow-writing');
         else if (dom === 'Buying') dominantEl.classList.add('flow-buying');
+        if (window.lucide) { lucide.createIcons(); }
     }
 
     setText('flow-bullish', flow.net_bullish_flow || 0);

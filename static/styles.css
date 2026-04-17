@@ -3121,3 +3121,22 @@ body {
 :focus:not(:focus-visible) {
   outline: none;
 }
+
+/* ===== Lucide icons — uniform size + colour inheritance ===== */
+[data-lucide] {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+  stroke-width: 1.75;
+  color: currentColor;
+  display: inline-block;
+}
+
+button [data-lucide], a [data-lucide] {
+  margin-right: var(--space-1);
+}
+
+/* Standalone icons (no adjacent text) need no margin */
+button > [data-lucide]:only-child, a > [data-lucide]:only-child {
+  margin-right: 0;
+}

@@ -1,6 +1,27 @@
 // OI Tracker Dashboard JavaScript
 // NOTE: All state is server-controlled. Frontend is a pure display layer.
 
+// ===== Design token bridge — read palette from CSS custom properties =====
+// Keeps chart colours in sync with static/styles/tokens.css. Re-evaluated
+// each time getComputedStyle is called, so a future theme switch picks up
+// the change without rebuilding charts. Fallbacks match Variant A defaults.
+function token(name, fallback) {
+  if (typeof document === 'undefined') return fallback;
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
+const CHART_COLORS = {
+  up:    token('--color-accent-up',    '#60e0a8'),
+  down:  token('--color-accent-dn',    '#ff7a82'),
+  warn:  token('--color-accent-warn',  '#f5b963'),
+  info:  token('--color-accent-info',  '#7cb7ff'),
+  text:  token('--color-text-primary', '#eef1f8'),
+  muted: token('--color-text-muted',   '#6b7289'),
+  grid:  token('--color-border',       '#1e2430'),
+  bg:    token('--color-bg-raised',    '#131721'),
+};
+
 const socket = io();
 let oiChart = null;
 let otmChart = null;
@@ -139,11 +160,11 @@ function initChart() {
 
     // Gradient fills
     const bearGrad = ctx.createLinearGradient(0, 0, 0, 360);
-    bearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.25)');
-    bearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
+    bearGrad.addColorStop(0, CHART_COLORS.down + '40');  // ~25% alpha
+    bearGrad.addColorStop(1, CHART_COLORS.down + '05');  // ~2% alpha
     const bullGrad = ctx.createLinearGradient(0, 0, 0, 360);
-    bullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.25)');
-    bullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
+    bullGrad.addColorStop(0, CHART_COLORS.up + '40');    // ~25% alpha
+    bullGrad.addColorStop(1, CHART_COLORS.up + '05');    // ~2% alpha
 
     oiChart = new Chart(ctx, {
         type: 'line',
@@ -153,26 +174,26 @@ function initChart() {
                 {
                     label: 'Call OI Change',
                     data: [],
-                    borderColor: '#f87171',
+                    borderColor: CHART_COLORS.down,
                     backgroundColor: bearGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 0,
                     pointHoverRadius: 4,
-                    pointBackgroundColor: '#f87171'
+                    pointBackgroundColor: CHART_COLORS.down
                 },
                 {
                     label: 'Put OI Change',
                     data: [],
-                    borderColor: '#22c55e',
+                    borderColor: CHART_COLORS.up,
                     backgroundColor: bullGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 0,
                     pointHoverRadius: 4,
-                    pointBackgroundColor: '#22c55e'
+                    pointBackgroundColor: CHART_COLORS.up
                 }
             ]
         },
@@ -189,7 +210,7 @@ function initChart() {
                     position: 'top',
                     align: 'end',
                     labels: {
-                        color: '#a1a1b5',
+                        color: CHART_COLORS.muted,
                         usePointStyle: true,
                         pointStyle: 'circle',
                         padding: 20,
@@ -197,10 +218,10 @@ function initChart() {
                     }
                 },
                 tooltip: {
-                    backgroundColor: '#1a1a24',
-                    titleColor: '#ffffff',
-                    bodyColor: '#a1a1b5',
-                    borderColor: '#2a2a3a',
+                    backgroundColor: CHART_COLORS.bg,
+                    titleColor: CHART_COLORS.text,
+                    bodyColor: CHART_COLORS.muted,
+                    borderColor: CHART_COLORS.grid,
                     borderWidth: 1,
                     padding: 12,
                     cornerRadius: 8,
@@ -218,17 +239,17 @@ function initChart() {
             },
             scales: {
                 x: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                    grid: { color: CHART_COLORS.grid + '0d', drawBorder: false },  // ~5% alpha
+                    ticks: { color: CHART_COLORS.muted, font: { size: 11, family: 'Inter' }, maxRotation: 0 }
                 },
                 y: {
                     grid: {
-                        color: (ctx) => ctx.tick.value === 0 ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                        color: (ctx) => ctx.tick.value === 0 ? CHART_COLORS.muted + '33' : CHART_COLORS.grid + '0d',
                         lineWidth: (ctx) => ctx.tick.value === 0 ? 1.5 : 1,
                         drawBorder: false
                     },
                     ticks: {
-                        color: '#6b6b7f',
+                        color: CHART_COLORS.muted,
                         font: { size: 11, family: 'Inter' },
                         callback: value => formatCompact(value)
                     }
@@ -253,16 +274,16 @@ function initCumulativeChart() {
                 {
                     label: 'Call OI Momentum',
                     data: [],
-                    backgroundColor: 'rgba(248, 113, 113, 0.7)',
-                    borderColor: '#f87171',
+                    backgroundColor: CHART_COLORS.down + 'b3',  // ~70% alpha
+                    borderColor: CHART_COLORS.down,
                     borderWidth: 1,
                     borderRadius: 2
                 },
                 {
                     label: 'Put OI Momentum',
                     data: [],
-                    backgroundColor: 'rgba(34, 197, 94, 0.7)',
-                    borderColor: '#22c55e',
+                    backgroundColor: CHART_COLORS.up + 'b3',    // ~70% alpha
+                    borderColor: CHART_COLORS.up,
                     borderWidth: 1,
                     borderRadius: 2
                 }
@@ -277,13 +298,13 @@ function initCumulativeChart() {
                 legend: {
                     position: 'top',
                     align: 'end',
-                    labels: { color: '#a1a1b5', usePointStyle: true, pointStyle: 'circle', padding: 20, font: { size: 12, family: 'Inter' } }
+                    labels: { color: CHART_COLORS.muted, usePointStyle: true, pointStyle: 'circle', padding: 20, font: { size: 12, family: 'Inter' } }
                 },
                 tooltip: {
-                    backgroundColor: '#1a1a24',
-                    titleColor: '#ffffff',
-                    bodyColor: '#a1a1b5',
-                    borderColor: '#2a2a3a',
+                    backgroundColor: CHART_COLORS.bg,
+                    titleColor: CHART_COLORS.text,
+                    bodyColor: CHART_COLORS.muted,
+                    borderColor: CHART_COLORS.grid,
                     borderWidth: 1,
                     padding: 12,
                     cornerRadius: 8,
@@ -297,17 +318,17 @@ function initCumulativeChart() {
             },
             scales: {
                 x: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)', drawBorder: false },
-                    ticks: { color: '#6b6b7f', font: { size: 11, family: 'Inter' }, maxRotation: 0 }
+                    grid: { color: CHART_COLORS.grid + '0d', drawBorder: false },  // ~5% alpha
+                    ticks: { color: CHART_COLORS.muted, font: { size: 11, family: 'Inter' }, maxRotation: 0 }
                 },
                 y: {
                     grid: {
-                        color: (ctx) => ctx.tick.value === 0 ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                        color: (ctx) => ctx.tick.value === 0 ? CHART_COLORS.muted + '33' : CHART_COLORS.grid + '0d',
                         lineWidth: (ctx) => ctx.tick.value === 0 ? 1.5 : 1,
                         drawBorder: false
                     },
                     ticks: {
-                        color: '#6b6b7f',
+                        color: CHART_COLORS.muted,
                         font: { size: 11, family: 'Inter' },
                         callback: value => formatCompact(value)
                     }
@@ -324,11 +345,11 @@ function initOTMChart() {
 
     const ctx = canvas.getContext('2d');
     const otmBullGrad = ctx.createLinearGradient(0, 0, 0, 260);
-    otmBullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.2)');
-    otmBullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
+    otmBullGrad.addColorStop(0, CHART_COLORS.up + '33');    // ~20% alpha
+    otmBullGrad.addColorStop(1, CHART_COLORS.up + '05');    // ~2% alpha
     const otmBearGrad = ctx.createLinearGradient(0, 0, 0, 260);
-    otmBearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.2)');
-    otmBearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
+    otmBearGrad.addColorStop(0, CHART_COLORS.down + '33');  // ~20% alpha
+    otmBearGrad.addColorStop(1, CHART_COLORS.down + '05'); // ~2% alpha
 
     otmChart = new Chart(ctx, {
         type: 'line',
@@ -338,7 +359,7 @@ function initOTMChart() {
                 {
                     label: 'OTM Put Force',
                     data: [],
-                    borderColor: '#22c55e',
+                    borderColor: CHART_COLORS.up,
                     backgroundColor: otmBullGrad,
                     fill: true,
                     tension: 0.4,
@@ -349,7 +370,7 @@ function initOTMChart() {
                 {
                     label: 'OTM Call Force',
                     data: [],
-                    borderColor: '#f87171',
+                    borderColor: CHART_COLORS.down,
                     backgroundColor: otmBearGrad,
                     fill: true,
                     tension: 0.4,
@@ -365,15 +386,15 @@ function initOTMChart() {
             animation: false,
             interaction: { intersect: false, mode: 'index' },
             plugins: {
-                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } },
+                legend: { position: 'top', align: 'end', labels: { color: CHART_COLORS.muted, usePointStyle: true, font: { size: 11 } } },
                 zoom: {
                     pan: { enabled: true, mode: 'x' },
                     zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
                 }
             },
             scales: {
-                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
-                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, callback: v => formatCompact(v) } }
+                x: { grid: { color: CHART_COLORS.grid + '0d' }, ticks: { color: CHART_COLORS.muted, font: { size: 10 }, maxRotation: 0 } },
+                y: { grid: { color: CHART_COLORS.grid + '0d' }, ticks: { color: CHART_COLORS.muted, font: { size: 10 }, callback: v => formatCompact(v) } }
             }
         }
     });
@@ -386,11 +407,11 @@ function initITMChart() {
 
     const ctx = canvas.getContext('2d');
     const itmBullGrad = ctx.createLinearGradient(0, 0, 0, 260);
-    itmBullGrad.addColorStop(0, 'rgba(34, 197, 94, 0.2)');
-    itmBullGrad.addColorStop(1, 'rgba(34, 197, 94, 0.02)');
+    itmBullGrad.addColorStop(0, CHART_COLORS.up + '33');    // ~20% alpha
+    itmBullGrad.addColorStop(1, CHART_COLORS.up + '05');    // ~2% alpha
     const itmBearGrad = ctx.createLinearGradient(0, 0, 0, 260);
-    itmBearGrad.addColorStop(0, 'rgba(248, 113, 113, 0.2)');
-    itmBearGrad.addColorStop(1, 'rgba(248, 113, 113, 0.02)');
+    itmBearGrad.addColorStop(0, CHART_COLORS.down + '33');  // ~20% alpha
+    itmBearGrad.addColorStop(1, CHART_COLORS.down + '05'); // ~2% alpha
 
     itmChart = new Chart(ctx, {
         type: 'line',
@@ -400,7 +421,7 @@ function initITMChart() {
                 {
                     label: 'ITM Put Force',
                     data: [],
-                    borderColor: '#22c55e',
+                    borderColor: CHART_COLORS.up,
                     backgroundColor: itmBullGrad,
                     fill: true,
                     tension: 0.4,
@@ -411,7 +432,7 @@ function initITMChart() {
                 {
                     label: 'ITM Call Force',
                     data: [],
-                    borderColor: '#f87171',
+                    borderColor: CHART_COLORS.down,
                     backgroundColor: itmBearGrad,
                     fill: true,
                     tension: 0.4,
@@ -427,15 +448,15 @@ function initITMChart() {
             animation: false,
             interaction: { intersect: false, mode: 'index' },
             plugins: {
-                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } },
+                legend: { position: 'top', align: 'end', labels: { color: CHART_COLORS.muted, usePointStyle: true, font: { size: 11 } } },
                 zoom: {
                     pan: { enabled: true, mode: 'x' },
                     zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' }
                 }
             },
             scales: {
-                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
-                y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, callback: v => formatCompact(v) } }
+                x: { grid: { color: CHART_COLORS.grid + '0d' }, ticks: { color: CHART_COLORS.muted, font: { size: 10 }, maxRotation: 0 } },
+                y: { grid: { color: CHART_COLORS.grid + '0d' }, ticks: { color: CHART_COLORS.muted, font: { size: 10 }, callback: v => formatCompact(v) } }
             }
         }
     });
@@ -448,8 +469,8 @@ function initFuturesBasisChart() {
 
     const ctx = canvas.getContext('2d');
     const basisGrad = ctx.createLinearGradient(0, 0, 0, 200);
-    basisGrad.addColorStop(0, 'rgba(99, 102, 241, 0.25)');
-    basisGrad.addColorStop(1, 'rgba(99, 102, 241, 0.02)');
+    basisGrad.addColorStop(0, '#6366f1' + '40');  // indigo series — TODO: token
+    basisGrad.addColorStop(1, '#6366f1' + '05');  // indigo series — TODO: token
 
     futuresBasisChart = new Chart(ctx, {
         type: 'line',
@@ -459,14 +480,14 @@ function initFuturesBasisChart() {
                 {
                     label: 'Futures Basis',
                     data: [],
-                    borderColor: '#6366f1',
+                    borderColor: '#6366f1',  // indigo series — TODO: token
                     backgroundColor: basisGrad,
                     fill: true,
                     tension: 0.4,
                     borderWidth: 2,
                     pointRadius: 0,
                     pointHoverRadius: 4,
-                    pointBackgroundColor: '#6366f1'
+                    pointBackgroundColor: '#6366f1'  // indigo series — TODO: token
                 }
             ]
         },
@@ -476,12 +497,12 @@ function initFuturesBasisChart() {
             animation: false,
             interaction: { intersect: false, mode: 'index' },
             plugins: {
-                legend: { position: 'top', align: 'end', labels: { color: '#a1a1b5', usePointStyle: true, font: { size: 11 } } },
+                legend: { position: 'top', align: 'end', labels: { color: CHART_COLORS.muted, usePointStyle: true, font: { size: 11 } } },
                 tooltip: {
-                    backgroundColor: '#1a1a24',
-                    titleColor: '#ffffff',
-                    bodyColor: '#a1a1b5',
-                    borderColor: '#2a2a3a',
+                    backgroundColor: CHART_COLORS.bg,
+                    titleColor: CHART_COLORS.text,
+                    bodyColor: CHART_COLORS.muted,
+                    borderColor: CHART_COLORS.grid,
                     borderWidth: 1,
                     padding: 12,
                     cornerRadius: 8,
@@ -498,13 +519,13 @@ function initFuturesBasisChart() {
                 }
             },
             scales: {
-                x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#6b6b7f', font: { size: 10 }, maxRotation: 0 } },
+                x: { grid: { color: CHART_COLORS.grid + '0d' }, ticks: { color: CHART_COLORS.muted, font: { size: 10 }, maxRotation: 0 } },
                 y: {
                     grid: {
-                        color: (ctx) => ctx.tick.value === 0 ? 'rgba(255, 255, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                        color: (ctx) => ctx.tick.value === 0 ? CHART_COLORS.muted + '33' : CHART_COLORS.grid + '0d',
                         lineWidth: (ctx) => ctx.tick.value === 0 ? 1.5 : 1
                     },
-                    ticks: { color: '#6b6b7f', font: { size: 10 }, callback: v => v.toFixed(1) }
+                    ticks: { color: CHART_COLORS.muted, font: { size: 10 }, callback: v => v.toFixed(1) }
                 }
             }
         }
@@ -675,12 +696,12 @@ function updateDashboard(data) {
     if (momentumElem && data.price_change_pct !== undefined) {
         const pct = data.price_change_pct;
         const arrow = pct > 0 ? '↑' : pct < 0 ? '↓' : '→';
-        const color = pct > 0 ? '#22c55e' : pct < 0 ? '#f87171' : '#a1a1b5';
+        const color = pct > 0 ? CHART_COLORS.up : pct < 0 ? CHART_COLORS.down : CHART_COLORS.muted;
         momentumElem.textContent = `${arrow} ${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
         momentumElem.style.color = color;
     } else if (momentumElem) {
         momentumElem.textContent = '--';
-        momentumElem.style.color = '#a1a1b5';
+        momentumElem.style.color = CHART_COLORS.muted;
     }
 
     // Update Market Trend
@@ -705,8 +726,8 @@ function updateDashboard(data) {
     const convictionElem = document.getElementById('avg-conviction');
     if (convictionElem) {
         convictionElem.textContent = avgConviction > 0 ? avgConviction.toFixed(2) + 'x' : '--';
-        convictionElem.style.color = avgConviction > 1.2 ? '#22c55e' :
-                                     avgConviction < 0.8 ? '#f87171' : '#a1a1b5';
+        convictionElem.style.color = avgConviction > 1.2 ? CHART_COLORS.up :
+                                     avgConviction < 0.8 ? CHART_COLORS.down : CHART_COLORS.muted;
     }
 
     // Update Zone Force comparison
@@ -768,7 +789,7 @@ function updateDashboard(data) {
     if (ivSkewElem && data.iv_skew !== undefined) {
         const skew = data.iv_skew;
         ivSkewElem.textContent = (skew > 0 ? '+' : '') + skew.toFixed(2) + '%';
-        ivSkewElem.style.color = skew > 2 ? '#f87171' : skew < -2 ? '#22c55e' : '#a1a1b5';
+        ivSkewElem.style.color = skew > 2 ? CHART_COLORS.down : skew < -2 ? CHART_COLORS.up : CHART_COLORS.muted;
     }
 
     // PCR Trend arrow
@@ -1062,11 +1083,11 @@ function updateLearningStatus(learning) {
     if (accElem) {
         if (learning?.ema_accuracy != null) {
             accElem.textContent = learning.ema_accuracy + '%';
-            accElem.style.color = learning.ema_accuracy >= 55 ? '#22c55e' :
-                                 learning.ema_accuracy < 50 ? '#f87171' : '#a1a1b5';
+            accElem.style.color = learning.ema_accuracy >= 55 ? CHART_COLORS.up :
+                                 learning.ema_accuracy < 50 ? CHART_COLORS.down : CHART_COLORS.muted;
         } else {
             accElem.textContent = '--';
-            accElem.style.color = '#a1a1b5';
+            accElem.style.color = CHART_COLORS.muted;
         }
     }
 
@@ -1334,14 +1355,14 @@ function updateBasisSparkline(data) {
     ctx.setLineDash([3, 3]);
     ctx.moveTo(0, zeroY);
     ctx.lineTo(w, zeroY);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
+    ctx.strokeStyle = CHART_COLORS.muted + '26';  // ~15% alpha zero-line
     ctx.lineWidth = 1;
     ctx.stroke();
     ctx.setLineDash([]);
 
     // Draw basis line
     const lastVal = values[values.length - 1];
-    const lineColor = lastVal >= 0 ? '#22c55e' : '#f87171';
+    const lineColor = lastVal >= 0 ? CHART_COLORS.up : CHART_COLORS.down;
 
     ctx.beginPath();
     values.forEach((v, i) => {
@@ -1441,10 +1462,11 @@ function updateVShapeAlert(data) {
     checks.forEach(([id, met]) => {
         const el = document.getElementById(id);
         if (el) {
-            el.textContent = met ? '\u2611' : '\u2610';
+            el.innerHTML = met ? '<i data-lucide="check-square"></i>' : '<i data-lucide="square"></i>';
             el.className = 'vsc-check' + (met ? ' vsc-met' : '');
         }
     });
+    if (window.lucide) { lucide.createIcons(); }
 
     // Hide conditions grid for resolution states
     const condGrid = alert.querySelector('.v-shape-conditions');
@@ -1527,7 +1549,11 @@ function updateFlowCard(flow) {
     if (dominantEl) {
         const raw = flow.dominant_flow || 'mixed';
         const dom = raw.charAt(0).toUpperCase() + raw.slice(1);
-        const icons = { 'Writing': '\u270E', 'Buying': '\u25B2', 'Mixed': '\u25C6' };
+        const icons = {
+            'Writing': '<i data-lucide="pen-line"></i>',
+            'Buying': '<i data-lucide="trending-up"></i>',
+            'Mixed': '<i data-lucide="shuffle"></i>'
+        };
         const subtitles = {
             'Writing': 'Sellers in control \u2014 range-bound',
             'Buying': 'Buyers in control \u2014 trending',
@@ -1537,6 +1563,7 @@ function updateFlowCard(flow) {
         dominantEl.className = 'flow-dominant';
         if (dom === 'Writing') dominantEl.classList.add('flow-writing');
         else if (dom === 'Buying') dominantEl.classList.add('flow-buying');
+        if (window.lucide) { lucide.createIcons(); }
     }
 
     setText('flow-bullish', flow.net_bullish_flow || 0);

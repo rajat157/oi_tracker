@@ -4,10 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Trade History - NIFTY OI Analyzer</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Inter web font (display swap to avoid FOIT) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Design tokens (must precede styles.css so token references resolve) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/tokens.css') }}">
+    <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
     <div class="app">
@@ -221,5 +225,11 @@
     </template>
 
     <script src="/static/trades.js"></script>
+
+    <!-- Lucide icons -->
+    <script src="https://unpkg.com/lucide@0.378.0/dist/umd/lucide.min.js"></script>
+    <script>
+      if (window.lucide) { lucide.createIcons(); }
+    </script>
 </body>
 </html>

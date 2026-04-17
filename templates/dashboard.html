@@ -4,10 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NIFTY OI Analyzer</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Inter web font (display swap to avoid FOIT) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Design tokens (must precede styles.css so token references resolve) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/tokens.css') }}">
+    <link rel="stylesheet" href="/static/styles.css">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
@@ -147,19 +151,19 @@
             </div>
             <div class="v-shape-conditions">
                 <div class="v-shape-condition">
-                    <span class="vsc-check" id="vsc-basis-check">&#x2610;</span>
+                    <span class="vsc-check" id="vsc-basis-check"><i data-lucide="square"></i></span>
                     <span class="vsc-text" title="Futures basis remains positive during decline — institutions still holding longs">Futures basis positive during decline</span>
                 </div>
                 <div class="v-shape-condition">
-                    <span class="vsc-check" id="vsc-score-check">&#x2610;</span>
+                    <span class="vsc-check" id="vsc-score-check"><i data-lucide="square"></i></span>
                     <span class="vsc-text" title="OI score hit extreme negative — sellers exhausted, often marks the bottom">Score capitulation (&lt; -40)</span>
                 </div>
                 <div class="v-shape-condition">
-                    <span class="vsc-check" id="vsc-pm-check">&#x2610;</span>
+                    <span class="vsc-check" id="vsc-pm-check"><i data-lucide="square"></i></span>
                     <span class="vsc-text" title="Premium momentum reversing — put premiums peaking, calls starting to recover">PM reversal patterns firing</span>
                 </div>
                 <div class="v-shape-condition">
-                    <span class="vsc-check" id="vsc-confidence-check">&#x2610;</span>
+                    <span class="vsc-check" id="vsc-confidence-check"><i data-lucide="square"></i></span>
                     <span class="vsc-text" title="Low confidence = uncertain direction = reversal-prone market">Low confidence (&lt; 70%)</span>
                 </div>
             </div>
@@ -278,8 +282,8 @@
 
                 <!-- Trade Cards Carousel -->
                 <div class="trade-carousel" id="trade-carousel">
-                    <button class="carousel-arrow carousel-arrow-left" id="carousel-arrow-left" onclick="carouselNav(-1)" aria-label="Previous trade">&#x2039;</button>
-                    <button class="carousel-arrow carousel-arrow-right" id="carousel-arrow-right" onclick="carouselNav(1)" aria-label="Next trade">&#x203A;</button>
+                    <button class="carousel-arrow carousel-arrow-left" id="carousel-arrow-left" onclick="carouselNav(-1)" aria-label="Previous trade"><i data-lucide="chevron-left"></i></button>
+                    <button class="carousel-arrow carousel-arrow-right" id="carousel-arrow-right" onclick="carouselNav(1)" aria-label="Next trade"><i data-lucide="chevron-right"></i></button>
                     <div class="carousel-viewport" id="carousel-viewport">
 
                 <!-- Trade cards removed — only scalper remains (rendered by chart.js) -->
@@ -319,7 +323,7 @@
                 <!-- CALL Alert Card -->
                 <div class="card call-alert-card" id="call-alert-card" >
                     <div class="alert-header">
-                        <span class="alert-icon">&#9679;</span>
+                        <span class="alert-icon"><i data-lucide="circle"></i></span>
                         <span class="alert-title">CALL Entry Signal</span>
                         <span class="alert-badge">75% Win Rate</span>
                     </div>
@@ -693,7 +697,7 @@
                     <div class="chart-controls">
                         <button class="chart-ctrl-btn" onclick="zoomIn()" title="Zoom In">+</button>
                         <button class="chart-ctrl-btn" onclick="zoomOut()" title="Zoom Out">&minus;</button>
-                        <button class="chart-ctrl-btn" onclick="resetZoom()" title="Reset Zoom">&#x27F2;</button>
+                        <button class="chart-ctrl-btn" onclick="resetZoom()" title="Reset Zoom"><i data-lucide="refresh-cw"></i></button>
                     </div>
                 </div>
                 <div class="chart-container">
@@ -707,7 +711,7 @@
                     <div class="chart-controls">
                         <button class="chart-ctrl-btn chart-ctrl-sm" onclick="cumulativeChart?.zoom(1.2)" title="Zoom In">+</button>
                         <button class="chart-ctrl-btn chart-ctrl-sm" onclick="cumulativeChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
-                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="cumulativeChart?.resetZoom()" title="Reset">&#x27F2;</button>
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="cumulativeChart?.resetZoom()" title="Reset"><i data-lucide="refresh-cw"></i></button>
                     </div>
                 </div>
                 <div class="chart-container">
@@ -722,7 +726,7 @@
                         <div class="chart-controls">
                             <button class="chart-ctrl-btn chart-ctrl-sm" onclick="otmChart?.zoom(1.2)" title="Zoom In">+</button>
                             <button class="chart-ctrl-btn chart-ctrl-sm" onclick="otmChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
-                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="otmChart?.resetZoom()" title="Reset">&#x27F2;</button>
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="otmChart?.resetZoom()" title="Reset"><i data-lucide="refresh-cw"></i></button>
                         </div>
                     </div>
                     <div class="chart-container">
@@ -735,7 +739,7 @@
                         <div class="chart-controls">
                             <button class="chart-ctrl-btn chart-ctrl-sm" onclick="itmChart?.zoom(1.2)" title="Zoom In">+</button>
                             <button class="chart-ctrl-btn chart-ctrl-sm" onclick="itmChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
-                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="itmChart?.resetZoom()" title="Reset">&#x27F2;</button>
+                            <button class="chart-ctrl-btn chart-ctrl-sm" onclick="itmChart?.resetZoom()" title="Reset"><i data-lucide="refresh-cw"></i></button>
                         </div>
                     </div>
                     <div class="chart-container">
@@ -750,7 +754,7 @@
                     <div class="chart-controls">
                         <button class="chart-ctrl-btn chart-ctrl-sm" onclick="futuresBasisChart?.zoom(1.2)" title="Zoom In">+</button>
                         <button class="chart-ctrl-btn chart-ctrl-sm" onclick="futuresBasisChart?.zoom(0.8)" title="Zoom Out">&minus;</button>
-                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="futuresBasisChart?.resetZoom()" title="Reset">&#x27F2;</button>
+                        <button class="chart-ctrl-btn chart-ctrl-sm" onclick="futuresBasisChart?.resetZoom()" title="Reset"><i data-lucide="refresh-cw"></i></button>
                     </div>
                 </div>
                 <div class="chart-container-small">
@@ -766,5 +770,14 @@
     </div>
 
     <script src="/static/chart.js"></script>
+
+    <!-- Lucide icons — replaces ad-hoc emoji+SVG mix.
+         Mood face emojis (rocket, smile, neutral, grimace, scream) and V-Shape banner emoji are preserved as
+         intentional spec choices; everywhere else uses <i data-lucide="..."></i>. -->
+    <script src="https://unpkg.com/lucide@0.378.0/dist/umd/lucide.min.js"></script>
+    <script>
+      // Initial render. After dynamic content updates (SocketIO push), call lucide.createIcons() again.
+      if (window.lucide) { lucide.createIcons(); }
+    </script>
 </body>
 </html>

@@ -1,3 +1,16 @@
+/* ===== Base — design tokens applied to root ===== */
+html {
+  font-family: var(--font-sans);
+  font-size: var(--type-body);
+  line-height: var(--leading-normal);
+}
+
+/* Monospace for tabular numerics (strike tables, flow tables, P&L tables) */
+table.numeric, .mono, .tabular-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 /* ===== CSS Variables — Design System ===== */
 :root {
     /* Depth layers — darkest to lightest */
@@ -51,8 +64,8 @@
     --glass-border: var(--color-border);
     --glass-blur: 16px;
 
-    /* Transitions */
-    --transition: all 0.2s ease;
+    /* Transitions — legacy aliases; prefer var(--motion-*) tokens directly */
+    --transition: all var(--motion-default);
     --transition-slow: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 
     /* Spacing scale */
@@ -81,15 +94,14 @@
 }
 
 html {
-    font-size: 14px;
     scroll-behavior: smooth;
 }
 
 body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: var(--font-sans);
     background: var(--bg-base);
     color: var(--text-primary);
-    line-height: 1.5;
+    line-height: var(--leading-normal);
     min-height: 100vh;
     -webkit-font-smoothing: antialiased;
 }
@@ -146,9 +158,9 @@ body {
 .connection {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 5px 12px;
-    border-radius: 20px;
+    gap: var(--space-2);
+    padding: 5px var(--space-3);
+    border-radius: var(--radius-pill);
     font-size: var(--text-xs);
     font-weight: 500;
 }
@@ -188,9 +200,9 @@ body {
 .badge {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    border-radius: 20px;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border-radius: var(--radius-pill);
     font-size: var(--text-xs);
     font-weight: 500;
 }
@@ -225,7 +237,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    gap: 2px;
+    gap: 2px; /* intentional micro-gap */
 }
 
 .last-update .label {
@@ -245,8 +257,8 @@ body {
 .btn-refresh {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
     background: var(--accent);
     color: white;
     border: none;
@@ -286,7 +298,7 @@ body {
 .toggle-switch {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     cursor: pointer;
     user-select: none;
 }
@@ -297,7 +309,7 @@ body {
     width: 36px;
     height: 20px;
     background: var(--bg-hover);
-    border-radius: 10px;
+    border-radius: var(--radius-lg);
     position: relative;
     transition: var(--transition);
     border: 1px solid var(--border-light);
@@ -410,7 +422,7 @@ body {
 .hero-verdict-score {
     display: flex;
     align-items: baseline;
-    gap: 4px;
+    gap: var(--space-1);
 }
 
 .hero-verdict-score .score-value {
@@ -474,8 +486,8 @@ body {
 .confirmation-indicator {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 12px;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-md);
     border: 1px solid var(--border);
     background: var(--bg-hover);
@@ -614,8 +626,8 @@ body {
     display: flex;
     align-items: center;
     gap: var(--space-xs);
-    padding: 4px 10px;
-    border-radius: 20px;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
     font-size: var(--text-xs);
     font-weight: 600;
     cursor: pointer;
@@ -647,7 +659,7 @@ body {
 }
 
 .carousel-viewport > .trade-setup-card {
-    transition: opacity 0.25s ease;
+    transition: opacity var(--motion-slow);
 }
 
 .carousel-hidden {
@@ -701,7 +713,7 @@ body {
 .carousel-dots {
     display: flex;
     justify-content: center;
-    gap: 6px;
+    gap: var(--space-2);
     padding-top: var(--space-sm);
 }
 
@@ -727,7 +739,7 @@ body {
 @media (max-width: 479px) {
     .carousel-arrow-left { left: 4px; }
     .carousel-arrow-right { right: 4px; }
-    .carousel-arrow { width: 28px; height: 28px; font-size: 1rem; }
+    .carousel-arrow { width: 28px; height: 28px; font-size: var(--type-h1); }
 }
 
 /* ===== Premium Bar Visualization ===== */
@@ -754,7 +766,7 @@ body {
     position: relative;
     height: 8px;
     background: linear-gradient(90deg, var(--bearish) 0%, var(--color-border-strong) 50%, var(--bullish) 100%); /* TODO: tokenise gradient stops */
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     overflow: visible;
 }
 
@@ -763,7 +775,7 @@ body {
     left: 0;
     top: 0;
     height: 100%;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     background: var(--color-border-strong);
     transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -855,15 +867,15 @@ body {
     list-style: none;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
 }
 
 .verdict-details summary::-webkit-details-marker { display: none; }
 
 .verdict-details summary::before {
     content: "\25B6";
-    font-size: 10px;
-    transition: transform 0.2s ease;
+    font-size: var(--type-caption);
+    transition: transform var(--motion-default);
 }
 
 .verdict-details[open] summary::before { transform: rotate(90deg); }
@@ -894,8 +906,8 @@ body {
     font-size: var(--text-xs);
     color: var(--text-muted);
     background: var(--bg-hover);
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-sm);
     margin-right: var(--space-md);
 }
 
@@ -931,7 +943,7 @@ body {
 
 .learning-inline .learning-status {
     font-weight: 600;
-    padding: 2px 8px;
+    padding: 2px var(--space-2);
     border-radius: var(--radius-sm);
 }
 
@@ -980,7 +992,7 @@ body {
 /* Trend Indicator */
 .trend-indicator {
     font-weight: 700;
-    padding: 2px 8px;
+    padding: 2px var(--space-2);
     border-radius: var(--radius-sm);
 }
 
@@ -1032,8 +1044,8 @@ body {
 .oi-tag {
     font-size: var(--text-xs);
     font-weight: 500;
-    padding: 2px 8px;
-    border-radius: 4px;
+    padding: 2px var(--space-2);
+    border-radius: var(--radius-sm);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -1272,7 +1284,7 @@ body {
     position: relative;
     height: 8px;
     background: var(--bg-secondary);
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     display: flex;
 }
@@ -1280,7 +1292,7 @@ body {
 .tow-bear-fill {
     height: 100%;
     background: linear-gradient(90deg, var(--bearish), var(--bearish-dark));
-    border-radius: 4px 0 0 4px;
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
     transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
     width: 50%;
 }
@@ -1404,7 +1416,7 @@ body {
 .result-direction {
     font-size: var(--text-lg);
     font-weight: 700;
-    padding: 4px 14px;
+    padding: var(--space-1) var(--space-4);
     border-radius: var(--radius-sm);
 }
 
@@ -1460,14 +1472,14 @@ body {
 
 .period-toggle {
     display: flex;
-    gap: 2px;
+    gap: 2px; /* intentional tight gap between toggle buttons */
     background: var(--bg-secondary);
     border-radius: var(--radius-sm);
-    padding: 2px;
+    padding: 2px; /* intentional tight inset */
 }
 
 .period-btn {
-    padding: 3px 10px;
+    padding: 3px var(--space-3);
     background: transparent;
     border: none;
     color: var(--text-muted);
@@ -1475,7 +1487,7 @@ body {
     font-family: inherit;
     font-weight: 500;
     cursor: pointer;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     transition: var(--transition);
 }
 
@@ -1506,8 +1518,8 @@ body {
 
 .chart-details summary::before {
     content: "\25B6";
-    font-size: 0.6rem;
-    transition: transform 0.2s ease;
+    font-size: var(--type-caption);
+    transition: transform var(--motion-default);
 }
 
 .chart-details[open] summary::before {
@@ -1541,8 +1553,8 @@ body {
 .trade-status-badge {
     font-size: var(--text-xs);
     font-weight: 700;
-    padding: 3px 10px;
-    border-radius: 4px;
+    padding: 3px var(--space-3);
+    border-radius: var(--radius-sm);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
@@ -1634,7 +1646,7 @@ body {
 .trade-direction {
     font-size: var(--text-base);
     font-weight: 700;
-    padding: 4px 12px;
+    padding: var(--space-1) var(--space-3);
     border-radius: var(--radius-md);
 }
 
@@ -1657,7 +1669,7 @@ body {
     font-size: var(--text-sm);
     font-weight: 600;
     color: var(--text-primary);
-    padding: 4px 10px;
+    padding: var(--space-1) var(--space-3);
     background: var(--bg-surface);
     border-radius: var(--radius-md);
 }
@@ -1679,7 +1691,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     padding: var(--space-sm) var(--space-xs);
     background: var(--bg-surface);
     border-radius: var(--radius-sm);
@@ -1753,7 +1765,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     padding: var(--space-sm);
     background: var(--bg-surface);
     border-radius: var(--radius-sm);
@@ -1793,7 +1805,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     padding: var(--space-md) var(--space-sm);
     background: var(--bg-surface);
     border-radius: var(--radius-md);
@@ -1837,8 +1849,8 @@ body {
 .trade-vix-warning {
     font-size: var(--text-xs);
     font-weight: 700;
-    padding: 3px 10px;
-    border-radius: 4px;
+    padding: 3px var(--space-3);
+    border-radius: var(--radius-sm);
     background: var(--warning-light);
     color: var(--warning);
     text-transform: uppercase;
@@ -1874,7 +1886,7 @@ body {
 .trap-content {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
 }
 
 .trap-type {
@@ -2003,11 +2015,11 @@ body {
 .kite-header-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 12px;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
     background: var(--bg-elevated);
     border: 1px solid var(--border-light);
-    border-radius: 20px;
+    border-radius: var(--radius-pill);
     color: var(--text-secondary);
     font-size: var(--text-xs);
     font-weight: 500;
@@ -2027,7 +2039,7 @@ body {
     height: 8px;
     border-radius: 50%;
     background: var(--bearish);
-    transition: background 0.3s ease;
+    transition: background var(--motion-slow);
 }
 
 .kite-dot.connected { background: var(--bullish); }
@@ -2061,7 +2073,7 @@ body {
 
 .kite-dropdown-btn {
     width: 100%;
-    padding: 8px 14px;
+    padding: var(--space-2) var(--space-4);
     border: none;
     border-radius: var(--radius-sm);
     font-size: var(--text-sm);
@@ -2091,14 +2103,14 @@ body {
 
 #kite-paste-row {
     display: flex;
-    gap: 6px;
+    gap: var(--space-2);
     align-items: center;
     margin-top: var(--space-xs);
 }
 
 #kite-paste-row input {
     flex: 1;
-    padding: 6px 10px;
+    padding: var(--space-2) var(--space-3);
     border: 1px solid var(--border-light);
     border-radius: var(--radius-sm);
     background: var(--bg-secondary);
@@ -2108,7 +2120,7 @@ body {
 }
 
 #kite-paste-row button {
-    padding: 6px 14px;
+    padding: var(--space-2) var(--space-4);
     border: none;
     border-radius: var(--radius-sm);
     background: var(--bullish);
@@ -2122,8 +2134,8 @@ body {
 .hero-verdict-ema {
     display: flex;
     align-items: center;
-    gap: 6px;
-    margin-top: 2px;
+    gap: var(--space-2);
+    margin-top: 2px; /* intentional micro-offset */
 }
 
 .ema-label {
@@ -2150,14 +2162,14 @@ body {
 .pcr-trend-arrow {
     font-size: 0.85em;
     font-weight: 600;
-    transition: color 0.3s ease;
-    margin-left: 2px;
+    transition: color var(--motion-slow);
+    margin-left: 2px; /* intentional micro-offset */
 }
 
 /* ===== Max Pain Drift ===== */
 .metric-sub {
     display: block;
-    font-size: 0.7rem;
+    font-size: var(--type-caption);
     color: var(--text-muted);
     margin-top: 2px;
     font-weight: 500;
@@ -2167,14 +2179,14 @@ body {
 .two-candle-badge {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    padding: 3px 10px;
+    gap: var(--space-1);
+    padding: 3px var(--space-3);
     margin-top: var(--space-xs);
     font-size: var(--text-xs);
     font-weight: 600;
     color: var(--bullish);
     border: 1px solid var(--color-border-strong);
-    border-radius: 20px;
+    border-radius: var(--radius-pill);
     background: var(--color-accent-up-soft);
     animation: badgeFadeIn 0.4s ease;
 }
@@ -2196,7 +2208,7 @@ body {
 }
 
 .flow-dominant {
-    font-size: 1.1rem;
+    font-size: var(--type-h1);
     font-weight: 700;
     text-align: center;
     padding: var(--space-sm);
@@ -2210,7 +2222,7 @@ body {
 
 .flow-dominant-sub {
     display: block;
-    font-size: 0.7rem;
+    font-size: var(--type-caption);
     font-weight: 400;
     color: var(--text-muted);
     margin-top: 2px;
@@ -2243,7 +2255,7 @@ body {
 
 .flow-legend {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     justify-content: center;
     flex-wrap: wrap;
 }
@@ -2251,8 +2263,8 @@ body {
 .flow-legend-item {
     display: flex;
     align-items: center;
-    gap: 4px;
-    font-size: 0.65rem;
+    gap: var(--space-1);
+    font-size: var(--type-caption);
     color: var(--text-muted);
     cursor: help;
 }
@@ -2272,17 +2284,17 @@ body {
 .flow-zones {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-2);
 }
 
 .flow-zone-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
 }
 
 .flow-zone-label {
-    font-size: 0.65rem;
+    font-size: var(--type-caption);
     color: var(--text-muted);
     width: 60px;
     flex-shrink: 0;
@@ -2294,7 +2306,7 @@ body {
     flex: 1;
     display: flex;
     height: 14px;
-    border-radius: 4px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     background: var(--bg-secondary);
     position: relative;
@@ -2307,7 +2319,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.55rem;
+    font-size: var(--type-caption);
     font-weight: 700;
     color: var(--bg-primary);
     pointer-events: none;
@@ -2321,10 +2333,10 @@ body {
 /* ===== Flow Type Badges (in tables) ===== */
 .flow-badge {
     display: inline-block;
-    font-size: 0.65rem;
+    font-size: var(--type-caption);
     font-weight: 600;
-    padding: 1px 6px;
-    border-radius: 8px;
+    padding: 1px var(--space-2);
+    border-radius: var(--radius-md);
     letter-spacing: 0.3px;
     line-height: 1.4;
 }
@@ -2338,8 +2350,8 @@ body {
 /* ===== Chart Controls (Zoom) ===== */
 .chart-controls {
     display: flex;
-    gap: 3px;
-    margin-left: 8px;
+    gap: 3px; /* intentional tight gap between ctrl buttons */
+    margin-left: var(--space-2);
 }
 
 .chart-ctrl-btn {
@@ -2352,7 +2364,7 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     color: var(--text-muted);
-    font-size: 14px;
+    font-size: var(--type-h1);
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
@@ -2369,14 +2381,14 @@ body {
 .chart-ctrl-sm {
     width: 24px;
     height: 24px;
-    font-size: 12px;
+    font-size: var(--type-small);
 }
 
 /* ===== View Trades Button ===== */
 .view-trades-btn {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     margin-top: var(--space-md);
     padding: var(--space-sm) var(--space-lg);
     background: var(--accent-light);
@@ -2452,7 +2464,6 @@ body {
 
 /* Large mobile: 480-767px */
 @media (max-width: 767px) and (min-width: 480px) {
-    html { font-size: 14px; }
     .app { padding: var(--space-lg); }
     .main { grid-template-columns: 1fr; }
     .column-left { order: 1; }
@@ -2477,11 +2488,10 @@ body {
 
 /* Mobile: 0-479px */
 @media (max-width: 479px) {
-    html { font-size: 13px; }
     .app { padding: var(--space-md); }
 
     .header { flex-direction: column; gap: var(--space-lg); text-align: center; }
-    .header-left { flex-direction: column; gap: 4px; align-items: center; }
+    .header-left { flex-direction: column; gap: var(--space-1); align-items: center; }
     .header-right { flex-wrap: wrap; justify-content: center; gap: var(--space-sm); }
     .toggle-container { border-left: none; padding-left: 0; margin-left: 0; }
 
@@ -2565,7 +2575,7 @@ body {
 .filter-group {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: var(--space-2);
 }
 
 .filter-label {
@@ -2623,7 +2633,7 @@ body {
 .loading-trades,
 .error-message {
     text-align: center;
-    padding: 40px;
+    padding: var(--space-12);
     color: var(--text-muted);
     font-size: var(--text-sm);
 }
@@ -2637,7 +2647,7 @@ body {
     align-items: center;
     justify-content: center;
     gap: var(--space-lg);
-    padding: 60px var(--space-xl);
+    padding: 60px var(--space-xl); /* 60px intentional large padding, no close token */
     color: var(--text-muted);
     text-align: center;
 }
@@ -2706,7 +2716,7 @@ body {
 }
 
 .trade-direction-badge {
-    padding: 6px 12px;
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);
     font-size: var(--text-xs);
     font-weight: 700;
@@ -2718,7 +2728,7 @@ body {
 .trade-direction-badge.bearish { background: var(--bearish-light); color: var(--bearish); }
 
 .trade-strike-badge {
-    padding: 6px 12px;
+    padding: var(--space-2) var(--space-3);
     background: var(--bg-secondary);
     border-radius: var(--radius-sm);
     font-size: var(--text-xs);
@@ -2727,7 +2737,7 @@ body {
 }
 
 .trade-card .trade-status-badge {
-    padding: 6px 12px;
+    padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);
     font-size: var(--text-xs);
     font-weight: 700;
@@ -2764,7 +2774,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     min-width: 80px;
 }
 
@@ -2794,7 +2804,7 @@ body {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-2);
     padding: var(--space-md);
     background: var(--bg-secondary);
     border-radius: var(--radius-md);
@@ -2873,11 +2883,11 @@ body {
     list-style: none;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
 }
 
 .trade-analysis summary::-webkit-details-marker { display: none; }
-.trade-analysis summary::before { content: ">"; font-size: 10px; transition: transform 0.2s ease; }
+.trade-analysis summary::before { content: ">"; font-size: var(--type-caption); transition: transform var(--motion-default); }
 .trade-analysis[open] summary::before { transform: rotate(90deg); }
 
 .analysis-grid {
@@ -2890,7 +2900,7 @@ body {
 .analysis-item {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: var(--space-1);
     padding: var(--space-sm);
     background: var(--bg-secondary);
     border-radius: var(--radius-sm);
@@ -3000,7 +3010,7 @@ body {
     display: flex;
     align-items: center;
     gap: var(--space-lg);
-    font-size: 0.82rem;
+    font-size: var(--type-small);
 }
 .regime-info {
     display: flex;
@@ -3009,14 +3019,14 @@ body {
 }
 .regime-label {
     color: var(--text-muted);
-    font-size: 0.72rem;
+    font-size: var(--type-caption);
     text-transform: uppercase;
     letter-spacing: 0.05em;
 }
 .regime-name {
     font-weight: 700;
     color: var(--accent-primary);
-    font-size: 0.85rem;
+    font-size: var(--type-small);
 }
 .regime-details {
     display: flex;
@@ -3025,21 +3035,21 @@ body {
     color: var(--text-secondary);
 }
 .regime-detail {
-    padding: 2px 8px;
+    padding: 2px var(--space-2);
     background: var(--bg-tertiary);
     border-radius: var(--radius-sm);
-    font-size: 0.78rem;
+    font-size: var(--type-small);
 }
 .regime-sep {
     color: var(--border-subtle);
-    font-size: 0.7rem;
+    font-size: var(--type-caption);
 }
 
 /* ===== V-Shape Recovery Alert ===== */
 .v-shape-alert {
     margin: 0 var(--space-xl); padding: var(--space-lg) var(--space-xl);
     border-radius: var(--radius-lg); border: 2px solid transparent;
-    transition: all 0.3s ease;
+    transition: all var(--motion-slow);
 }
 
 .v-shape-alert.v-forming {
@@ -3083,7 +3093,7 @@ body {
 .v-partial .v-shape-icon, .v-partial .v-shape-title { color: var(--warning); }
 .v-failed .v-shape-icon, .v-failed .v-shape-title { color: var(--bearish); }
 .v-shape-title { flex: 1; font-size: var(--text-lg); font-weight: 700; }
-.v-shape-confidence { font-size: var(--text-sm); font-weight: 600; padding: 4px 12px; border-radius: var(--radius-sm); background: var(--bg-surface); }
+.v-shape-confidence { font-size: var(--text-sm); font-weight: 600; padding: var(--space-1) var(--space-3); border-radius: var(--radius-sm); background: var(--bg-surface); }
 
 .v-shape-conditions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
 .v-shape-condition {

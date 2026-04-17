@@ -1,0 +1,94 @@
+/* Dashboard Design Tokens — Variant A "Cool Professional"
+ * Spec reference: docs/superpowers/specs/2026-04-15-dashboard-legibility-design.md (Section 6.1)
+ * All values defined as CSS custom properties on :root for dashboard-wide consumption.
+ */
+
+:root {
+  /* ===== Colour palette ===== */
+
+  /* Surfaces */
+  --color-bg:            #0c0e13;
+  --color-bg-raised:     #131721;
+  --color-bg-elevated:   #1a2030;   /* hover / focus surface */
+  --color-border:        #1e2430;
+  --color-border-strong: #253145;
+
+  /* Text */
+  --color-text-primary:   #eef1f8;
+  --color-text-secondary: #8e94ac;
+  --color-text-muted:     #6b7289;
+  --color-text-inverse:   #0c0e13;  /* text on accent surfaces */
+
+  /* Semantic accents */
+  --color-accent-up:    #60e0a8;   /* bullish / positive */
+  --color-accent-dn:    #ff7a82;   /* bearish / negative */
+  --color-accent-warn:  #f5b963;   /* caution / forming signal */
+  --color-accent-info:  #7cb7ff;   /* neutral info */
+
+  /* Soft variants for backgrounds */
+  --color-accent-up-soft:   rgba(96, 224, 168, 0.10);
+  --color-accent-dn-soft:   rgba(255, 122, 130, 0.10);
+  --color-accent-warn-soft: rgba(245, 185, 99, 0.10);
+  --color-accent-info-soft: rgba(124, 183, 255, 0.10);
+
+  /* ===== Typography ===== */
+  --font-sans: "Inter", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Consolas", monospace;
+
+  /* Type scale (px values; derived line-heights) */
+  --type-display: 22px;
+  --type-h1:      15px;
+  --type-body:    13px;
+  --type-small:   11px;
+  --type-caption: 9px;
+
+  /* Line heights — display tighter, body looser */
+  --leading-tight:  1.2;
+  --leading-normal: 1.4;
+  --leading-loose:  1.55;
+
+  /* Weights */
+  --weight-regular: 400;
+  --weight-medium:  500;
+  --weight-semi:    600;
+
+  /* Letter spacing */
+  --tracking-display: -0.02em;
+  --tracking-normal:  normal;
+  --tracking-label:   0.08em;   /* uppercase eyebrow labels */
+
+  /* ===== Spacing — 4-pt grid ===== */
+  --space-1:  4px;
+  --space-2:  8px;
+  --space-3:  12px;
+  --space-4:  16px;
+  --space-6:  24px;
+  --space-8:  32px;
+  --space-12: 48px;
+
+  /* ===== Radius ===== */
+  --radius-sm: 4px;     /* inputs, small chips */
+  --radius-md: 8px;     /* buttons, pill borders */
+  --radius-lg: 10px;    /* cards (default) */
+  --radius-xl: 14px;    /* hero / modal */
+  --radius-pill: 999px; /* fully rounded */
+
+  /* ===== Elevation — replace heavy glassmorphism blur ===== */
+  --elev-card-border: 1px solid var(--color-border);
+  --elev-card-inset:  0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  --elev-card-hover-bg: rgba(255, 255, 255, 0.02);
+
+  /* ===== Motion ===== */
+  --motion-fast: 100ms ease-out;
+  --motion-default: 150ms ease-out;
+  --motion-slow: 300ms ease-out;
+  --motion-flash: 500ms ease-out;   /* value-change flash */
+
+  /* ===== Focus ===== */
+  --focus-ring-color: var(--color-accent-info);
+  --focus-ring-width: 2px;
+  --focus-ring-offset: 2px;
+}
+
+/* Optional: a "light" variant placeholder, currently unused (deferred per Section 9) */
+/* :root[data-theme="light"] { ... } */

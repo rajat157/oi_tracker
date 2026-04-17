@@ -3109,3 +3109,15 @@ body {
     .v-shape-conditions { grid-template-columns: 1fr; }
     .futures-hero { flex-direction: column; gap: var(--space-md); }
 }
+
+/* ===== WCAG AA — visible focus on all interactive elements ===== */
+:focus-visible {
+  outline: var(--focus-ring-width) solid var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+  border-radius: var(--radius-sm);
+}
+
+/* Hide default browser focus rings (we have our own) */
+:focus:not(:focus-visible) {
+  outline: none;
+}

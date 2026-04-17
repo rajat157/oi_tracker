@@ -4,10 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NIFTY OI Analyzer</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <!-- Inter web font (display swap to avoid FOIT) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- Design tokens (must precede styles.css so token references resolve) -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/tokens.css') }}">
+    <link rel="stylesheet" href="/static/styles.css">
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
@@ -766,5 +770,14 @@
     </div>
 
     <script src="/static/chart.js"></script>
+
+    <!-- Lucide icons — replaces ad-hoc emoji+SVG mix.
+         Mood face emojis (rocket, smile, neutral, grimace, scream) and V-Shape banner emoji are preserved as
+         intentional spec choices; everywhere else uses <i data-lucide="..."></i>. -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+    <script>
+      // Initial render. After dynamic content updates (SocketIO push), call lucide.createIcons() again.
+      if (window.lucide) { lucide.createIcons(); }
+    </script>
 </body>
 </html>

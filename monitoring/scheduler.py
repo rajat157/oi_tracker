@@ -683,12 +683,15 @@ class OIScheduler:
             except Exception as e:
                 log.error("CandleBuilder strike rotation failed", error=str(e))
 
-            # [V1] Rotate BANKNIFTY + SENSEX option strikes for IH real LTP.
-            # Subscribes ATM±100 (3 CE + 3 PE per index = 6 strikes per index).
-            # This means IH no longer has to fall back to Black-Scholes for
-            # entry pricing or monitoring on BN/SX positions — the actual
-            # market premium is in the CandleBuilder buffer at trade time.
+            # [V1] Rotate BANKNIFTY + SENSEX + NIFTY option strikes for IH
+            # real LTP. Subscribes ATM±spacing (3 CE + 3 PE per index = 6
+            # strikes per index, includes ATM). NIFTY is rotated separately
+            # here because the main cycle's rotation above subscribes ATM±50,
+            # ATM±100, ATM±150 but NOT ATM itself — IH uses ATM strike for
+            # entry sizing, so without this it would skip every NIFTY signal
+            # firing at ATM (observed in live: ~75% of NIFTY signals blocked).
             if self._ih_cfg.ENABLED and self._multi_imap is not None:
+                self._rotate_ih_index_strikes("NIFTY", spacing=50)
                 self._rotate_ih_index_strikes("BANKNIFTY", spacing=100)
                 self._rotate_ih_index_strikes("SENSEX", spacing=100)
 

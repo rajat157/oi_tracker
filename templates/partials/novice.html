@@ -1,0 +1,26 @@
+{# Novice view — story headline + 4 tiles + show-more disclosure.
+   Spec ref: design Section 3.2 (novice layout) and Section 5 (tile system). #}
+
+<div id="story-strip" class="story-strip" aria-live="polite">
+  {# Populated by static/scripts/story.js. Empty until first paint. #}
+  <div class="story-skeleton">Loading market story…</div>
+</div>
+
+<div id="tiles-grid" class="tiles-grid">
+  {# Populated by static/scripts/tiles.js. 4 tile slots. #}
+  <div class="tile-skeleton" data-slot="1"></div>
+  <div class="tile-skeleton" data-slot="2"></div>
+  <div class="tile-skeleton" data-slot="3"></div>
+  <div class="tile-skeleton" data-slot="4"></div>
+</div>
+
+<details id="show-more" class="show-more">
+  <summary class="show-more-trigger">
+    <i data-lucide="chevron-down"></i>
+    <span>Show more detail</span>
+  </summary>
+  <div class="show-more-content">
+    {# Populated in Task 6. Simple spot chart + day-bias breakdown + regime note. #}
+    <p class="show-more-placeholder">Detail view coming in next task.</p>
+  </div>
+</details>

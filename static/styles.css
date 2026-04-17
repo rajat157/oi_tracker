@@ -3175,3 +3175,78 @@ body[data-view="expert"] #novice-view {
   width: 14px;
   height: 14px;
 }
+
+/* ===== Novice view — shell + skeletons ===== */
+.story-strip {
+  background: linear-gradient(135deg, var(--color-accent-info-soft), var(--color-accent-up-soft));
+  border: var(--elev-card-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-6);
+  margin: var(--space-4);
+  font-family: var(--font-sans);
+  font-size: var(--type-h1);
+  line-height: var(--leading-loose);
+  color: var(--color-text-primary);
+}
+.story-skeleton {
+  color: var(--color-text-muted);
+  font-size: var(--type-body);
+  font-style: italic;
+}
+
+.tiles-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  margin: 0 var(--space-4);
+}
+.tile-skeleton {
+  background: var(--color-bg-raised);
+  border: var(--elev-card-border);
+  border-radius: var(--radius-lg);
+  min-height: 96px;
+  animation: tile-skeleton-pulse 1.5s ease-in-out infinite;
+}
+@keyframes tile-skeleton-pulse {
+  0%, 100% { opacity: 0.8; }
+  50%      { opacity: 0.55; }
+}
+
+@media (max-width: 880px) {
+  .tiles-grid { grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 480px) {
+  .tiles-grid { grid-template-columns: 1fr; }
+}
+
+.show-more {
+  margin: var(--space-4);
+  border: var(--elev-card-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-raised);
+}
+.show-more-trigger {
+  cursor: pointer;
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--type-small);
+  list-style: none;
+  user-select: none;
+}
+.show-more-trigger::-webkit-details-marker { display: none; }
+.show-more[open] > .show-more-trigger [data-lucide="chevron-down"] {
+  transform: rotate(180deg);
+  transition: transform var(--motion-default);
+}
+.show-more-content {
+  padding: var(--space-4);
+  border-top: var(--elev-card-border);
+}
+.show-more-placeholder {
+  color: var(--color-text-muted);
+  font-style: italic;
+  font-size: var(--type-body);
+}

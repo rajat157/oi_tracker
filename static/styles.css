@@ -48,12 +48,6 @@ table.numeric, .mono, .tabular-nums {
     --border-light: var(--color-border-strong);
     --border-card: var(--color-border);
 
-    /* Radius */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 18px;
-
     /* Shadows */
     --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
     --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.3);
@@ -68,12 +62,16 @@ table.numeric, .mono, .tabular-nums {
     --transition: all var(--motion-default);
     --transition-slow: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 
-    /* Spacing scale */
+    /* Legacy spacing aliases — kept as a compatibility shim.
+     * 176 call sites still use --space-{xs,sm,md,lg,xl,2xl,3xl}; full
+     * migration to the canonical --space-1..12 scale is a follow-up.
+     * All values here are on-grid (4/8/12/16/24/32).
+     */
     --space-xs: 4px;
     --space-sm: 8px;
     --space-md: 12px;
     --space-lg: 16px;
-    --space-xl: 20px;
+    --space-xl: 24px;
     --space-2xl: 24px;
     --space-3xl: 32px;
 
@@ -260,7 +258,7 @@ body {
     gap: var(--space-2);
     padding: var(--space-2) var(--space-4);
     background: var(--accent);
-    color: white;
+    color: var(--color-text-inverse);
     border: none;
     border-radius: var(--radius-md);
     font-size: var(--text-sm);
@@ -2085,10 +2083,14 @@ body {
 
 .kite-dropdown-btn.kite-login {
     background: var(--color-accent-info);
-    color: var(--color-text-primary);
+    color: var(--color-text-inverse);
 }
 
-.kite-dropdown-btn.kite-login:hover { background: var(--color-accent-info); }
+.kite-dropdown-btn.kite-login:hover {
+    background: var(--color-accent-info);
+    color: var(--color-text-inverse);
+    filter: brightness(0.92);
+}
 
 .kite-dropdown-btn.kite-paste {
     background: transparent;
@@ -2405,7 +2407,7 @@ body {
 
 .view-trades-btn:hover {
     background: var(--accent);
-    color: white;
+    color: var(--color-text-inverse);
 }
 
 /* ===== Footer ===== */
@@ -2606,7 +2608,7 @@ body {
     background: var(--accent);
     border: none;
     border-radius: var(--radius-md);
-    color: white;
+    color: var(--color-text-inverse);
     font-size: var(--text-sm);
     font-weight: 500;
     cursor: pointer;

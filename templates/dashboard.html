@@ -57,6 +57,10 @@
                     </svg>
                     Refresh
                 </button>
+                <button id="view-toggle" class="view-toggle" aria-label="Switch to novice view">
+                    <i data-lucide="layout-dashboard"></i>
+                    <span class="view-toggle-label">Novice</span>
+                </button>
                 <div class="toggle-container">
                     <label class="toggle-switch toggle-auto" id="auto-toggle-wrapper">
                         <input type="checkbox" id="auto-toggle">
@@ -66,6 +70,12 @@
                 </div>
             </div>
         </header>
+
+        <section id="novice-view" class="view-section">
+          <!-- populated in Task 2 -->
+        </section>
+
+        <section id="expert-view" class="view-section">
 
         <!-- Hero Strip - Verdict + Key Metrics -->
         <section class="hero-strip">
@@ -767,9 +777,13 @@
         <footer class="footer">
             <span>Auto-refreshes every 3 minutes during market hours</span>
         </footer>
+
+        </section><!-- end #expert-view -->
     </div>
 
     <script src="/static/chart.js"></script>
+
+    <script src="{{ url_for('static', filename='scripts/view-toggle.js') }}"></script>
 
     <!-- Lucide icons — replaces ad-hoc emoji+SVG mix.
          Mood face emojis (rocket, smile, neutral, grimace, scream) and V-Shape banner emoji are preserved as

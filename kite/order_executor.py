@@ -379,10 +379,17 @@ class OrderExecutor:
         strike: int,
         option_type: str,
         tracker_type: str = "",
+        quantity: Optional[int] = None,
+        exchange: str = "NFO",
+        instrument_map=None,
     ) -> OrderResult:
-        """Place market sell order for time-based exits (EOD, MAX_TIME, TIME_FLAT).
+        """Place market sell order to close an open live position.
 
-        Cancels GTT first, then places market sell.
+        Cancels GTT first, then places market sell. Per-call overrides
+        mirror place_entry so IH can route BN/SX correctly:
+            quantity:        explicit lot size (default = self._quantity)
+            exchange:        'NFO' or 'BFO' (default 'NFO')
+            instrument_map:  per-index InstrumentMap (default = self._instrument_map)
         """
         if not self.is_strategy_live(tracker_type):
             return OrderResult(success=True, is_paper=True)
@@ -397,25 +404,33 @@ class OrderExecutor:
                       trade_id=trade_id)
             return OrderResult(success=False, error="Not authenticated", is_paper=False)
 
-        symbol = self._resolve_symbol(strike, option_type)
+        imap = instrument_map if instrument_map is not None else self._instrument_map
+        symbol = self._resolve_symbol_via(imap, strike, option_type)
         if not symbol:
             log.error("Cannot resolve symbol for exit",
-                      trade_id=trade_id, strike=strike, type=option_type)
+                      trade_id=trade_id, strike=strike, type=option_type,
+                      exchange=exchange)
             return OrderResult(success=False, error="Symbol not found", is_paper=False)
 
-        log.info("Placing market exit order", trade_id=trade_id, symbol=symbol)
+        qty = int(quantity) if quantity is not None else self._quantity
+
+        log.info("Placing market exit order",
+                 trade_id=trade_id, symbol=symbol,
+                 exchange=exchange, qty=qty)
 
         result = place_order(
             trading_symbol=symbol,
             transaction_type="SELL",
-            quantity=self._quantity,
+            quantity=qty,
             order_type="MARKET",
             product=self._product,
+            exchange=exchange,
         )
 
         if result.get("status") == "success":
             order_id = result["data"]["order_id"]
-            log.info("Exit order placed", trade_id=trade_id, order_id=order_id)
+            log.info("Exit order placed",
+                     trade_id=trade_id, order_id=order_id, symbol=symbol)
             return OrderResult(success=True, order_id=order_id, is_paper=False)
 
         log.error("Exit order failed", trade_id=trade_id, result=result)

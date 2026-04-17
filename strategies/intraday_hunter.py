@@ -865,6 +865,45 @@ class IntradayHunterStrategy(BaseTracker):
         now: datetime,
     ) -> None:
         status = "WON" if pnl_rs > 0 else "LOST"
+
+        # For LIVE positions, place a market SELL to close the broker position
+        # BEFORE updating DB. Mirrors RR's _resolve pattern. Without this,
+        # the DB reflects exit but the Kite position stays open — user
+        # observed this on 2026-04-17 (AGENT_EXIT marked LOST in DB but
+        # broker position remained, causing additional loss).
+        if self.order_executor is not None and not pos.get("is_paper", 1):
+            try:
+                child_imap = (self._multi_imap.get(pos["index_label"])
+                              if self._multi_imap else None)
+                exchange = self.INDEX_EXCHANGE.get(pos["index_label"], "NFO")
+                exit_result = self.order_executor.place_exit(
+                    trade_id=pos["id"],
+                    strike=int(pos["strike"]),
+                    option_type=pos["option_type"],
+                    tracker_type=self.tracker_type,
+                    quantity=int(pos["qty"]),
+                    exchange=exchange,
+                    instrument_map=child_imap,
+                )
+                if exit_result.success:
+                    log.info("IH LIVE exit placed",
+                             trade_id=pos["id"],
+                             index=pos["index_label"],
+                             exchange=exchange,
+                             order_id=exit_result.order_id,
+                             reason=reason)
+                else:
+                    log.error("IH LIVE exit FAILED",
+                              trade_id=pos["id"],
+                              index=pos["index_label"],
+                              error=exit_result.error,
+                              reason=reason)
+            except Exception as e:
+                log.error("IH _resolve_position place_exit exception",
+                          trade_id=pos["id"],
+                          index=pos.get("index_label"),
+                          error=str(e))
+
         self.trade_repo.update_trade(
             self.table_name, pos["id"],
             status=status,

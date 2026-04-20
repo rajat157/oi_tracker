@@ -192,10 +192,13 @@ class OIScheduler:
         check_and_update + should_create/evaluate_signal/create_trade.
         """
         if not self.is_market_open():
+            log.debug("IH cycle: market closed, skipping")
             return
         ih = self.strategies.get("intraday_hunter")
         if ih is None:
+            log.warning("IH cycle: strategy not registered, skipping")
             return
+        log.debug("IH cycle: running", ts=datetime.now().strftime("%H:%M:%S"))
 
         try:
             # Build a minimal analysis dict — IH only reads candles + spot + vix
@@ -233,8 +236,19 @@ class OIScheduler:
                              pnl=f"{closed.get('pnl_rs', 0):+.0f}")
 
             # Signal evaluation
-            if ih.should_create(analysis):
+            can_create = ih.should_create(analysis)
+            log.info("IH cycle gate check",
+                     can_create=can_create,
+                     spot=analysis.get("spot_price", 0),
+                     ny_candles=len(analysis.get("nifty_1min_candles") or []),
+                     bn_candles=len(analysis.get("banknifty_1min_candles") or []),
+                     sx_candles=len(analysis.get("sensex_1min_candles") or []),
+                     yday_candles=len(analysis.get("nifty_yesterday_candles") or []),
+                     vix=analysis.get("vix", 0))
+            if can_create:
                 ih_signal = ih.evaluate_signal(analysis)
+                log.info("IH cycle evaluate_signal",
+                         signal=str(ih_signal.get("signal").trigger) if ih_signal else "None")
                 if ih_signal:
                     trade_id = ih.create_trade(ih_signal, analysis, {})
                     if trade_id:

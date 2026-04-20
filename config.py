@@ -162,7 +162,12 @@ class IntradayHunterConfig:
     # ── Daily limits ──
     MAX_TRADES_PER_DAY: int = 3
     DAILY_LOSS_LIMIT_RS: float = 3000.0   # 1-lot scaled (~50K at trader's qty)
-    CONSECUTIVE_LOSS_SKIP: int = 4        # R28 — trader violates strict 3
+    # R28 — "after X losing days, take a day off". Psychological rule for
+    # discretionary traders that doesn't apply to automated systems (no
+    # revenge-trading impulse). Set to 0 to disable entirely.
+    # Rule is additionally guarded against counting trades whose notes
+    # contain "R28_EXCLUDED" — lets us exclude losses from bug-era days.
+    CONSECUTIVE_LOSS_SKIP: int = 0        # disabled by default
     COOLDOWN_AFTER_WIN_MIN: int = 60      # walk-forward optimal (was 90)
     COOLDOWN_AFTER_LOSS_MIN: int = 30
 

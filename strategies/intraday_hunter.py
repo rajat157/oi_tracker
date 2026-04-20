@@ -160,10 +160,11 @@ class IntradayHunterStrategy(BaseTracker):
         if not self._cooldown_ok(now):
             return False
 
-        # Consecutive-loss circuit breaker (R28)
-        if self._consecutive_losing_days() >= _cfg.CONSECUTIVE_LOSS_SKIP:
-            self._locked_out = True
-            return False
+        # Consecutive-loss circuit breaker (R28) — disabled when SKIP <= 0
+        if _cfg.CONSECUTIVE_LOSS_SKIP > 0:
+            if self._consecutive_losing_days() >= _cfg.CONSECUTIVE_LOSS_SKIP:
+                self._locked_out = True
+                return False
 
         # Still in the gate — clear the locked-out flag if it was set on a
         # prior cycle that happened to hit the limit (e.g. after day rolls over)
@@ -1159,17 +1160,33 @@ class IntradayHunterStrategy(BaseTracker):
         return True
 
     def _consecutive_losing_days(self) -> int:
-        """Count consecutive losing days ending yesterday."""
+        """Count consecutive losing days ending yesterday.
+
+        Rows whose notes contain 'R28_EXCLUDED' are skipped (not counted
+        as losses AND don't break the streak either — they're simply
+        invisible to R28). Used to exclude losses from known-bug eras
+        so historical pre-fix losses don't gate post-fix trading.
+        """
+        # Query a reasonable window even when R28 is disabled so the
+        # helper stays useful for debugging/diagnostics.
+        limit = max(_cfg.CONSECUTIVE_LOSS_SKIP, 5) + 1
         rows = self.trade_repo._fetch_all(
-            f"SELECT DATE(created_at) as d, SUM(profit_loss_rs) as total "
+            f"SELECT DATE(created_at) as d, "
+            f"SUM(CASE WHEN COALESCE(notes, '') LIKE '%R28_EXCLUDED%' THEN 0 "
+            f"ELSE profit_loss_rs END) as total, "
+            f"SUM(CASE WHEN COALESCE(notes, '') LIKE '%R28_EXCLUDED%' THEN 0 "
+            f"ELSE 1 END) as counted_trades "
             f"FROM {self.table_name} "
             f"WHERE status IN ('WON', 'LOST') "
             f"AND DATE(created_at) < DATE('now', 'localtime') "
             f"GROUP BY d ORDER BY d DESC LIMIT ?",
-            (_cfg.CONSECUTIVE_LOSS_SKIP + 1,),
+            (limit,),
         )
         streak = 0
         for r in rows:
+            # Skip fully-excluded days (all trades marked R28_EXCLUDED)
+            if (r["counted_trades"] or 0) == 0:
+                continue
             if (r["total"] or 0) < 0:
                 streak += 1
             else:
